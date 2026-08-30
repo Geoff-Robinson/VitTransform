@@ -1,0 +1,18 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+# Clarion 2.1.0.2447
+Project("{12B76EC0-1D7B-4FA7-A7D0-C524288B48A1}") = "VitStyle", "VitStyle.cwproj", "{7A3F1C55-9D42-4E8B-B1E6-20260720C0DE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7A3F1C55-9D42-4E8B-B1E6-20260720C0DE}.Debug|Win32.Build.0 = Debug|Win32
+		{7A3F1C55-9D42-4E8B-B1E6-20260720C0DE}.Debug|Win32.ActiveCfg = Debug|Win32
+		{7A3F1C55-9D42-4E8B-B1E6-20260720C0DE}.Release|Win32.Build.0 = Release|Win32
+		{7A3F1C55-9D42-4E8B-B1E6-20260720C0DE}.Release|Win32.ActiveCfg = Release|Win32
+	EndGlobalSection
+EndGlobal

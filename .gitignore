@@ -1,0 +1,28 @@
+# Build output
+*.exe
+*.lib
+*.map
+*.obj
+*.dll
+obj/
+map/
+
+# Other Files
+*.bak
+*.log
+*.ini
+*.lnk
+*.cache
+StringTheory.*
+
+# Written by VitStyle at run time - the user's, not ours
+VitStyle.rules.txt
+VitStyle.profiles.txt
+VitStyle.ui.txt
+
+# VitTransform's own run output
+*.report.txt
+*.result.txt
+*.ir.txt
+*.tokens.txt
+vt-batch.log

@@ -1,0 +1,12 @@
+! Repro for issue #5: the documented comma option form loads as text.
+! https://github.com/msarson/VitTransform/issues/5
+!
+! VitRules.clw:~388 declares the comma a legal option separator
+! ("DELETE, ONCE"), but the option split truncates the replacement to
+! "DELETE," (setLength + trim never strips the comma), which fails the
+! exact-6-character DELETE test - so the rule loads as an ordinary TEXT
+! replacement whose tokens are DELETE and ',', and no lint fires.
+
+r = 1  ==>  DELETE, ONCE
+
+BUILTIN AlignComments

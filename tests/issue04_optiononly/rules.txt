@@ -1,0 +1,20 @@
+! Repro for issue #4: a rule whose replacement is ONLY an option word.
+! https://github.com/msarson/VitTransform/issues/4
+!
+! For "pat ==> ONCE" FindOptionStart returns optPos = 1, so
+! repTxt.setLength(0) empties the buffer and kwPos ends at 0 - then
+! VitRules.clw:~406 slices repTxt.valuePtr[0 : 0] UNCONDITIONALLY,
+! before the "empty replacement" diagnostic at ~:433 can fire. The
+! comment above it claims this case "falls through to the
+! empty-replacement error below", but the slice executes first.
+!
+! RELEASE build: the out-of-bounds read is silently absorbed and the
+!   correct error appears (exit 1, "rule has empty replacement") -
+!   correct by accident.
+! DEBUG build (check_index=True per the shipped cwproj): the slice
+!   raises a runtime index trap BEFORE any report is written - a modal
+!   error box even under --batch, and no .ir.txt is produced.
+!
+! Run:  run.bat   (lint mode on this file, using the release exe)
+
+x = 1  ==>  ONCE

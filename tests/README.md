@@ -19,3 +19,6 @@ carries the full story: defect, mechanism, expected vs actual.
 | `issue01_walkunreachable` | [#1](https://github.com/msarson/VitTransform/issues/1) WalkUnreachable comments out live code | rule-driven | Reproduced |
 | `issue02_movetoks` | [#2](https://github.com/msarson/VitTransform/issues/2) MoveToks corrupts backward multi-token moves | harness | Reproduced (exit 1, result.txt) |
 | `issue03_checkcase` | [#3](https://github.com/msarson/VitTransform/issues/3) BuiltinCheckCase rewrites unvalidated CASE arms | rule-driven | Reproduced |
+| `issue04_optiononly` | [#4](https://github.com/msarson/VitTransform/issues/4) Loader crash on option-only replacement | rule-driven | Reproduced (Debug traps; Release correct by accident) |
+| `issue05_commaoption` | [#5](https://github.com/msarson/VitTransform/issues/5) DELETE, ONCE loads as text replacement | rule-driven | Reproduced |
+| `issue06_staleanchors` | [#6](https://github.com/msarson/VitTransform/issues/6) Appended rule matches nothing (dead postings rescue) | harness | Reproduced (exit 1, result.txt) |

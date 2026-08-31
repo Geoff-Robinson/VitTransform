@@ -1,0 +1,5 @@
+issue #6 harness: rule appended via LoadUserText after first transform
+run 1 (ruleset A only)      changes: 1
+run 2 (same engine + B)     changes: 1  beta rewritten: NO
+run 3 (fresh engine + B)    changes: 2  beta rewritten: YES
+RESULT: FAIL - appended rule silently matched nothing on the reused engine (stale anchorLits; the pr=0 rescue never fires); issue #6 is present

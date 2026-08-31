@@ -18,3 +18,4 @@ carries the full story: defect, mechanism, expected vs actual.
 |---|---|---|---|
 | `issue01_walkunreachable` | [#1](https://github.com/msarson/VitTransform/issues/1) WalkUnreachable comments out live code | rule-driven | Reproduced |
 | `issue02_movetoks` | [#2](https://github.com/msarson/VitTransform/issues/2) MoveToks corrupts backward multi-token moves | harness | Reproduced (exit 1, result.txt) |
+| `issue03_checkcase` | [#3](https://github.com/msarson/VitTransform/issues/3) BuiltinCheckCase rewrites unvalidated CASE arms | rule-driven | Reproduced |

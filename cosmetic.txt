@@ -33,9 +33,13 @@
 ! or turn splitting off completely with
 !     --width=0
 !
-! NOTHING BELOW IS ON BY DEFAULT except comment alignment. A plain
+! WHAT A PLAIN RUN DOES: the DEFAULTSTYLE at the end of this file is 'tidy' -
 !     VitTransform cosmetic.txt src out
-! aligns trailing comments and does nothing else. Add the groups you want.
+! aligns trailing comments, UPPERCASES keywords, reindents block bodies to 2
+! and splits multi-statement lines. Pass --style= or --nogroup= to take less:
+!     --nogroup=cosmetic-keywordcase-upper     keep the author's keyword case
+! (This header once claimed only comment alignment ran by default - it had
+! drifted from the DEFAULTSTYLE below, #20.)
 ! =====================================================================
 
 NEEDBUILD 108                                        ! the minimum engine build this file needs

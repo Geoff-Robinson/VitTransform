@@ -406,7 +406,7 @@ pathish  BYTE             ! the unexpected 4th argument looks like half of an un
       exitRc = 1
     end
     if wantSumm                                            ! --summary only
-      message('VitMatch golden: ' & clip(fn.getValue()) & |
+      Say('VitMatch golden: ' & clip(fn.getValue()) & |
               '|Cases: ' & gr.caseCount                 & |
               '|Pass:  ' & gr.passCount                 & |
               '|Fail:  ' & gr.failCount                 & |
@@ -505,7 +505,7 @@ pathish  BYTE             ! the unexpected 4th argument looks like half of an un
 
   if ~srcSpec._DataEnd
     if wantSumm                                      ! --summary only
-      message('VitRules: parsed ' & clip(fn.getValue()) & |
+      Say('VitRules: parsed ' & clip(fn.getValue()) & |
               '|Metavars: ' & records(rl.metaVars)      & |
               '|Rules:    ' & records(rl.rules)         & |
               '|Errors:   ' & errs                      & |
@@ -651,6 +651,8 @@ pathish  BYTE             ! the unexpected 4th argument looks like half of an un
     param.setValue(probe.PathOnly(srcSpec.getValue()))                           ! reusing param as the path prefix
     loop idx = 1 to records(FilesQ)
       get(FilesQ, idx)
+      if band(FQ:attrib, ff_:DIRECTORY) then cycle.                              ! a subfolder matching src\* is not a source (#13) -
+                                                                                 !   the same filter the two sibling DIRECTORY sites apply
       if param._DataEnd
         FQ:Name = param.getValue() & '\' & FQ:Name
       end
@@ -659,7 +661,9 @@ pathish  BYTE             ! the unexpected 4th argument looks like half of an un
     end
     if ~records(FilesQ)
       outSt.append('no files matched ' & srcSpec.getValue() & '<13,10>')
-    end
+      eng.loadErrors += 1                                                        ! a wildcard that reads NOTHING did not do what it was told:
+    end                                                                          !   count it NOT LOADED so the run exits 1 - a watched sweep
+                                                                                 !   that transforms nothing must not report success (#13)
   else
     eng.TransformFile(srcSpec.getValue(), outSt)
     if wantDump then dumpSrc.setValue(srcSpec).

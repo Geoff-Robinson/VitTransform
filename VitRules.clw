@@ -394,6 +394,12 @@ rep       StringTheory
     end
     repTxt.setLength(optPos - 1)
     repTxt.trim()
+    if repTxt._DataEnd
+      if repTxt.valuePtr[repTxt._DataEnd] = ','       ! the comma separator spelling ('DELETE, ONCE') is legal -
+        repTxt.setLength(repTxt._DataEnd - 1)         !   strip it (and re-trim) or the exact-length DELETE/COMMENT
+        repTxt.trim()                                 !   tests below never fire and the rule loads as TEXT
+      end
+    end
     ! *** AND A KEYWORD THAT TAKES AN OPERAND IS THE SAME MISTAKE ONE TOKEN EARLIER. ***
     ! The test below reads the last CHARACTER, so `x = once` is caught by its '='. But
     ! `return once` ends in 'n', and the option word was the RETURN VALUE - the rule loaded
@@ -403,7 +409,11 @@ rep       StringTheory
     loop while kwPos > 1 and self.IsLabelChar(repTxt.valuePtr[kwPos - 1])
       kwPos -= 1
     end
-    kwU.setValue(upper(repTxt.valuePtr[kwPos : repTxt._DataEnd]))
+    if repTxt._DataEnd                                              ! empty after the split ('pat ==> ONCE'):
+      kwU.setValue(upper(repTxt.valuePtr[kwPos : repTxt._DataEnd])) !   [0 : 0] would slice a freed buffer -
+    else                                                            !   fall through to the empty-replacement
+      kwU.free()                                                    !   error below, as the comment above says
+    end
     if repTxt._DataEnd and (choose(kwU._DataEnd < 1, '', kwU.valuePtr[1 : kwU._DataEnd]) = 'RETURN' or choose(kwU._DataEnd < 1, '', kwU.valuePtr[1 : kwU._DataEnd]) = 'DO')
       self.AddIssue(pLineNo, vr:sevError, 'rule option ' & upper(optTxt.sub(1, optEnd - optPos))       & |
                     ' sits where an OPERAND belongs - ' & clip(kwU.getValue()) & ' takes one, so the'  & |
@@ -1784,6 +1794,16 @@ prevCh  string(1),auto
     of 41 ! ')'
       depth -= 1
       prevCh = ')'
+      x += 1
+      cycle
+    of 91 ! '['                       ! a bracket subscript nests like parens: an option word
+      depth += 1                      !   inside q.buf[i, skip] is a FIELD, not an option
+      prevCh = '['
+      x += 1
+      cycle
+    of 93 ! ']'
+      depth -= 1
+      prevCh = ']'
       x += 1
       cycle
     end

@@ -271,7 +271,7 @@ W WINDOW('VitStyle - rule selection & live preview'),AT(,,640,384),CENTER,GRAY,S
     BUTTON('&Open file...'),AT(262,4,56,14),USE(?OpenBtn)
     BUTTON('&Demo'),AT(320,4,40,14),USE(?DemoBtn)
     BUTTON('&Paste...'),AT(362,4,44,14),USE(?PasteBtn)
-    STRING(@s80),AT(410,7,,10),FULL,USE(fidelity)
+    STRING(@s96),AT(410,7,,10),FULL,USE(fidelity)  ! @s96 = the buffer: @s80 clipped the 83-char longest form (#30)
     PROMPT('Before'),AT(262,22),USE(?PROMPT5)
     PROMPT('After (live)'),AT(450,22),USE(?AfterHdr)
     ! changed lines: '> ' prefix + cell colour (the * modifier + 4-LONG tuple per column)
@@ -340,7 +340,7 @@ dbg StringTheory ! for trace
     if ~exists(rulesFn.getValue())
       Message('VitStyle: no rule file given, and the default ' & clip(rulesFn.getValue()) & |
               ' is not in this directory.||Run:  VitStyle <<rulefile>', 'VitStyle', ICON:Exclamation)
-      halt()
+      halt(1)  ! fatal path: a bare halt() exits 0 and scripts read SUCCESS (#14)
     end
     Message('No rule file given - using ' & clip(rulesFn.getValue()) & '.'                & |
             '||Run  VitStyle <<rulefile>  to choose a different one.', 'VitStyle', ICON:Asterisk)
@@ -552,7 +552,7 @@ i  LONG,AUTO
       if scratch._DataEnd > 700 then break.
     end
     message(scratch.getValue(), 'VitStyle', ICON:Exclamation)
-    halt()
+    halt(1)  ! fatal path: a bare halt() exits 0 and scripts read SUCCESS (#14)
   end
   if rl.lastUsed and rl.FindStyle(rl.lastUsed) ! reopen where the user left off (5c)
     curStyle = rl.lastUsed

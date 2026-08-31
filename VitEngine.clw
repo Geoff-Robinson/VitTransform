@@ -728,6 +728,27 @@ wU  string(12),auto
       return 1
     end
   end
+  ! THE PATTERN SIDE COUNTS TOO (#1, #17). A pattern that CONSUMED a level-bearing
+  ! token - an END, an inline '.' terminator, or a structure keyword - removed marks
+  ! the stream still needs, and no replacement scan can see that. Scanning only the
+  ! replacement let 'y = 1 end ==> y = 2' delete a close with rulesDirty clear; the
+  ! dead-code walk then commented LIVE code and the hoist pass moved a statement
+  ! across the wrong branch. A '.' row here may be a member dot, which over-reparses
+  ! (never under) - metavar rows are skipped, they bind rather than consume.
+  if self.rl.rules.patQ &= NULL then return 1. ! no pattern recorded - stay conservative
+  loop t = 1 to records(self.rl.rules.patQ)
+    get(self.rl.rules.patQ, t)
+    if errorcode() then break.
+    if self.rl.rules.patQ.mvx then cycle.
+    if self.rl.rules.patQ.tok &= NULL then cycle.
+    wU = upper(self.rl.rules.patQ.tok)
+    if wU = '.' then return 1.
+    case wU
+    of   'IF'   orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN' |
+       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END'
+      return 1
+    end
+  end
   return 0
 
 ! ------------------------------------------------------------------------------------
@@ -1019,9 +1040,9 @@ P loop
            and self.tk.GetTok(x+2) <> ';'           |
            and lower(self.tk.GetTok(x+2)) <> 'orof' |
            and lower(self.tk.GetTok(x+2)) <> 'to'
-          cycle
-        end
-        x += 1
+          cycle P                                   ! the operand is an EXPRESSION - refuse the whole CASE (#3):
+        end                                         !   the wrap loop below wraps every arm unconditionally, so
+                                                    !   skipping just this arm converts of 'b' & pad toof 98 & pad$n        x += 1
         param.setValue(self.tk.GetTok(x))
         if ~self.IsSingleChar(param.getValue()) then cycle P.
         if param._DataEnd > 1
@@ -1115,6 +1136,9 @@ P loop
     if ~startTok then break.
     endBracket = self.tk.MatchLeftBracket('(',')',startTok+1)
     if self.tk.getTok(endBracket-1) <> ')' then cycle.           ! expect )) as in val(chr(xxx))
+    if endBracket <> startTok + 6 then cycle.                    ! ONE token inside chr(...) - the same arity guard pass 2b
+                                                                 !   applies: dropping the parens from val(chr(i + 1)) * 2
+                                                                 !   leaves i + 1 * 2, different arithmetic (#19)
     self.tk.DeleteToks(endBracket-1, endBracket)
     self.tk.setTok(startTok, self.tk.getTok(startTok+4))         ! keeps spacing before
     self.tk.DeleteToks(startTok+1, startTok+4)
@@ -2635,7 +2659,13 @@ changes  long
         end
       end
       codeT = self.CodeTokOfScope(startT, mainEnd)
-      if codeT then changes += self.WalkUnreachable(codeT + 1, mainEnd, pPrefix, pLog).
+      if codeT
+        if self.LevelSpanBalanced(codeT + 1, mainEnd)
+          changes += self.WalkUnreachable(codeT + 1, mainEnd, pPrefix, pLog)
+        else
+          pLog.append('BUILTIN UnreachableCode: scope at line ' & self.LogLineOf(startT) & ' is level-unbalanced - NOT examined (refusal over restructuring, #1)<13,10>')
+        end
+      end
     elsif kind = vs:scRoutine
       codeT = self.CodeTokOfScope(startT, endT)
       if codeT
@@ -2643,7 +2673,13 @@ changes  long
       else
         exStart = self.FirstTokAfterLine(startT) ! simple routine (no DATA/CODE) - body starts next line
       end
-      if exStart then changes += self.WalkUnreachable(exStart, endT, pPrefix, pLog).
+      if exStart
+        if self.LevelSpanBalanced(exStart, endT)
+          changes += self.WalkUnreachable(exStart, endT, pPrefix, pLog)
+        else
+          pLog.append('BUILTIN UnreachableCode: routine at line ' & self.LogLineOf(startT) & ' is level-unbalanced - NOT examined (refusal over restructuring, #1)<13,10>')
+        end
+      end
     end
   end
   ! SAY WHAT WAS NOT EXAMINED - this walks SCOPES, so the unit is scopes, not declarations.
@@ -2655,12 +2691,38 @@ changes  long
   return changes
 
 ! ------------------------------------------------------------------------------------
+! Net level balance of a token span: +1 per '+', -1 per '-' OR an unmarked vt:end
+! (the inline-dot idiom). Returns 0 when opens outlive the span - the corruption
+! case: a walk over it inflates its depth and never rejoins (#1, #17). Underflow is
+! NOT a refusal: a range often ends inside its enclosing block, and every walk
+! already bails safely on depth < 0.
+! ------------------------------------------------------------------------------------
+VitEngine.LevelSpanBalanced Procedure(LONG pS, LONG pE)
+d  long
+i  long,auto
+  code
+  loop i = pS to pE
+    get(self.tk.tokens, i)
+    if errorcode() then break.
+    case val(self.tk.tokens.level)
+    of 43
+      d += 1
+    of 45
+      d -= 1
+    else
+      if self.tk.tokens.type = vt:end and self.tk.tokens.level <> '/' then d -= 1.
+    end
+  end
+  return choose(d <= 0)
+
+! ------------------------------------------------------------------------------------
 ! The dead-state walk over one contiguous code range.  Returns lines commented.
 ! ------------------------------------------------------------------------------------
 VitEngine.WalkUnreachable Procedure(LONG pExecStart, LONG pExecEnd, StringTheory pPrefix, StringTheory pLog)
 i         long,auto
 fol       byte,auto
 lvl       string(1),auto
+tty       string(1),auto    ! token TYPE, captured with lvl: the unmarked-vt:end belt reads it (#1)
 isEol     byte,auto
 txt       string(vs:maxName),auto
 tU        string(vs:maxName)
@@ -2681,6 +2743,7 @@ execStk   BYTE,DIM(64) ! execStk[depth]=1 when the opener at that depth is EXECU
     if errorcode() then break.
     fol = self.tk.tokens.firstOnLine
     lvl = self.tk.tokens.level
+    tty = self.tk.tokens.type
     ! A '|' CONTINUATION LINE IS NOT A LINE OF ITS OWN, and reading it as one
     ! produced source that DOES NOT COMPILE. The tokenizer marks every continuation token
     ! firstOnLine=1 with the bar and the CRLF in its strBefore (the same trap the hoist
@@ -2747,6 +2810,13 @@ execStk   BYTE,DIM(64) ! execStk[depth]=1 when the opener at that depth is EXECU
         dead = 0 ; break                            ! level underflow - tracking lost, bail (safe)
       end
       if dead and depth < deadDepth then dead = 0.  ! transfer's enclosing block closed
+    end
+    if tty = vt:end and lvl <> '-' and lvl <> '+' and lvl <> '/'
+      depth -= 1                                    ! the inline-dot idiom: a '.' terminator retyped vt:end but
+      if depth < 0                                  !   carrying NO '-' mark. Every sibling walk wears this belt
+        dead = 0 ; break                            !   (TailRejoinChk here, SmDepthWalk, KrClose...) - this one
+      end                                           !   lacked it, so depth stayed inflated and the rejoin at the
+      if dead and depth < deadDepth then dead = 0.  !   enclosing ELSE/END never fired: LIVE code was commented (#1)
     end
 
     ! ---- comment a dead content line - unless its TAIL holds a rejoin. The
@@ -3219,6 +3289,10 @@ ln long,auto
 VitEngine.BuiltinHoistCommonBranchCode Procedure(StringTheory pLog)
 changes long,AUTO
   code
+  if ~self.LevelSpanBalanced(1, records(self.tk.tokens))
+    pLog.append('BUILTIN HoistCommonBranchCode: token stream level-unbalanced - pass refused (a mispaired IF/END hoists a statement across the wrong branch, #17)<13,10>')
+    return 0
+  end
   changes = self.HoistOnePass(pLog)
   if changes
     self.wantReparse = true
@@ -5500,7 +5574,7 @@ t2   string(2),auto
     ! shortens the buffer as surely as a plain store does.
     t2 = self.tk.tokens.tok
     if t2[2] = '='
-      if t2[1] = '+' or t2[1] = '-' or t2[1] = '*' or t2[1] = '/' or t2[1] = '&'
+      if t2[1] = '+' or t2[1] = '-' or t2[1] = '*' or t2[1] = '/' or t2[1] = '&' or t2[1] = '%' or t2[1] = '^'
         return 1
       end
     end
@@ -5995,6 +6069,11 @@ nx       long                                     ! AUTO unsafe: read before wri
     return 0
   end
   if self.tk.GetTok(nx + 1) <> '1' then return 0. ! a LITERAL 1 - a variable holding 1 is not read here
+  case self.tk.GetTok(nx + 2)                     ! ... and the operand must END there: '1 + p' is not a read
+  of ',' orof ':' orof ')' orof ']'               !     from character 1, and the left() it wears does real work (#23)
+  else
+    return 0
+  end
   pEnd = self.tk.MatchLeftBracket('(', ')', pIx + 1)
   if ~pEnd then return 0.
   return 1
@@ -6302,6 +6381,7 @@ smF         byte                               ! SummaryOfCallAt out - the sm:* 
 evS         long,auto
 evE         long,auto
 evRes       byte                               ! 0 = undecided, 1 = TRUE, 2 = FALSE
+krHdrSkip   byte                               ! S2-S4 refused on LOOP/ELSIF/OF header lines (#18)
 evOp        string(4)
 ! ---- S1
 s1Then      long
@@ -6576,16 +6656,27 @@ KrLine routine
   if ~lnSemi                                  ! two statements on one line: the order of effects matters
     do KrTryS1
     edLine = records(KrEdQ)
-    do KrTryS2
+    krHdrSkip = 0
+    case upper(self.tk.GetTok(lineFirst))
+    of 'LOOP' orof 'ELSIF' orof 'OF' orof 'OROF' orof 'UNTIL' orof 'WHILE'
+      krHdrSkip = 1                           ! S2-S4 REFUSED on these headers (#18): a LOOP WHILE/UNTIL condition
+    end                                       !   re-evaluates every iteration and an ELSIF/OF operand runs under the
+                                              !   PREVIOUS branch's facts - but the opener fact-clear (KrLevelWalk)
+                                              !   lands only AFTER this line has already staged its edits, one line
+                                              !   too late for the header itself: loop while choose(x >= 0, 1, 0)
+                                              !   became loop while 1, an infinite loop
+    if ~krHdrSkip
+      do KrTryS2
+    end
     ! S3 runs only when S2 changed NOTHING on this line. A choose() can ENCLOSE a
     ! sub(), and a decided choose deletes the losing value WHOLE - so S2's delete span
     ! could contain S3's, and two overlapping deletes in one KrApply sweep is corruption,
     ! not under-reach. S1 cannot collide the same way: the only conditions KrEvalCond
     ! decides are five tokens long at most, so a call can never be inside one.
-    if records(KrEdQ) = edLine
+    if ~krHdrSkip and records(KrEdQ) = edLine
       do KrTryS3
     end
-    if records(KrEdQ) = edLine                ! S4 for the same reason S3 waits - one
+    if ~krHdrSkip and records(KrEdQ) = edLine                ! S4 for the same reason S3 waits - one
       do KrTryS4                              !   delete span per line, or KrApply corrupts
     end
   end
@@ -12418,7 +12509,10 @@ i  long,auto
        self.tk.tokens.tok &= NULL
       cycle
     end
-    if upper(self.tk.tokens.tok) = 'CODE' then return i.
+    if upper(self.tk.tokens.tok) = 'CODE'
+      if self.tk.tokens.strBefore &= NULL then cycle.  ! a COLUMN-1 'code' is a LABEL (a local variable), not the
+      return i                                         !   CODE statement - the exclusion BuiltinUnusedVars already applies (#10)
+    end
   end
   return 0
 
@@ -12633,18 +12727,27 @@ i      long,auto
 ln     long,auto
 autoT  long,auto
 commaT long,auto ! the earlier AutoCheck missed the compound  autoT = 0 ; commaT = 0  write - restored
+barT   long,auto ! a '|' token seen on the current physical line - the declaration continues (#24)
   code
   get(self.tk.tokens, pDeclTok)
   if errorcode() then return 0.
   ln = self.tk.tokens.lineNo
-  autoT = 0 ; commaT = 0
+  autoT = 0 ; commaT = 0 ; barT = 0
   i = pDeclTok
   loop
     i += 1
     get(self.tk.tokens, i)
     if errorcode() then break.
-    if self.tk.tokens.lineNo <> ln then break.
+    if self.tk.tokens.lineNo <> ln
+      if ~barT                                     ! not continued by a trailing '|' token - the bar can also live
+        if self.tk.tokens.strBefore &= NULL then break.
+        if ~self.TriviaHasContinuation(self.tk.tokens.strBefore) then break.  ! ...in the next token's trivia
+      end
+      ln = self.tk.tokens.lineNo                   ! an ,AUTO after a '|' is still THIS declaration - follow it (#24)
+      barT = 0
+    end
     if self.tk.tokens.tok &= NULL then cycle.
+    if self.tk.tokens.tok = '|' then barT = 1.
     if self.tk.tokens.type = 'b' and upper(self.tk.tokens.tok) = 'AUTO'
       autoT = i
       break

@@ -1,0 +1,8 @@
+! Rule file for issue #21. The replacement is 55 chars - within the
+! flatten allowance (spanW + 12) when the line's 40-column indent is
+! ignored, far past it when the indent is counted.
+
+METAVARS
+w1 w2    EXPR
+
+r = alpha(w1, w2)  ==>  r = alphabet_soup_replacement_name(w1, w2, w1, w2)

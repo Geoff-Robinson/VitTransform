@@ -1,0 +1,4 @@
+issue #25 harness: FindNotInLiteralOrComment state tracking
+case A  needle QQ in [a = 'x''y' ! z ' woo '']: returned 22  (expected 0 - the only match past the literal sits in the comment)
+case B  needle !  in [y = 'a!b' ! real]: returned 11  (expected 11 - control)
+RESULT: FAIL - the rejected-match byte is skipped unclassified; issue #25 is present

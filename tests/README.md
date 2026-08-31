@@ -35,3 +35,13 @@ carries the full story: defect, mechanism, expected vs actual.
 | `issue18_knownranges` | [#18](https://github.com/msarson/VitTransform/issues/18) KnownRanges folds loop header with stale facts | rule-driven | Reproduced (loop while 1) |
 | `issue19_valchr` | [#19](https://github.com/msarson/VitTransform/issues/19) val(chr(EXPR)) drops parentheses | rule-driven | Reproduced (i + 1 * 2) |
 | `issue20_cosmeticdrift` | [#20](https://github.com/msarson/VitTransform/issues/20) cosmetic.txt header vs DEFAULTSTYLE tidy | rule-driven | Reproduced (whole-file re-layout on a plain run) |
+| `issue21_applyonewidth` | [#21](https://github.com/msarson/VitTransform/issues/21) ApplyOne width check omits indent | rule-driven | Reproduced (94-col line, 0 width-skips) |
+| `issue22_deadguard` | [#22](https://github.com/msarson/VitTransform/issues/22) DeadGuard misses %= and ^= writes | rule-driven | Reproduced (guard deleted; -= control kept) |
+| `issue23_deadleft` | [#23](https://github.com/msarson/VitTransform/issues/23) DeadLeft false "starts at 1" | rule-driven | Reproduced (left() deleted on 1 + p) |
+| `issue24_autocontinuation` | [#24](https://github.com/msarson/VitTransform/issues/24) AUTO on continuation line never removed | rule-driven | Reproduced (unsafe AUTO left silently) |
+| `issue25_literalscan` | [#25](https://github.com/msarson/VitTransform/issues/25) Literal-scan state inversion after rejected match | harness | Reproduced (needle "found" inside a comment); latent - no in-tree callers |
+| `issue26_optionbracket` | [#26](https://github.com/msarson/VitTransform/issues/26) FindOptionStart splits inside [ ] | rule-driven | Reproduced (SKIP armed, replacement truncated; lint stops the run but misdiagnoses) |
+| `issue27_includeline` | [#27](https://github.com/msarson/VitTransform/issues/27) INCLUDE-not-found line number omits section offset | rule-driven | Reproduced (line 2 for line 15) |
+| `issue28_configdefault` | [#28](https://github.com/msarson/VitTransform/issues/28) Blank config defaults to Debug | harness | Reproduced (pp.Config = Debug) |
+| `issue29_notequiv` | [#29](https://github.com/msarson/VitTransform/issues/29) Leading <> never matches NOT = | rule-driven | Reproduced |
+| (no folder) | [#30](https://github.com/msarson/VitTransform/issues/30) VitStyle fidelity @s80 vs STRING(96) | source-cited | Confirmed in source (GUI display only) |

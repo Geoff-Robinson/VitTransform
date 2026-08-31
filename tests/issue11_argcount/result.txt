@@ -1,4 +1,4 @@
 issue #11 harness: CallArgCount vs bracket subscripts
-st.Append(names[i,j])  args counted: 2  (expected 1)
+st.Append(names[i,j])  args counted: 1  (expected 1)
 st.Append(names)       args counted: 1  (expected 1)
-RESULT: FAIL - a comma inside [ ] was counted as an argument separator; issue #11 is present
+RESULT: PASS

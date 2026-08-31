@@ -22,5 +22,5 @@ Demo procedure()
 r    byte
 
   code
-  DELETE,
+
   return

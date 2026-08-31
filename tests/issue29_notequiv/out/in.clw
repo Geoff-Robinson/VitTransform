@@ -29,5 +29,5 @@ r    long
 
   code
   if x <> 98 then r = 1.
-  if y NOT = 99 then r = 2.
+  if y <> 98 then r = 2.
   return

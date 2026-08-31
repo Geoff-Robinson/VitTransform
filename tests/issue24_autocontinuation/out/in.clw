@@ -27,8 +27,7 @@ Demo procedure()
 
 Demo procedure()
 
-x    long, |
-     auto
+x    long ! AUTO unsafe: read before write
 x2   long ! AUTO unsafe: read before write
 y    long,auto
 

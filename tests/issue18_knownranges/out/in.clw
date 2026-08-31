@@ -38,7 +38,7 @@ nm   string(20),auto
   nm = 'abc'
   x = len(nm)
   y = 1
-  loop while 1
+  loop while choose(x >= 0, 1, 0)
     x -= 1
   end
   return

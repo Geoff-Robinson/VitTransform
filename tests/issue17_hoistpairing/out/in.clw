@@ -35,10 +35,11 @@ r    long
 
   code
   if a
-    x = 5
     if b
+      x = 5
     r = 1
   else
+    x = 5
     r = 2
   end
   return

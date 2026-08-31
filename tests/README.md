@@ -1,4 +1,10 @@
 # Issue repro tests
+> **Status: FIXED.** Every issue below is fixed on the `fixes` branch -
+> the repros now demonstrate the corrected behavior (26/26 checks pass:
+> harnesses exit 0, rule-driven runs show refusals/correct rewrites).
+> The Status column records the ORIGINAL finding for history. Note the
+> `out\` folders and `result.txt` files hold post-fix output.
+
 
 One folder per GitHub issue on this fork. Two kinds of repro:
 

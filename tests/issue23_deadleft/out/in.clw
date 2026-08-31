@@ -35,5 +35,5 @@ p    long,auto
   st.setValue('a b')
   st.trim()
   p = 1
-  x = st.sub(1 + p, 3)
+  x = left(st.sub(1 + p, 3))
   return

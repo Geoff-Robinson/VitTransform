@@ -42,9 +42,9 @@ y    long
   code
   if x = 0
     return
-! #Unreachable:     if a then y = 2
-!  else
-!    x = 2
-!  end
-!  x = 3
-!  return
+    if a then y = 2
+  else
+    x = 2
+  end
+  x = 3
+  return

@@ -32,5 +32,5 @@ total  long
 
   code
   total += 1
-  total# = total# + 1
+  total# += 1
   return

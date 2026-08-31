@@ -40,7 +40,7 @@ x    string(20),auto
   st.setValue('abcdefgh')
   if st._DataEnd < 1 then return.
   st._DataEnd %= 4
-  x = st.valuePtr[1 : st._DataEnd]
+  x = choose(st._DataEnd < 1, '', st.valuePtr[1 : st._DataEnd])
   return
 
 Demo2 procedure()

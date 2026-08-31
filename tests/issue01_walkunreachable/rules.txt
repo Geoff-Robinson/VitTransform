@@ -1,0 +1,13 @@
+! Minimal rule file for the issue #1 repro.
+!
+! The rule below matches the DEAD one-liner INCLUDING its 'end' terminator
+! and re-emits it without one (a user tidy-rule shape). The engine decides
+! whether a rule needs a level reparse by scanning only the REPLACEMENT
+! tokens (VitEngine.RepHasLevelKeyword :715) - never what the pattern
+! consumed - so the close is gone, rulesDirty stays 0, no reparse happens,
+! and BUILTIN UnreachableCode walks a stream whose inner IF '+' is never
+! repaid. Live code below the dead line is then commented out.
+
+y = 1 end  ==>  y = 2
+
+BUILTIN UnreachableCode

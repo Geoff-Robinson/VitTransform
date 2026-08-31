@@ -3,8 +3,8 @@ rem Builds every CompileCheck.cwproj under tests\ - proves the test
 rem inputs are valid Clarion before they are used against the tool.
 rem Requires Clarion 12 + StringTheory, like the main apps.
 setlocal enabledelayedexpansion
-set MSB=%WINDIR%\Microsoft.NET\Framework4.0.30319\MSBuild.exe
-set CLB=C:\Clarion\Clarion12-12.0.14204in
+set MSB=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe
+set CLB=C:\Clarion\Clarion12-12.0.14204\bin
 set FAILED=
 for /d %%d in (issue*) do (
   if exist "%%d\CompileCheck.cwproj" (

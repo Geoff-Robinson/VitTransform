@@ -5357,7 +5357,7 @@ sb       StringTheory                                            ! strBefore is 
       self.wantReparse = true                                    ! tokens gone; later builtins must see the new stream
       changes += 1
       pLog.append('BUILTIN DeadGuard line ' & self.tk.MapLine(lineNo) & ': choose(' & clip(recvU) & |
-                  '._DataEnd < 1, ...) cannot fire - an earlier guard already returned on empty<13,10>')
+                  '._DataEnd << 1, ...) cannot fire - an earlier guard already returned on empty<13,10>')
       mainEnd -= (keep - i) + 1                                  !   up to R.valuePtr goes, and so does the ')'.
                                                                  ! Do NOT advance i: the
                                                                  !   survivor sits at i now, and a scope may hold

@@ -724,7 +724,8 @@ wU  string(12),auto
     wU = upper(self.rl.rules.repQ.tok)
     case wU
     of   'IF'   orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN' |
-       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END'
+       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END' |
+       orof 'UNTIL' orof 'WHILE'             ! post-test spellings carry the LOOP's '-' (review)
       return 1
     end
   end
@@ -745,7 +746,8 @@ wU  string(12),auto
     if wU = '.' then return 1.
     case wU
     of   'IF'   orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN' |
-       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END'
+       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END' |
+       orof 'UNTIL' orof 'WHILE'             ! post-test spellings carry the LOOP's '-' (review)
       return 1
     end
   end
@@ -1042,7 +1044,8 @@ P loop
            and lower(self.tk.GetTok(x+2)) <> 'to'
           cycle P                                   ! the operand is an EXPRESSION - refuse the whole CASE (#3):
         end                                         !   the wrap loop below wraps every arm unconditionally, so
-                                                    !   skipping just this arm converts of 'b' & pad toof 98 & pad$n        x += 1
+                                                    !   skipping just this arm converted of 'b' & pad to of 98 & pad
+        x += 1
         param.setValue(self.tk.GetTok(x))
         if ~self.IsSingleChar(param.getValue()) then cycle P.
         if param._DataEnd > 1
@@ -6382,6 +6385,7 @@ evS         long,auto
 evE         long,auto
 evRes       byte                               ! 0 = undecided, 1 = TRUE, 2 = FALSE
 krHdrSkip   byte                               ! S2-S4 refused on LOOP/ELSIF/OF header lines (#18)
+krHdrTok    long,auto                          ! the header keyword token - lineFirst, or past a column-1 label
 evOp        string(4)
 ! ---- S1
 s1Then      long
@@ -6657,7 +6661,12 @@ KrLine routine
     do KrTryS1
     edLine = records(KrEdQ)
     krHdrSkip = 0
-    case upper(self.tk.GetTok(lineFirst))
+    krHdrTok = lineFirst
+    get(self.tk.tokens, lineFirst)               ! a column-1 LABEL fronts the header keyword ('P loop while ...') -
+    if ~errorcode() and self.tk.tokens.type = vt:label and self.tk.tokens.strBefore &= NULL
+      krHdrTok = lineFirst + 1                   !   judge the keyword, not the label (#18 review)
+    end
+    case upper(self.tk.GetTok(krHdrTok))
     of 'LOOP' orof 'ELSIF' orof 'OF' orof 'OROF' orof 'UNTIL' orof 'WHILE'
       krHdrSkip = 1                           ! S2-S4 REFUSED on these headers (#18): a LOOP WHILE/UNTIL condition
     end                                       !   re-evaluates every iteration and an ELSIF/OF operand runs under the
@@ -12728,6 +12737,8 @@ ln     long,auto
 autoT  long,auto
 commaT long,auto ! the earlier AutoCheck missed the compound  autoT = 0 ; commaT = 0  write - restored
 barT   long,auto ! a '|' token seen on the current physical line - the declaration continues (#24)
+cmtAt  long,auto ! position of a '!' inside AUTO's strBefore - a comment riding the continuation
+svCmt  StringTheory ! ...salvaged onto the note line, or the user's text vanishes with the span
   code
   get(self.tk.tokens, pDeclTok)
   if errorcode() then return 0.
@@ -12755,6 +12766,16 @@ barT   long,auto ! a '|' token seen on the current physical line - the declarati
     if self.tk.tokens.tok = ',' then commaT = i. ! remember the most recent comma before AUTO
   end
   if ~autoT then return 0.
+  svCmt.free()                                   ! a comment riding the continuation ('long, | !keep') lives in
+  get(self.tk.tokens, autoT)                     !   AUTO's strBefore and would vanish with the span - salvage it
+  if ~errorcode() and not self.tk.tokens.strBefore &= NULL  ! onto the note line instead (#24 review)
+    cmtAt = instring('!', self.tk.tokens.strBefore, 1, 1)
+    if cmtAt
+      svCmt.setValue(self.tk.tokens.strBefore[cmtAt : size(self.tk.tokens.strBefore)])
+      svCmt.replace('<13>', ' ') ; svCmt.replace('<10>', ' ') ; svCmt.replace('|', '')
+      svCmt.trim()
+    end
+  end
   if commaT and commaT < autoT
     self.tk.DeleteToks(commaT, autoT)            ! remove ',AUTO' (comma + keyword together)
   else
@@ -12765,7 +12786,7 @@ barT   long,auto ! a '|' token seen on the current physical line - the declarati
   ! label has an empty strBefore, so starting there trips its 'expecting continuation
   ! line' stop.  pDeclTok+1 sits before the just-deleted comma, so the DeleteToks above
   ! does not shift its index.  pComment=1 supplies the '!' itself (as VitRewrite's NOTE does).
-  self.tk.InsertStringAtEOL(pDeclTok + 1, clip(pNote.getValue()), 1)
+  self.tk.InsertStringAtEOL(pDeclTok + 1, clip(pNote.getValue()) & choose(svCmt._DataEnd < 1, '', '  ' & clip(svCmt.getValue())), 1)
   return 1
 
 ! ------------------------------------------------------------------------------------

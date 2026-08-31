@@ -41,4 +41,7 @@ nm   string(20)
   loop while choose(x >= 0, 1, 0)
     x -= 1
   end
+L1 loop while choose(x >= 0, 1, 0)
+    x -= 1
+  end
   return

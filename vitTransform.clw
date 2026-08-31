@@ -179,6 +179,7 @@ dirProbe StringTheory     ! same-directory guard: probe filename written into <o
 probeSt  StringTheory     !   ...and looked for in the SOURCE directory (see the guard below)
 outDirC  CSTRING(261),AUTO
 pathish  BYTE             ! the unexpected 4th argument looks like half of an unquoted path, not half of a comma list
+realFiles LONG            ! wildcard rows that were actual FILES - the exit contract counts these (#13)
 
   CODE
   ! ---- --batch is read FIRST, in a pass of its own, BEFORE anything can refuse ----
@@ -653,14 +654,15 @@ pathish  BYTE             ! the unexpected 4th argument looks like half of an un
       get(FilesQ, idx)
       if band(FQ:attrib, ff_:DIRECTORY) then cycle.                              ! a subfolder matching src\* is not a source (#13) -
                                                                                  !   the same filter the two sibling DIRECTORY sites apply
+      realFiles += 1
       if param._DataEnd
         FQ:Name = param.getValue() & '\' & FQ:Name
       end
       eng.TransformFile(clip(FQ:Name), outSt)
       if wantDump then dumpSrc.setValue(clip(FQ:Name)).                          ! the stream exptk will still hold at the dump
     end
-    if ~records(FilesQ)
-      outSt.append('no files matched ' & srcSpec.getValue() & '<13,10>')
+    if ~realFiles                                                                ! rows are not files: a queue holding only subfolders still
+      outSt.append('no files matched ' & srcSpec.getValue() & '<13,10>')         !   transformed nothing (#13 review)
       eng.loadErrors += 1                                                        ! a wildcard that reads NOTHING did not do what it was told:
     end                                                                          !   count it NOT LOADED so the run exits 1 - a watched sweep
                                                                                  !   that transforms nothing must not report success (#13)

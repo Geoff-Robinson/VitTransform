@@ -28,10 +28,12 @@ Demo procedure()
 Demo procedure()
 
 x    long ! AUTO unsafe: read before write
+w    long ! AUTO unsafe: read before write  ! keepme
 x2   long ! AUTO unsafe: read before write
 y    long,auto
 
   code
   y = x
+  y = w
   y = x2
   return

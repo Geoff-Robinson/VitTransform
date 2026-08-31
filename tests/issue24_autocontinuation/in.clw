@@ -29,10 +29,13 @@ Demo procedure()
 
 x    long, |
      auto
+w    long, | ! keepme
+     auto
 x2   long,auto
 y    long
 
   code
   y = x
+  y = w
   y = x2
   return

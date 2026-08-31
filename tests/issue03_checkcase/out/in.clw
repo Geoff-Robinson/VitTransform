@@ -54,10 +54,10 @@ r2   byte
 
   code
   ch2 = 'a'
-  case ch2
-  of 'a'
+  case val(ch2)
+  of 97 ! 'a'
     r2 = 1
-  of 'b'
+  of 98 ! 'b'
     r2 = 2
   end
   return

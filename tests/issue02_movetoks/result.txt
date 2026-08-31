@@ -3,4 +3,5 @@ before:   A B C D E F
 expected: A D E B C F
 actual:   A D E B C F
 rc:       0  (st:ok = 0 - note it reports success either way)
+append:   MoveToks(2,0,2) on [A B C D] gave [A D B C]  expected [A D B C]
 RESULT: PASS - backward multi-token move preserved the block

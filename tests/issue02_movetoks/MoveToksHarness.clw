@@ -35,7 +35,10 @@
   end
 
 tk        VitTokenize
+tk2       VitTokenize
 src       StringTheory
+src2      StringTheory
+act2      StringTheory
 actual    StringTheory
 before    StringTheory
 rep       StringTheory
@@ -43,10 +46,12 @@ expected  string(32)
 tokTxt    string(32)
 i         long
 rc        long
+rc2       long
 
   code
   src.setValue('A B C D E F')
   tk.ParseText(src)
+  src2.setValue('A B C D')
 
   loop i = 1 to tk.records()
     tokTxt = tk.GetTok(i)
@@ -58,6 +63,9 @@ rc        long
 
   rc = tk.MoveToks(4, 2, 2)                    ! move the block [D E] to position 2
 
+  tk2.ParseText(src2)
+  rc2 = tk2.MoveToks(2, 0, 2)                  ! append case: pDst = 0 means END per MoveTok (review)
+
   loop i = 1 to tk.records()
     tokTxt = tk.GetTok(i)
     if ~tokTxt then cycle.
@@ -68,12 +76,21 @@ rc        long
 
   expected = 'A D E B C F'
 
+  loop i = 1 to tk2.records()
+    tokTxt = tk2.GetTok(i)
+    if ~tokTxt then cycle.
+    if val(tokTxt) = 10 then cycle.
+    if act2._DataEnd then act2.append(' ').
+    act2.append(clip(tokTxt))
+  end
+
   rep.setValue('issue #2 harness: MoveToks(4,2,2) - move block [D E] to position 2<13,10>')
   rep.append('before:   ' & before.getValue() & '<13,10>')
   rep.append('expected: ' & clip(expected)    & '<13,10>')
   rep.append('actual:   ' & actual.getValue() & '<13,10>')
   rep.append('rc:       ' & rc & '  (st:ok = ' & st:ok & ' - note it reports success either way)<13,10>')
-  if actual.getValue() = clip(expected)
+  rep.append('append:   MoveToks(2,0,2) on [A B C D] gave [' & act2.getValue() & ']  expected [A D B C]<13,10>')
+  if actual.getValue() = clip(expected) and act2.getValue() = 'A D B C'
     rep.append('RESULT: PASS - backward multi-token move preserved the block<13,10>')
     rep.SaveFile('result.txt')
   else

@@ -1779,7 +1779,8 @@ VitTokenize.MoveToks      Procedure(LONG pSrc, LONG pDst, LONG pNumToMove) !,LON
   if pNumToMove > records(self.tokens) - pSrc + 1 then pNumToMove = records(self.tokens) - pSrc + 1.
   loop pNumToMove times
     if self.moveTok(pSrc,pDst) <> st:ok then return st:notOK.
-    if pSrc > pDst              ! backward: the landed token pushed the REMAINING block down one,
+    if pDst and pSrc > pDst     ! backward: the landed token pushed the REMAINING block down one,
+                                !   (pDst = 0 is APPEND per MoveTok - neither pointer moves there)
       pDst += 1                 !   so the next block token sits at pSrc+1 - advance the source
       pSrc += 1                 !   alongside the destination or a survivor is moved instead (#2)
     end
@@ -4023,7 +4024,12 @@ moved   long
       z += 1                                                   !   trailing comment) does not: comments are AlignComments'
       get(self.tokens, z)                                      !   business, and the guard protects the CODE column
       if errorcode() then break.
-      if self.Tokens.tok &= NULL then break.
+      if self.Tokens.tok &= NULL               ! a trivia-only row still holds width - count it, keep walking
+        if not self.Tokens.strBefore &= NULL
+          dq:lineW += size(self.Tokens.strBefore)
+        end
+        cycle
+      end
       if size(self.Tokens.tok) = 1 and val(self.Tokens.tok) = 10 then break.
       if not self.Tokens.strBefore &= NULL
         dq:lineW += size(self.Tokens.strBefore)

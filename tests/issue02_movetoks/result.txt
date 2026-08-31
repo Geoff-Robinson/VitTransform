@@ -1,0 +1,6 @@
+issue #2 harness: MoveToks(4,2,2) - move block [D E] to position 2
+before:   A B C D E F
+expected: A D E B C F
+actual:   A D C B E F
+rc:       0  (st:ok = 0 - note it reports success either way)
+RESULT: FAIL - a token outside the requested block was moved; issue #2 is present

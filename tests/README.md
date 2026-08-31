@@ -22,3 +22,6 @@ carries the full story: defect, mechanism, expected vs actual.
 | `issue04_optiononly` | [#4](https://github.com/msarson/VitTransform/issues/4) Loader crash on option-only replacement | rule-driven | Reproduced (Debug traps; Release correct by accident) |
 | `issue05_commaoption` | [#5](https://github.com/msarson/VitTransform/issues/5) DELETE, ONCE loads as text replacement | rule-driven | Reproduced |
 | `issue06_staleanchors` | [#6](https://github.com/msarson/VitTransform/issues/6) Appended rule matches nothing (dead postings rescue) | harness | Reproduced (exit 1, result.txt) |
+| `issue08_aligndecl` | [#8](https://github.com/msarson/VitTransform/issues/8) AlignDeclTypes width guard measures fictional widths | rule-driven | Reproduced (44 cols under --width=40) |
+| `issue09_omitrevert` | [#9](https://github.com/msarson/VitTransform/issues/9) Stale inContinuation after OMIT revert drops tokens | rule-driven | Reproduced (token dump shows the hole) |
+| `issue10_codelabel` | [#10](https://github.com/msarson/VitTransform/issues/10) Column-1 'code' label breaks AutoCheck | rule-driven | Reproduced (valid AUTO stripped) |

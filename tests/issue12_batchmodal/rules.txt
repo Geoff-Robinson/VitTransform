@@ -1,0 +1,16 @@
+! Repro for issue #12: --batch still opens modal message() boxes.
+! https://github.com/msarson/VitTransform/issues/12
+!
+! vitTransform.clw:28 documents the contract: "--batch ... never open a
+! modal box" - every failure goes through Say(), which appends to
+! vt-batch.log under --batch. But the two end-of-run --summary boxes
+! (~:408 lint mode, ~:507 golden mode) call message() directly.
+!
+!   VitTransform rules.txt --summary --batch
+!
+! writes the IR dump, then hangs forever on a summary box nobody can
+! click. Demonstrated by running under a 15s watchdog: killed, exit 124.
+!
+! run.bat replays it WITH the box - click OK to let it finish.
+
+x = 1  ==>  x = 2

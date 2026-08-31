@@ -1,0 +1,9 @@
+! Rule file for the issue #17 repro. The rule consumes the inner
+! block's inline END terminator (RepHasLevelKeyword scans only the
+! replacement - see issue #1), leaving the inner IF's '+' unrepaid;
+! the hoist builtin then walks the unbalanced stream. Unlike its
+! sibling walks it does not refuse an unbalanced scope - it acts.
+
+x = 5 end  ==>  x = 5
+
+BUILTIN HoistCommonBranchCode

@@ -1,0 +1,4 @@
+issue #16 harness: vitTimer.Duration rounding
+1h50m  (660000 ticks): "1 hour 50 minutes"  expected "1 hour 50 minutes"
+59m59s (359900 ticks): "59 minutes 59 seconds"  expected "59 minutes 59 seconds"
+RESULT: PASS

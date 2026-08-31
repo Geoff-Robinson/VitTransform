@@ -1,4 +1,4 @@
-# VitTransform - 1.00
+# VitTransform - 1.0.1
 
 **A safe, format-preserving code transformer for [Clarion](https://www.softvelocity.com/) source code.**
 
@@ -165,7 +165,8 @@ to ST, but I think it is well worth buying if you don't already have it.
 > of that is a substitute for your own source control and your own testing. Read the report, diff
 > the output, build it, run your tests.
 
-Three commands. The first two change nothing.
+Three commands. Only the first writes no files at all - and none of the three touches your
+originals.
 
 ```
 VitTransform vitrules.txt src\*.clw --dry-run
@@ -578,9 +579,9 @@ explicit `--style=` **replaces** it outright - the style you ask for is the styl
 and anything the default style would have switched on that your style does not mention
 stays at its file state rather than leaking through. Axes your style does not name still
 fall back to their per-axis `DEFAULT` members, and `--group=`/`--nogroup=` still layer on
-top of whichever style applied. Removing the one line restores the older behaviour, where
-every axis fell back to its `DEFAULT` member and the header read `style: (file defaults)`.
-A rule file that has no `DEFAULTSTYLE` line behaves exactly that way.
+top of whichever style applied. Take the line out and every axis falls back to its per-axis
+`DEFAULT` member instead, with the header reading `style: (file defaults)` - which is exactly how
+a rule file that carries no `DEFAULTSTYLE` line behaves.
 
 `DEFAULTSTYLE` is refused in a `--userrules=` file, like `STYLE` and `LASTUSED`. A user
 file is *appended* to the shipped one, so a `DEFAULTSTYLE` there could silently re-select
@@ -1663,27 +1664,25 @@ tokenizer and the token-stream primitives everything splices through), `Preproce
 (`INCLUDE` expansion for `--thorough`), and `vitTimer` (elapsed-time measurement - the
 `seconds` figure in every report line).
 
-Those five are the only phase numbers in the source headers. `vitrules.txt`'s comments
-mention a "Phase 6" and "Phase 7" - those were plan-stage labels for the analysis and
-AutoCheck work, not classes; there is no sixth class.
+Those five are the only phase numbers anywhere in the source, and there is no sixth class.
 
 The comments in the source are the design record. They are unusually long in places, and
 that is deliberate: they carry **why** a thing is the way it is, which is the part that
 cannot be recovered by reading the code. Where a comment explains a decision at length,
 that length is the point - please don't compress it.
 
-Two labels appear in the comments and are worth knowing:
+One label appears in the comments and is worth knowing:
 
 | Label | What it marks |
 |---|---|
-| `!###` | a risk area, or something flagged for checking. Not all are still open |
 | `S1` - `S4` in `VitEngine.clw` | the four passes of the `KnownRanges` value walk, named after the routines that run them (`KrTryS1` .. `KrTryS4`). A comment saying "S3 runs only when S2 changed nothing" is naming those routines, not a document |
 
-Every transform report opens with the version that wrote it - `VitTransform 1.00` - and nothing
-else. What a report has to say about itself is which build produced the diff you are about to
-read; anything more is noise to the person reading it.
+Every transform report opens with the version and build number of the program that wrote it -
+`VitTransform 1.0.1 (build 253)` is the shape of it - and nothing else. That tells you which copy of
+VitTransform produced the report in front of you, which is worth knowing if you have more than one
+to hand.
 
-Two conventions worth knowing before you edit anything:
+Three conventions worth knowing before you edit anything:
 
 - **An apostrophe inside a Clarion literal terminates it.** Double it. This has broken the
   build three separate times, and the failure is confusing because the compile error lands
@@ -1969,7 +1968,7 @@ Two things genuinely do need the shipped file edited: disabling a *shipped* rule
 
 1. Work in a copy - `myrules.txt` - and pass that name. `<rulefile>` is just the first
    argument, so nothing requires the shipped name.
-2. Keep the **pristine** shipped file you started from beside it, e.g. `vitrules-v01-orig.txt`.
+2. Keep the **pristine** shipped file you started from beside it, e.g. `vitrules-orig.txt`.
 3. On upgrade, diff **orig against new** - not yours against theirs. That diff is small and is
    what the release notes describe, and you apply it to your copy. It is the difference between
    reading a handful of changed lines and re-reading the whole 1,977-line file.

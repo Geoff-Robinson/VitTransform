@@ -589,10 +589,8 @@ VitMatch.FindAnchorLit Procedure(STRING pKey)
 
 ! ------------------------------------------------------------------------------------
 ! FIRST anchorPost row whose keyText = pKey (postings sorted keyText,pos). 0 = absent.
-! this banner used to describe a binary search landing on SOME matching row and then
-! WALKING BACK to the first. There is no walk-back in the body and there never needs to be -
-! the POSITION lower-bound idiom below lands on the first row of the run directly. The comment
-! described an implementation that was considered, not the one that is here.
+! There is no walk-back from SOME matching row to the first, and none is needed - the
+! POSITION lower-bound idiom below lands on the first row of the run directly.
 ! ------------------------------------------------------------------------------------
 VitMatch.FindFirstPost Procedure(STRING pKey)
   code
@@ -1528,7 +1526,7 @@ epos       LONG
           return self.MatchHere(pP+1, pS+2)
         end
       elsif pt._DataEnd = 3 and upper(pt.valuePtr[1 : 3]) = 'NOT' and pP < self.patCount ! pattern `NOT =` vs source `<>`
-                                                                                    !   (L: slice the three bytes rather
+                                                                                    !   (slice the three bytes rather
                                                                                     !   than getValue() a copy of them)
         get(self.patQ, pP + 1)                                                           ! pt already holds row pP's text, so the buffer is free
         if ~errorcode() and ~self.patQ.mvx and not self.patQ.tok &= NULL

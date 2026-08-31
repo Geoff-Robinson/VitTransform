@@ -1,7 +1,7 @@
 ! =====================================================================
 ! vitrules.txt - the shipped VitTransform rule file.
 !
-! Ships with VitTransform 1.00. The NEEDBUILD line below names the minimum
+! Ships with VitTransform 1.0.1. The NEEDBUILD line below names the minimum
 ! engine build this file needs, and the engine refuses it if it is older.
 !
 ! HOW TO USE IT
@@ -475,13 +475,11 @@ st.isAll('1234567890')   ==>  st.isAllDigits()
 ! Returning a StringTheory's value.
 ! ---------------------------------------------------------------------
 ! Declared in the getvalue-form axis at the END of this file.
-! It CANNOT stay here. Rules run in FILE ORDER, and an always-on rule at
+! It CANNOT stay here. Rules run in FILE ORDER, so an always-on rule at
 ! line 435 fires long before the axis at the end, turning every
 !     return st.getValue()
-! into getValuePtr() - so the axis never saw the shape it matches and was
-! dead in this file, while its golden passed in isolation. Geoff's
-! suggestion was explicitly "rather than return st.getValuePtr()", i.e.
-! about THIS rule's output; the axis now owns both spellings.
+! into getValuePtr() - and the axis never sees the shape it matches.
+! The axis owns both spellings.
 
 ! ---------------------------------------------------------------------
 ! instring -> findChar when the needle is a
@@ -587,12 +585,11 @@ not st.findChar(w) or      ==>  not st.containsChar(w) or
 ~ st.findChar(w) or        ==>  ~st.containsChar(w) or
 
 ! ---------------------------------------------------------------------
-! SKIPped in favour of BUILTIN
-! CheckReplaces below. The rule rewrote the args with the rule's own
-! (tight) spelling before the builtin ran, losing the source's arg
-! spacing; the builtin preserves it (evidence: reference keeps
-! "replaceByte(97 , 98)" spaced where the source was spaced). Kept as
-! documentation - it is the Phase-0 acceptance artifact.
+! SKIPped in favour of BUILTIN CheckReplaces below, which does the same
+! job and leaves your argument spacing alone. Written as a rule it would
+! close up the spaces in "replaceByte(97 , 98)"; the builtin keeps them
+! as you wrote them. Left here, switched off, so you can see the rule
+! form of it.
 ! ---------------------------------------------------------------------
 st.replace(w,w1,0,1,0)   ==>  st.replace(w,w1)   SKIP
 
@@ -1098,13 +1095,9 @@ s1 = lower(clip(w))   ==>  s1 = lower(w)
 ! s1 (STRING, not CSTRING) is required, for the reason given above - a
 ! CSTRING keeps its trailing spaces and there the clip is real work.
 !
-! !! INTERIM. These four cover the 3-argument choose only, because a rule
-! !! has to name each argument position and choose takes any number of
-! !! them (LRM p607). The general answer is BUILTIN RedundantClip, which
-! !! counts commas as it walks and needs one safety argument rather than
-! !! one rule per position. RETIRE ALL FOUR OF THESE WHEN IT LANDS - see
-! !! CL1 in OPEN-FINDINGS.md. Leaving both would mean two things deciding
-! !! the same question, which is how a rule and a builtin drift apart.
+! These four cover the THREE-argument choose() only. A rule has to name
+! each argument position, and choose() takes any number of them
+! (LRM p607), so a choose() with more arms than this is left alone.
 ! ---------------------------------------------------------------------
 s1 = choose(w, clip(w1), w2)        ==>  s1 = choose(w, w1, w2)
 s1 = choose(w, w1 & clip(w2), w3)   ==>  s1 = choose(w, w1 & w2, w3)
@@ -1131,10 +1124,8 @@ s1 = choose(w, w1, w2 & clip(w3))   ==>  s1 = choose(w, w1, w2 & w3)
 ! pins the first upper( immediately after the assignment, so w is whatever
 ! sits inside THAT upper's parens - there is no other alignment to try. A
 ! third fold leaves a tail the end anchor refuses, so three or more folds are
-! left alone. Safe under-reach, pinned by golden-casehoist case
-! three-fold-not-covered. Covering N folds wants a builtin, not one rule per
-! arm count. (An earlier version of this comment claimed chains converge by
-! re-firing. They do not - the golden proved it.)
+! left alone. Safe under-reach: chains do NOT converge by re-firing. Covering
+! N folds wants a builtin, not one rule per arm count.
 ! ---------------------------------------------------------------------
 s1 = upper(w) & upper(w1)         ==>  s1 = upper(w & w1)
 s1 = lower(w) & lower(w1)         ==>  s1 = lower(w & w1)
@@ -1579,8 +1570,8 @@ sub(st.getValue(), w, w1)   ==>  st.sub(choose(w < 0, st._DataEnd + w + 1, w), w
 len(clip(st.getValue()))   ==>  st.clipLength()
 
 ! ---------------------------------------------------------------------
-! EOF note for the setvalue(st.sub(1,w2)) pair (replaces the
-! old Crop+NOTE spelling): setValue(st.sub(1,w2)) is a truncate-to-w2.
+! EOF note for the setvalue(st.sub(1,w2)) pair: setValue(st.sub(1,w2))
+! is a truncate-to-w2.
 ! Bare setLength(w2) EXPANDS past length (space-fill/realloc)
 ! and bare Crop(1,w2) KEEPS EVERYTHING on w2 <= 0 (Crop pEnd < 1 clamps
 ! to _DataEnd) where the original EMPTIES. The faithful form is the
@@ -1593,13 +1584,10 @@ len(clip(st.getValue()))   ==>  st.clipLength()
 ! setLength/Crop are void procedures - illegal as choose arms and
 ! illegal as a bare statement. Verified against ST 3.84 SetLength cell
 ! by cell incl the w2 = _DataEnd boundary. w2 is evaluated twice
-! (condition + call), so isVar gates it; a COMPOUND w2 (p - 1, the
-! behaviour, w2 <= 0 edge included. The clip-spelled start=1 siblings
-! now have their own isCallFree-guarded IF forms AHEAD of the general w1
-! rules (this is the renumbering cut that made the insertion legal).
-! !### the single-line IF
-! replacement (keyword + terminator dot) is a NOVEL replacement shape -
-! the golden proves emission; watch the first field run.
+! (condition + call), so isVar gates it: a COMPOUND w2 such as `p - 1`
+! is refused rather than evaluated twice. The clip-spelled start=1
+! siblings have their own isCallFree-guarded IF forms AHEAD of the
+! general w1 rules.
 
 
 ! The default start-position drop for
@@ -1636,7 +1624,7 @@ len(clip(st.getValue()))   ==>  st.clipLength()
 ! (chr(w) at runtime would be correct but no more readable).
 ! REVERSE() cannot generate this pair: a fold has no inverse, so both
 ! directions are written out.
-! !### a line converted OUT to byte and back again keeps the trailing
+! A line converted OUT to byte and back again keeps the trailing
 ! comment from the first conversion - harmless, but not a round trip
 ! to the exact original bytes.
 ! =====================================================================

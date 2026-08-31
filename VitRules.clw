@@ -434,11 +434,11 @@ rep       StringTheory
     return
   end
 
-  ! an unterminated quote in the REPLACEMENT used to load CLEAN and splice the junk:
+  ! without this, an unterminated quote in the REPLACEMENT loads CLEAN and splices the junk:
   ! the stray quote hides every option keyword from FindOptionStart (a trailing
-  ! WHERE/NOTE became replacement TEXT), and TokenizeFragment absorbs an open literal
+  ! WHERE/NOTE becomes replacement TEXT), and TokenizeFragment absorbs an open literal
   ! to end-of-fragment without complaint - the swallowed guard and the quote itself
-  ! were emitted into the user's source. Quote PARITY is the whole test: doubled ''
+  ! reach the user's source. Quote PARITY is the whole test: doubled ''
   ! counts 2, so odd proves an unterminated quote somewhere in the tail. The pattern
   ! side needs no twin - an odd quote before ==> hides ==> itself from
   ! PosOutsideQuotes and the line is refused in ParseText, with its own hint.
@@ -1360,7 +1360,7 @@ pairOK    BYTE,AUTO
     end
   end
 
-  ! ---- inverse-pair detection (anti-ping-pong, design section 4 layer 2) ----
+  ! ---- inverse-pair detection (anti-ping-pong, layer 2) ----
   ! Two rules that are exact textual inverses converge only if selection can never
   ! activate both together: they must sit in two DIFFERENT groups of ONE choice.
   ! Anywhere else (both ungrouped, one ungrouped, same group, different choices)
@@ -1787,7 +1787,7 @@ prevCh  string(1),auto
       x += 1
       cycle
     end
-    ! review H3: a word glued to '.' (member access, e.g. rec.Note) or ':' (prefix, e.g. PRE:Skip)
+    ! a word glued to '.' (member access, e.g. rec.Note) or ':' (prefix, e.g. PRE:Skip)
     ! is part of a qualified name, NOT a trailing option keyword - exclude those boundaries.
     if ~depth and ~self.IsLabelChar(prevCh) and prevCh <> '.' and prevCh <> ':' and self.IsLabelChar(pSt.valuePtr[x])
       wStart = x
@@ -2367,8 +2367,7 @@ patSet   STRING(1),DIM(500)
       cycle
     end
 
-    ! the generated pattern carries a trailing ';' END-OF-STATEMENT ASSERTION
-    !.
+    ! the generated pattern carries a trailing ';' END-OF-STATEMENT ASSERTION.
     ! Without it a reversed bare form PREFIX-MATCHES longer expressions and corrupts
     ! them: reverse of `if sc <> '' ==> if sc` is `if sc`, which would match the
     ! front of `if s = 'abc'` and emit `if s <> '' = 'abc'`. With the assertion the

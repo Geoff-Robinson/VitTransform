@@ -630,11 +630,11 @@ cpos    long,AUTO      ! position of a trailing '!', so ONCE is never read out o
      p2 <= p1 + 1                                   ! `INCLUDE()` - nothing to parse
     return 0
   end
-  ! ONE SCAN, ONE ANSWER. This used to be a second, independent ln.between('(',')'),
-  ! which finds its right delimiter with a plain search (StringTheory.FindBetweenPosition)
-  ! - so it had the identical defect and could disagree with p2. Slice between the
-  ! brackets we already matched instead.
-  args.SetValue(ln.Slice(p1 + 1, p2 - 1))           ! arg list inside the parens (L: Slice takes the two
+  ! ONE SCAN, ONE ANSWER. A second, independent ln.between('(',')') here would find its
+  ! right delimiter with a plain search (StringTheory.FindBetweenPosition) - the identical
+  ! defect to the one above, and it could disagree with p2. Slice between the brackets
+  ! already matched instead.
+  args.SetValue(ln.Slice(p1 + 1, p2 - 1))           ! arg list inside the parens (Slice takes the two
                                                     !   positions we already hold, so no length arithmetic)
   args.Split(',', '''', '''', true,st:clip,st:left) ! quote-aware, strip quotes; clip+left so ' <39>Sect<39>' unquotes too
   if ~args.records() then return 0.
@@ -674,7 +674,7 @@ cap   byte
     tl.SetValue(bw.getLine(i)) ; tl.Trim()
     if self.IsSectionLine(tl)                                                                          ! the word SECTION then a '(' - a label merely STARTING
       tl.SetBetween('(',')',,,,,true)                                                                  !   'Section' (SectionSize EQUATE(100)) is BODY, and the
-      tl.unquote('''', '''')                                                                           !   7-char prefix test used to end the capture there,
+      tl.unquote('''', '''')                                                                           !   a 7-char prefix test would end the capture there,
       cap = choose(upper(choose(tl._DataEnd < 1, '', tl.valuePtr[1 : tl._DataEnd])) = upper(pSection)) ! silently truncating the section
       if cap and ~pStartLine then pStartLine = i.                                                      ! the section body starts at line i+1 of the included file
       cycle                                                                                            ! never emit the SECTION line

@@ -67,14 +67,14 @@
     SyncPanes(BYTE pWhich)                                                     ! 1 = before selected -> scroll after; 2 = after selected -> scroll before
     SortChanges()                                                              ! (re)sort the change list by rule# or line# per sortMode
     OverrideLists(StringTheory pGrps, StringTheory pNogr)                      ! OvrQ -> csv pick/unpick lists (shared by ApplyOverrides + the workbench test)
-    Workbench()                                                                ! the modal rule workbench (design section 5, D1-D6 ratified)
+    Workbench()                                                                ! the modal rule workbench
     WbBuildRuleList()                                                          ! existing user rules -> the workbench droplist
     WbLoadPick()                                                               ! droplist pick -> editor (edit-in-place) / (new rule)
     WbComposeUser(StringTheory pOut, *LONG pDraftLn)                           ! prospective VitStyle.rules.txt text = disk file + draft (replace or append)
     WbLint(BYTE pShowOk),LONG,PROC                                             ! lint the prospective COMBINED set on the scratch instances; fills the panel; returns SEV:Error count
     WbTest()                                                                   ! run the draft on the current preview source via the scratch engine
-    WbSave(),LONG                                                              ! D3 lint gate + write userFn; 1 = saved (refresh happens post-close)
-    WbAfterSave()                                                              ! AFTER close(WbW): full reload + force group on + D6 profile offer -
+    WbSave(),LONG                                                              ! lint gate + write userFn; 1 = saved (refresh happens post-close)
+    WbAfterSave()                                                              ! AFTER close(WbW): full reload + force group on + profile offer -
                                                                                !     main-window controls must never be touched while the modal child is open
     LoadUiPrefs()                                                              ! colour: read VitStyle.ui.txt (CHGCOLOR/CHGCOLOR2) or defaults
     SaveUiPrefs()                                                              ! colour: write it (best-effort)
@@ -201,7 +201,7 @@ uiFn       StringTheory        ! VitStyle.ui.txt next to the exe (UI prefs - NOT
 userLoaded BYTE                ! VitStyle.rules.txt present + validated + appended to the live set
 wbPickTxt  STRING(70)          ! workbench droplist display
 draftVar   CSTRING(4096)       ! the draft rule text (TEXT control; one logical rule, | continuations ok)
-wbGrp      STRING(vr:maxName)  ! target GROUP (default my-rules, D6)
+wbGrp      STRING(vr:maxName)  ! target GROUP (default my-rules)
 wbLintTxt  STRING(2500),AUTO   ! lint panel
 wbEditId   LONG                ! ruleId being edited in place (0 = new rule)
 wbDraftId  LONG                ! the draft's ruleId in the prospective file (userBase + line) - the fires filter
@@ -299,7 +299,7 @@ NameW WINDOW('Save profile'),AT(,,210,52),CENTER,MODAL,SYSTEM,GRAY,FONT('Segoe U
     BUTTON('&Cancel'),AT(154,32,45,14),USE(?CancelBtn)
   END
 
-! the rule workbench (design section 5) - second modal window with lists (a
+! the rule workbench - second modal window with lists (a
 !    flagged risk area). FIXED size (no RESIZE = no reflow risk). One rule per visit
 !    (ratified). NameW/PasteW modal pattern: local accept loop, break on Save/Cancel.
 WbW WINDOW('Rule workbench - user rules in VitStyle.rules.txt'),AT(,,480,326),CENTER,MODAL,SYSTEM,GRAY, |
@@ -475,11 +475,10 @@ dbg StringTheory ! for trace
     of EVENT:Sized        orof EVENT:Maximized orof EVENT:Restored
       ! *** THESE ARE THREE SEPARATE EVENTS AND THE WINDOW SENDS THE RIGHT ONE. *** LRM: Sized
       ! is "the user has RESIZED the window", Maximized is "the user has MAXIMIZED" and Restored
-      ! is "restored the window's previous size". Only Sized was handled here, so maximising or
-      ! restoring never reflowed anything - which is why a maximised window laid itself out for
-      ! whatever size it happened to have at startup and left dead grey down the right and along
-      ! the bottom. The comment above this line used to say "resized/maximized/restored", which
-      ! is what it was MEANT to catch, not what it caught.
+      ! is "restored the window's previous size". Handle Sized alone and maximising or restoring
+      ! reflows nothing, so a maximised window lays itself out for whatever size it happened to
+      ! have at startup and leaves dead grey down the right and along the bottom. All three are
+      ! caught here, on purpose.
       ResizeControls()
     of EVENT:CloseWindow
       break
@@ -519,7 +518,7 @@ i  LONG,AUTO
       end
       message(scratch.getValue(), 'VitStyle', ICON:Exclamation) ! NON-fatal (the shipped-file halt below stays)
     else
-      rl.LoadUserRules(userFn.getValue())                       ! clean -> append to the LIVE set (D4 order:
+      rl.LoadUserRules(userFn.getValue())                       ! clean -> append to the LIVE set (load order:
       userLoaded = 1                                            !   shipped, then user, then the profile styles)
     end
   end
@@ -529,12 +528,11 @@ i  LONG,AUTO
     rl.LoadStyleFile(profFn.getValue())
     if rl.ErrorCount() > e
       ! profiles are machine-written convenience - a broken one must not brick
-      ! startup. An over-long member list written by an earlier build did exactly
-      ! that: the fatal halt below fired and its message blamed the RULE file, so the
-      ! user was sent to fix the wrong file and VitStyle refused to start until the
-      ! profiles file was hand-edited. Report against the RIGHT file, then rebuild
-      ! WITHOUT the profile layer - the same non-fatal treatment the user rulefile
-      ! has always had (D5 above).
+      ! startup. Without this, a broken profile - an over-long member list, say -
+      ! fires the fatal halt below, whose message blames the RULE file: the user is
+      ! sent to fix the wrong one, and VitStyle refuses to start until the profiles
+      ! file is hand-edited. Report against the RIGHT file, then rebuild WITHOUT the
+      ! profile layer - the same non-fatal treatment the user rulefile gets above.
       scratch.setValue('VitStyle: ' & rl.ErrorCount() - e & ' error(s) in ' & clip(profFn.getValue()) & |
                        ' (your saved profiles) - PROFILES SKIPPED this session.'                      & |
                        '|Fix or delete that file; until then the style list shows shipped styles only.')
@@ -1106,9 +1104,9 @@ ofs      LONG
     if ~chgRow then cycle.
 
     ! a row whose third word is not 'line' - AutoCheck's ADD lines, the END-hoist
-    ! formats - used to be DROPPED here, so the list showed fewer changes than the header
-    ! counted and the ones it hid were real. They are kept with no line number instead; the
-    ! click handler already returns on ~cq:ln, so such a row simply does not navigate.
+    ! formats - must NOT be dropped here: the list would show fewer changes than the header
+    ! counted, and the ones it hid would be real. They are kept with no line number instead;
+    ! the click handler already returns on ~cq:ln, so such a row simply does not navigate.
     clear(ChgQ)
     cq:ln   = lnNo
     cq:rule = ruleNo
@@ -1611,10 +1609,10 @@ effH    LONG,AUTO
   ?ChangeList{PROP:Width} = rW ; ?ChangeList{PROP:Height} = chH
 
   ! ---- THE LEFT COLUMN GROWS AS WELL ----------------------------------------------------
-  ! It used to be left entirely alone, which is why a maximised window had the group list,
-  ! the doc box and the selection table all sitting in the top 384 units with dead grey under
-  ! them. Its WIDTH is still fixed - that is deliberate, it is a column of controls - but its
-  ! height should follow the window like everything else.
+  ! Left entirely alone, a maximised window puts the group list, the doc box and the selection
+  ! table all in the top 384 units with dead grey under them. Its WIDTH is still fixed - that
+  ! is deliberate, it is a column of controls - but its height should follow the window like
+  ! everything else.
   !
   ! The extra height is SPLIT between the group list and the effective-selection table, the
   ! two that can run long; the doc box keeps its 66. At the design height this computes the
@@ -1765,7 +1763,7 @@ r  LONG,AUTO
   end
 
 ! ====================================================================================
-! the rule workbench (design section 5; D1-D6 + one-rule-per-visit ratified).
+! the rule workbench - one rule per visit.
 ! Everything runs on the SCRATCH wbRl/wbEng - the live rl/eng change only via
 ! WbSave's full reload. Lint = the save gate = lint of the PROSPECTIVE file (disk +
 ! draft composed exactly as save would write it), so what you lint IS what you save.
@@ -1775,7 +1773,7 @@ r      LONG,AUTO
 saved  BYTE
   code
   WbBuildRuleList()
-  if ~wbGrp then wbGrp = 'my-rules'. ! D6 default; sticky across visits
+  if ~wbGrp then wbGrp = 'my-rules'. ! default target group; sticky across visits
   wbEditId  = 0
   wbPickTxt = '(new rule)'
   wbLintTxt = ''
@@ -1901,7 +1899,7 @@ i  LONG,AUTO
 ! lines is consumed) or APPENDED inside its GROUP block (before the block's end),
 ! creating the block (and the file header) when absent. pDraftLn returns the 1-based
 ! OUTPUT line of the draft's first content line - the rule's ruleId in the prospective
-! file is vr:userBase + pDraftLn (the fires filter and the D2 U-number).
+! file is vr:userBase + pDraftLn (the fires filter and the U-number shown in the panel).
 ! ------------------------------------------------------------------------------------
 WbComposeUser PROCEDURE(StringTheory pOut, *LONG pDraftLn)
 have    StringTheory
@@ -2039,8 +2037,8 @@ EmitDraft routine
 
 ! ====================================================================================
 ! lint the prospective combined set (shipped + prospective user file + profile
-! styles) on the SCRATCH wbRl. Fills the panel (U-numbers per D2), sets wbDraftId,
-! clears stale test results. Returns the SEV:Error count = the D3 save gate.
+! styles) on the SCRATCH wbRl. Fills the panel with U-numbers, sets wbDraftId,
+! clears stale test results. Returns the SEV:Error count, which is the save gate.
 ! ------------------------------------------------------------------------------------
 WbLint PROCEDURE(BYTE pShowOk)
 prosp  StringTheory
@@ -2310,7 +2308,7 @@ ln     LONG
 ! ====================================================================================
 ! post-save refresh - runs AFTER close(WbW), main window is current again. The
 ! FULL normal reload (no incremental patching of live queues), force the saved
-! group ON for the session, the D6 profile offer, then the standard refresh chain.
+! group ON for the session, the profile offer, then the standard refresh chain.
 ! ------------------------------------------------------------------------------------
 WbAfterSave PROCEDURE()
 mem   StringTheory
@@ -2324,7 +2322,7 @@ svSty STRING(vr:maxName),AUTO
   if svSty and rl.FindStyle(svSty)                                              !   silently reverted the SESSION's style choice, and the
     curStyle = svSty                                                            !   retained overrides were then re-applied on the wrong base.
   end                                                                           !   ApplyOverrides below re-resolves with the restored style.
-  g = rl.FindGroup(wbGrp)                                                       ! force the saved group ON for this session (D6 makes it
+  g = rl.FindGroup(wbGrp)                                                       ! force the saved group ON for this session (the group is
   if g                                                                          !   opt-in, but the author wants to SEE the rule live)
     loop i = 1 to records(OvrQ)
       get(OvrQ, i)

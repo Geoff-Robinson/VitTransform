@@ -106,11 +106,11 @@ x          long,auto
 
   self.ignoreOmittedCode = 1                                                     ! honour the declared BYTE(1) default EXPLICITLY.
                                                                                  ! Clarion does NOT apply inline initial values to NEW'd CLASS reference data
-                                                                                 ! members, so the .inc 'BYTE(1)' was silently 0 at runtime -> the OMIT state
-                                                                                 ! machine (gated on this flag, ParseText ~line 136) never ran, so an
-                                                                                 ! unconditional omit('...') block leaked its (non-'!'-prefixed) prose into the
-                                                                                 ! token stream, where dotted words (e.g. 'and works...)') desynced the label
-                                                                                 ! merge and hit the fatal stop() below. Absorbed OMIT text is preserved on
+                                                                                 ! members, so without this the .inc 'BYTE(1)' is silently 0 at runtime -> the
+                                                                                 ! OMIT state machine (gated on this flag, ParseText ~line 136) never runs, and
+                                                                                 ! an unconditional omit('...') block leaks its (non-'!'-prefixed) prose into the
+                                                                                 ! token stream, where dotted words (e.g. 'and works...)') desync the label
+                                                                                 ! merge and trip the gated diagnostic below. Absorbed OMIT text is preserved on
                                                                                  ! rejoin via strBefore, so this stays byte-lossless. See test.clw omit cases.
 
   self.LogFn = 'Log on ' & clip(left(format(today(),@d12))) & ' at ' & clip(left(format(clock(),@T05))) & '.txt'
@@ -208,7 +208,7 @@ decln       string(vt:maxVarLen) ! declaration
 tok         StringTheory
 strBefore   StringTheory
 tempST      StringTheory
-svBefore    StringTheory         ! review C1: the strBefore accumulated up to (and only) the OMIT keyword
+svBefore    StringTheory         ! the strBefore accumulated up to (and only) the OMIT keyword
 !--------
 ! following are really for GetNextToken but put here for speed
 inComment   Long,auto
@@ -237,7 +237,7 @@ inQuotes    Long,auto
           do OmitIsDirective                                                  ! a METHOD named Omit is not the directive
           if omitDir
             svPos = pos                                                       ! save position
-            svBefore.setValue(strBefore) ! review C1: snapshot the pre-OMIT whitespace only; states 1-3 do not free strBefore, so GetNextToken would otherwise leave the interior header ws in it AND the slice below re-captures the same ws -> duplicate
+            svBefore.setValue(strBefore) ! snapshot the pre-OMIT whitespace only; states 1-3 do not free strBefore, so GetNextToken would otherwise leave the interior header ws in it AND the slice below re-captures the same ws -> duplicate
             state = 1
             cycle
           end
@@ -281,7 +281,7 @@ inQuotes    Long,auto
             self.deleteTok(records(self.tokens))                              ! delete OMIT from token queue
             tempST.setValue(st.slice(svPos-4,pos))
             tempST.replace('<10>','<13,10>')
-            strBefore.setValue(svBefore) ! review C1: keep only the pre-OMIT ws; the slice already holds the whole OMIT block (incl. interior ws), so appending it once avoids the duplicate
+            strBefore.setValue(svBefore) ! keep only the pre-OMIT ws; the slice already holds the whole OMIT block (incl. interior ws), so appending it once avoids the duplicate
             strBefore.append(tempST)                                          ! we append all the chars in the omit to the "before" string
             state = 4                                                         ! finished with omit but want to preserve 'before' text when getting next token
             pos += 1
@@ -292,7 +292,7 @@ inQuotes    Long,auto
             self.deleteTok(records(self.tokens))                              ! delete OMIT from token queue
             tempST.setValue(st.slice(svPos-4))                                ! slice to EOF
             tempST.replace('<10>','<13,10>')
-            strBefore.setValue(svBefore)                                      ! review C1: keep only the pre-OMIT ws (see above); slice holds the whole block
+            strBefore.setValue(svBefore)                                      ! keep only the pre-OMIT ws (see above); slice holds the whole block
             strBefore.append(tempST)                                          ! we append all the chars in the omit to the "before" string
             tok.free()
             do AddToken
@@ -409,8 +409,6 @@ inQuotes    Long,auto
                                                                  !   '<<' tested for is the omittable-parameter marker that opens
                                                                  !   a prototype argument. No multi-character token that could
                                                                  !   appear immediately before a '*TYPE' starts with one of them.
-                                                                 !   (This comment used to say "do NOT use val() here" - on the
-                                                                 !   line that does; the code is right, the warning was not.)
       of 40 orof 44 orof 60                                      ! '(' orof <comma> orof '<<'
         self.getTok(x+1,StrBefore,Tok)
         if tok._DataEnd and ~strBefore._DataEnd                  ! no spaces between
@@ -1180,7 +1178,7 @@ slnX   long,auto                     !
     get(self.tokens,x)
     if errorcode() then break. !or self.Tokens.tok &= NULL then break.  ! no more tokens !!! GCR 23Sep2023 remove check for null tok as can have null tok on last line (had a file with just a few spaces on last line)
     if not self.Tokens.strBefore &= NULL
-      loop slnX = 1 to size(self.Tokens.strBefore)                                                   ! count LF bytes directly - the old ST setValue+count allocated per token on a hot post-edit pass
+      loop slnX = 1 to size(self.Tokens.strBefore)                                                   ! count LF bytes directly - an ST setValue+count here allocates per token on a hot post-edit pass
         if val(self.Tokens.strBefore[slnX]) = 10 then ln += 1.
       end
     end
@@ -2360,8 +2358,7 @@ x       long,auto
 ! ------------------------------------------------------------------------------------
 ! The MIRROR of MatchLeftBracket: given a RIGHT bracket, scan BACKWARDS for the LEFT one that
 ! opens it, counting depth. Returns 0 if unmatched.
-! Read the direction off the loop, not off the name: this one runs `pStart to 1 by -1`. The
-! banner used to say FORWARD, which is what MatchLeftBracket does.
+! Read the direction off the loop, not off the name: this one runs `pStart to 1 by -1`.
 ! ------------------------------------------------------------------------------------
 VitTokenize.MatchRightBracket  Procedure(String pLeftBracket, String pRightBracket, Long pStart=0) ! searches BACKWARDS and returns matching token number
 ans     long
@@ -2779,7 +2776,7 @@ x  long,auto
       self.tokens.strBefore = tk.Tokens.strBefore
     end
     self.tokens.type = tk.tokens.type
-    self.tokens.level = tk.tokens.level ! review H1: carry the level mark (+/-/'/'x) so spliced keywords are not left blank for same-pass level consumers
+    self.tokens.level = tk.tokens.level ! carry the level mark (+/-/'/'x) so spliced keywords are not left blank for same-pass level consumers
     add(self.Tokens,pPos)
 ?   assert(~errorcode())
   end
@@ -2906,7 +2903,7 @@ sx         long,auto                                        ! walk cursor for a 
   ! the bounds wanted are ">= pStartLine" and "<= pEndLine", NOT "= pStartLine" and
   ! "= pEndLine+1". A BLANK or COMMENT-ONLY line carries no token of its own - its text lives
   ! in the strBefore of the next real token - so a keyed get on that line number MISSES, and a
-  ! blank boundary line is the most ordinary thing in a source file. What the miss used to do:
+  ! blank boundary line is the most ordinary thing in a source file. What a miss would cost:
   !   at the START, `return 0` - the token reported ABSENT from a range that may well hold it;
   !   at the END, endTok left 0, which FindTok reads as "to EOF" - matches handed back from
   !   OUTSIDE the range asked for, which is the worse of the two.
@@ -3186,10 +3183,10 @@ VitTokenize.DescribeChar Procedure(STRING pChar)
 ! ------------------------------------------------------------------------------------
 ! Write the whole token stream to a file, one token per line, for eyeballing.
 !
-! With no filename it invents a timestamped one in the CURRENT DIRECTORY. It used to put that
-! default under .\testdata\ - a directory that exists in this project and nowhere else, so for
-! anyone else the save failed, and the failure was trace-only (both off by default): the
-! documented level-census workflow produced nothing at all, silently. The CLI always passes an
+! With no filename it invents a timestamped one in the CURRENT DIRECTORY, and that is
+! deliberate: a default under .\testdata\ names a directory that exists in this project and
+! nowhere else, so for anyone else the save fails - trace-only (both off by default), so the
+! documented level-census workflow produces nothing at all, silently. The CLI always passes an
 ! explicit name, so this default is for embedders. This is the tool of choice
 ! when a level census does not balance: the dump shows each token's level mark, and the
 ! structure that opened without closing is visible in a way the source is not.
@@ -3562,8 +3559,8 @@ OnePass routine
       end
     else
       ! AND / OR are the natural place to wrap a long condition, and Parser.clw is
-      ! full of them - `if (UPPER(x) = 'PROCEDURE' OR UPPER(x) = 'FUNCTION')` had no candidate
-      ! at all before this and stayed 102 characters wide. Break BEFORE the word, like '&', so
+      ! full of them - `if (UPPER(x) = 'PROCEDURE' OR UPPER(x) = 'FUNCTION')` has no other
+      ! candidate at all and would stay 102 characters wide. Break BEFORE the word, like '&', so
       ! the operator starts the continuation line and the condition reads down the page.
       if upper(self.Tokens.tok) = 'AND' or upper(self.Tokens.tok) = 'OR'
         if self.Tokens.type = vt:reservedWord then lq:kind = 2.
@@ -5261,9 +5258,9 @@ moved         long                 ! comments actually moved - the caller counts
     ! else. Squeezing therefore never moves a '|' - the slack goes in front of the operator -
     ! so it is safe on EVERY such row, and both legs write the same text. ***
     ! A padPrev row comes through even when it is NOT moving: its gap is normalised from the
-    ! CODE, so a row that stays put still gets the same text on both legs of a round trip. That
-    ! is what the earlier attempt at this line was reaching for; it failed because normalising
-    ! MOVED the '|' two columns left. It no longer does - the slack goes in front of the operator.
+    ! CODE, so a row that stays put still gets the same text on both legs of a round trip. This
+    ! is only safe because normalising does NOT move the '|' - the slack goes in front of the
+    ! operator, as the note above says.
     if ~CmtQ.Adjust and ~CmtQ.padPrev then cycle.
     if ~CmtQ.Pos then self.TraceIt('VitTokenize.AlignComments: unexpected lack of comment pos on line ' & x);cycle.
 

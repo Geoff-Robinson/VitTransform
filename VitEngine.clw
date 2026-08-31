@@ -746,8 +746,8 @@ wU  string(12),auto
 ! ------------------------------------------------------------------------------------
 VitEngine.DoBuiltin Procedure(LONG pRow, StringTheory pLog)
   code
-  ! ---- the three whole-file analyses are RESTRICTED on a .txa (the H12 ruling,
-  !, strict form), and SAY SO once. They no longer refuse wholesale: each
+  ! ---- the three whole-file analyses are RESTRICTED on a .txa (the embed rule, strict
+  !      form), and SAY SO once. They do NOT refuse wholesale: each one
   !      runs, and the per-scope gate (ScopeFullyEmbedded, applied in AutoEligible for
   !      AutoCheck + UnusedAssignments and in RemoveUnusedPass for UnusedVars) admits
   !      only procedures/routines contained wholly inside one embed - in practice mostly
@@ -905,7 +905,7 @@ L   loop
       pos += 1
       pos = stTmp.findchars('><<', pos)
       if ~pos then break.
-      if pos+2 <= stTmp._DataEnd and stTmp.valuePtr[pos+2] = '<<' then cycle. ! doubled << = literal < char (L: was sub(pos+2)='<' - rest-of-string compare AND an un-doubled literal; inherited from vtxaDiff 2683)
+      if pos+2 <= stTmp._DataEnd and stTmp.valuePtr[pos+2] = '<<' then cycle. ! doubled << = literal < char (a sub(pos+2)='<' test here would be a rest-of-string compare AND an un-doubled literal; vtxaDiff 2683)
       ! check <xxx> on the left
       chk = stTmp.instring('<<',-1,1,pos-1)
       if ~chk or |
@@ -2029,7 +2029,7 @@ scKind   byte,auto ! kind of the candidate's scope, captured at the scopes GET
 extVis   byte      ! ExtVisChk verdict - decl carries an externally-visible attribute
 modKept  long      ! module-scope decls withheld because they are not module-private
 extKept  long      ! module-scope decls withheld for EXPORT/EXTERNAL/DLL
-txaKept  long      ! decls withheld: owning scope spans .txa embed points (H12 strict)
+txaKept  long      ! decls withheld: owning scope spans .txa embed points (strict embed rule)
 condKept long      ! decls withheld: the owning scope holds an OMIT or COMPILE block
 UseQ     QUEUE,PRE(uu) ! one token sweep -> keyed usage lookups (SymUsed rescanned the whole scope span PER SYMBOL)
 nameU      string(vs:maxName)
@@ -2142,20 +2142,20 @@ lineNo     long
       ! procedure local in a PROGRAM file is still removable.
       !
       ! THE CONDITIONAL-SCOPE REFUSAL IS ASKED HERE FOR THE SAME REASON, AND IT IS
-      ! COUNTED. It used to sit above the usage check as a bare `cycle`, which withheld
-      ! declarations and said nothing at all - the one withheld reason with no counter
+      ! COUNTED. Asked above the usage check instead, as a bare `cycle`, it would withhold
+      ! declarations and say nothing at all - the one withheld reason with no counter
       ! beside the three below, in a routine whose own comment says a silent skip reads
       ! exactly like 'nothing was unused'. It withholds TWELVE declarations in
-      ! TestData\r108all.clw and that is the whole difference between the 3 that fixture
-      ! reports and the 15 a bat claimed for it for twenty-eight builds, with nothing in
-      ! any report to contradict either number. Asking after UsedChk costs one keyed
-      ! lookup per candidate and makes the count mean what the other three mean.
+      ! TestData\r108all.clw, and that is the whole difference between the 3 that fixture
+      ! reports and the 15 a count taken ahead of the usage check would give. Asking after
+      ! UsedChk costs one keyed lookup per candidate and makes the count mean what the
+      ! other three mean.
       if uvScopeC
         condKept += 1
         cycle
       end
       if self.isTxa
-        ! The H12 ruling, STRICT: decidable only when the owning
+        ! The .txa embed rule, STRICT: decidable only when the owning
         ! procedure/routine is contained wholly inside ONE embed - generated code
         ! between embed points can reference a declaration this scan cannot see.
         if ~self.ScopeFullyEmbedded(startT, endT)
@@ -2372,7 +2372,7 @@ changes   long
 
     if ~self.RoutineReferenced(nameU, pStart, pEnd)
       if self.isTxa
-        ! The H12 ruling: on a.txa NEVER comment a routine out - a
+        ! The .txa embed rule: on a.txa NEVER comment a routine out - a
         ! template can DO a routine from generated code this file does not contain, so
         ! "no DO found" is not "unused" here. Annotate the header for the user to check
         ! instead. IDEMPOTENCE walks BACK over the EOL tokens above the label: the pass
@@ -2708,7 +2708,7 @@ execStk   BYTE,DIM(64) ! execStk[depth]=1 when the opener at that depth is EXECU
     tU = upper(txt)
     if fol and txt and ~isEol then stmtKw = tU.
 
-    ! ---- a.txa EMBED BOUNDARY clears the dead region (the H12 ruling:
+    ! ---- a.txa EMBED BOUNDARY clears the dead region (the embed rule:
     !      a transfer's deadness must not span embed points - the template-generated
     !      code between them is invisible here and can rejoin flow). The template lines
     !      between embeds survive the wrap as !<250>-marked comments, whose text lands
@@ -3026,7 +3026,7 @@ wtok      long
   ! there the refusal is asked AFTER the usage check and so means 'would have been
   ! commented'. Here it is asked BEFORE the write/read scan - deliberately, that scan is the
   ! expensive part - so all this can honestly claim is that the symbol was never looked at.
-  ! Both used to be silent, and a silent skip reads exactly like 'nothing was dead'.
+  ! Both say so, because a silent skip reads exactly like 'nothing was dead'.
   if condKept
     pLog.append('BUILTIN UnusedAssignments: ' & condKept & ' declaration(s) NOT examined - their scope holds an OMIT or COMPILE block, so a read from inside one is invisible to this scan<13,10>')
   end
@@ -3715,14 +3715,15 @@ ta  StringTheory                  ! holds token A while token B is fetched - no 
   o = pBF - pAF
   loop k = pAF to pAE
     get(self.tk.tokens, k)
-    if errorcode() then return 0. ! NEITHER get was checked. A failed fetch left the
-    !): `ta` HOLDS the first token's text while the second is fetched, because
-    ! the get below overwrites the queue buffer. It used to be a fixed STRING(vs:maxName), so
-    ! a longer token was held as its PREFIX and two different long tokens sharing one compared
-    ! EQUAL - and this answer feeds the hoists, which MOVE code on the strength of it. A
-    ! StringTheory has no length to guess and nothing to truncate, so the comparison is simply
-    ! always right; refusing an over-long token, which is where this fix started, is not
-    ! needed once nothing can overflow.
+    if errorcode() then return 0. ! BOTH gets are checked. A failed fetch leaves the queue
+    ! buffer on the PREVIOUS record, so an unchecked get compares a token with itself and
+    ! answers 1 - the spans are the same length, so nothing else catches it. `ta` HOLDS the
+    ! first token's text while the second is fetched, because the get below overwrites the
+    ! queue buffer. It is a StringTheory rather than a fixed STRING so that a long token
+    ! cannot be held as its PREFIX: two different long tokens sharing one would compare
+    ! EQUAL, and this answer feeds the hoists, which MOVE code on the strength of it. A
+    ! StringTheory has no length to guess and nothing to truncate, so the comparison is
+    ! simply always right and no over-long token has to be refused.
     if self.tk.tokens.tok &= NULL
       ta.free()
     else
@@ -5056,7 +5057,7 @@ VitEngine.SmMethodKind Procedure(STRING pMethodU)
   of   'REMOVEFROMPOSITION' ! deletes a span and nothing else, so a
     return sk:keep          !   spaceless buffer stays spaceless. WITHOUT this it
                             !   is sk:bad and TrailingSpaces refuses everything
-                            !   below it - the regression, third time.
+                            !   below it.
   of   'SETVALUE'
     return sk:store
   of   'REPLACE'
@@ -5468,9 +5469,9 @@ t2   string(2),auto
   ! into a terminator, which is the rule the tokenizer already implements. So this arrives on
   ! code that COMPILES, with no terminator dot anywhere near it.
   ! Pinned by splitmember-test.txt / TestData\splitmember.clw.
-  ! The `if tok = '.' then cycle` that used to stand at the END of this loop was written for
-  ! exactly this case and could never fire: a '.' token is ONE character, so the
-  ! single-character block always answered first.
+  ! An `if tok = '.' then cycle` at the END of this loop would look like the answer to this
+  ! case and could never fire: a '.' token is ONE character, so the single-character block
+  ! above always answers first.
   z0 = pTok
   if self.DgIsMemberDot(pTok + 1) then z0 = pTok + 2. ! split: <receiver> . <member>
   dep = 0
@@ -11484,12 +11485,12 @@ FlushR routine
   ! block OPENED on one still has to push its frame, or everything inside it is loose: `MyQ QUEUE`
   ! is how almost every structure is written, and without the frame its members and END fall
   ! through to the un-nested arm below and are re-based to baseCol, destroying the authored
-  ! layout the moment CODECOL is on. (Un-pushed openers also left the stack unbalanced: the
-  ! structure's END then popped whatever block happened to enclose it.)
+  ! layout the moment CODECOL is on. (An un-pushed opener also leaves the stack unbalanced: the
+  ! structure's END then pops whatever block happens to enclose it.)
   ! The frame is always LAYOUT-PRESERVING (isStruct), whatever the opener is, because the
   ! opener's own indent is 0: aligning an END to column 1 would turn it into a LABEL. So a
   ! column-1-labelled control-flow block (a labelled LOOP) keeps its body as authored rather
-  ! than being reflowed - the safe answer, and the same one it got before this frame existed.
+  ! than being reflowed - the safe answer.
   isCol1Label = 0
   if firstFOL and firstType = vt:label and ~tmpLen then isCol1Label = 1.
   if isCol1Label
@@ -11795,7 +11796,7 @@ nameU    string(vs:maxName),AUTO
   get(self.syms.scopes, self.syms.syms.scopeId) ! positional: scopeId = row (AddScope appends)
   if errorcode() then self.acWhyElig = 'scope not found' ; return 0.
   if self.syms.scopes.kind = vs:scModule then self.acWhyElig = 'module-scope data - static storage, not a stack local' ; return 0.
-  ! The H12 ruling, STRICT: on a.txa only a scope contained wholly
+  ! The .txa embed rule, STRICT: on a.txa only a scope contained wholly
   ! inside ONE embed is decidable - the template's generated code can read or write
   ! anything in a scope that spans embed points, so neither definite-assignment nor
   ! liveness holds there. AutoEligible is the shared gate, so this one test covers
@@ -11977,7 +11978,7 @@ dng      byte                             ! this frame incremented `danger`
       txt = self.tk.tokens.tok
     end
     tU = upper(txt)
-    if fol and txt then stmtKw = tU. ! leading keyword of the line.  IF/LOOP/CASE/ELSE/END are RESERVED words (type 'r'=vt:reservedWord), NOT 'b'=vt:label - the old ty='b' gate never captured them, so every IF fell through `case stmtKw` to the else/bail arm (kind3, danger++) and any var touched in/around an IF returned ac:unknown.  Capture the first token of ANY line (a block opener is always first-on-line; on a plain statement line stmtKw is set but never consulted).
+    if fol and txt then stmtKw = tU. ! leading keyword of the line.  IF/LOOP/CASE/ELSE/END are RESERVED words (type 'r'=vt:reservedWord), NOT 'b'=vt:label - a gate on ty='b' does not capture them, so every IF falls through `case stmtKw` to the else/bail arm (kind3, danger++) and any var touched in/around an IF returns ac:unknown.  Capture the first token of ANY line (a block opener is always first-on-line; on a plain statement line stmtKw is set but never consulted).
 
     ! ---------- block structure via level marks ----------
     if lvl = '+'                                                                                       ! block opener (if/case/loop/execute/...)
@@ -12092,7 +12093,7 @@ dng      byte                             ! this frame incremented `danger`
         return ac:unknown
       elsif ((fol = 1 and ~contLn) or prevU = ';' or prevU = 'THEN' or prevU = 'ELSE') and nextU = '=' ! whole-variable assignment target: V = <expr> (also after ;/THEN/ELSE, and not on a continuation line)
         ! self-reference (V = ...V...) as the FIRST touch = read of uninitialised V -> UNSAFE.
-        ! Scan the RHS (i+2 .. the true end of statement). review C3: stop on a GENUINE statement
+        ! Scan the RHS (i+2 .. the true end of statement). Stop on a GENUINE statement
         ! boundary (a <10> EOL token or a ';' separator), NOT firstOnLine - a '|' continuation line
         ! also sets firstOnLine but carries no <10> token (CRLF is in strBefore), so the old
         ! firstOnLine break truncated a continued RHS and missed a self-read on it. This follows
@@ -12343,9 +12344,9 @@ i  long,auto
 ! Is there a COMMENT riding the leading trivia of any token in this range?
 !
 ! Trivia is whitespace, continuations and COMMENTS, and a comment there belongs to the author.
-! Two places in MergeGuardChain used to destroy trivia without asking: MgOrForm overwrites the
+! Two places in MergeGuardChain would destroy trivia if they did not ask: MgOrForm overwrites the
 ! THEN token's, and MgCollapseRuns deletes the condition tokens' along with the tokens. Neither
-! produced wrong CODE - a comment is not code - but both could silently drop something a person
+! produces wrong CODE - a comment is not code - but both could silently drop something a person
 ! wrote, which is not ours to do. They ask this first and refuse the merge if the answer is yes.
 !
 ! A '!' anywhere in trivia starts a comment: trivia holds no string literals, so there is no
@@ -12995,17 +12996,18 @@ borrowedLf long,auto                               ! step 5 lent the text a lead
       pSt.prepend(hdr.getValue() & '<10>')         ! the line feed added here stands in EXACTLY for the one removed
     end
   end
-  ! THE LIFT MUST REMOVE EXACTLY WHAT IT PUTS BACK, and it did not.
-  !     Searching for '[DATA]<10>' returns the position of the MATCH START - the '[' itself - so the
-  !     slice lifted that '[' into the header and removeFromPosition took it out of the body, leaving
-  !     the body starting 'DATA]'. The prepend then added a line feed that nothing ever removed. The
-  !     file came back with a line holding just '[' and the next line starting 'DATA]', which breaks
-  !     re-import. Searching for the line feed TOO makes stPos point at that line feed instead, so the
-  !     header ends where the line ends and the added line feed replaces the removed one byte for byte.
-  !     It also self-guards: a '[DATA]' not at the start of a line no longer matches at all, and the
+  ! THE LIFT MUST REMOVE EXACTLY WHAT IT PUTS BACK.
+  !     Searching for '[DATA]<10>' returns the position of the MATCH START - the '[' itself - so a
+  !     slice on that alone lifts the '[' into the header while removeFromPosition takes it out of
+  !     the body, leaving the body starting 'DATA]'. The prepend then adds a line feed that nothing
+  !     ever removes, and the file comes back with a line holding just '[' and the next line
+  !     starting 'DATA]', which breaks re-import. Searching for the line feed TOO makes stPos point
+  !     at that line feed instead, so the header ends where the line ends and the added line feed
+  !     replaces the removed one byte for byte.
+  !     It also self-guards: a '[DATA]' not at the start of a line does not match at all, and the
   !     lift is skipped rather than eating a real character off the front of it.
-  !     This was ported from a DIFF tool, which wrapped both sides the same way and never wrote the
-  !     text back - so exact reconstruction never mattered there and the defect came across unseen.
+  !     The shape comes from a DIFF tool, which wraps both sides the same way and never writes the
+  !     text back - so exact reconstruction does not matter there, and it does here.
   ! ---- 4. fold a WHEN continuation onto its first line ----
   stPos = 0
 L loop
@@ -13196,7 +13198,7 @@ y long,auto
 ! ------------------------------------------------------------------------------------
 VitEngine.TxaAnalysisRefused Procedure(STRING pBuiltin)
   code
-  ! Since the H12 ruling this names the RESTRICTED trio, not a refusal: the caller
+  ! Under the .txa embed rule this names the RESTRICTED trio, not a refusal: the caller
   ! prints the once-per-file advisory and falls through, and the real restricting is
   ! ScopeFullyEmbedded at each analysis's own gate.
   if ~self.isTxa then return 0.
@@ -13211,7 +13213,7 @@ VitEngine.TxaAnalysisRefused Procedure(STRING pBuiltin)
 ! on a plain .clw. The wrap marks every template line with byte 250 in the trivia of
 ! the tokens that follow it, so any 250 INSIDE the span means the scope crosses
 ! template data - and the template's generated code there can read or write anything,
-! which is what makes a spanning scope undecidable (the H12 ruling, strict form).
+! which is what makes a spanning scope undecidable (the embed rule, strict form).
 ! A synthesised procedure header spans template data by construction, so procedures
 ! rarely qualify; a ROUTINE wholly inside one [SOURCE] block is the working case.
 ! The span's LEADING trivia (pStartTok's own strBefore) is the world BEFORE the scope
@@ -13572,7 +13574,7 @@ nm     string(vs:maxName),auto
   of rm:check
     return self.RecvForeignUse(pRecvTok)
   end
-  return 0                                                  ! rm:assume - the old behaviour
+  return 0                                                  ! rm:assume - treat it as a StringTheory
 
 !===============================================================================================
 ! Is this receiver used ANYWHERE in its scope in a way a StringTheory could not be?
@@ -14730,14 +14732,14 @@ opn  byte,auto               ! an escape group is open
 ! Three characters have to be doubled inside a literal - the quote, '<' (which opens the
 ! `<n>` escape) and '{' (which opens a repeat count) - and anything outside printable ASCII
 ! has to BE an escape, because writing the byte raw puts it in the source. A CR or an LF
-! written raw physically split the line in half, mid-literal, and the file no longer compiled.
+! written raw physically splits the line in half, mid-literal, and the file will not compile.
 !===============================================================================================
 !===============================================================================================
 ! This line's trailing comment, whole, from '!' to the last thing on it.
 !
-! Read at flush time rather than copied into the queue when the line is staged. The queue row
-! used to hold a string(200) and a longer comment was cut to fit it without a word - so the
-! merged line came back carrying most of what the author wrote. A token index cannot overflow.
+! Read at flush time rather than copied into the queue when the line is staged. A queue row
+! holding a fixed string would cut a longer comment to fit without a word about it, so the
+! merged line would carry most of what the author wrote. A token index cannot overflow.
 !===============================================================================================
 VitEngine.MgCmtText Procedure(LONG pEolTok, StringTheory pOut)
 p  long,auto

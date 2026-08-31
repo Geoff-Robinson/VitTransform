@@ -25,7 +25,7 @@ _PreprocessorIncPresent_ EQUATE(1)
   INCLUDE('StringTheory.inc'), ONCE ! Transpiler.inc only re-exported StringTheory + unused TK:/ST: equates (decoupled for VitTransform)
 
 ! Maximum INCLUDE nesting depth - a safety net against runaway/circular includes.
-! it is the ONLY thing catching a cycle, and this note used to say otherwise.
+! it is the ONLY thing catching a cycle.
 ! ONCE is an attribute of a DIRECTIVE, not of a file: `INCLUDE('a.inc'),ONCE` is skipped
 ! when a.inc has been included before, but a PLAIN `INCLUDE('a.inc')` splices it again
 ! however many times it appears. So A-includes-B-includes-A without ONCE on the way round

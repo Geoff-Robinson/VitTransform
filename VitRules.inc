@@ -13,9 +13,9 @@
 ! Requires StringTheory (Capesoft) and VitTokenize.
 !
 vr:maxName            EQUATE(50)
-vr:nfCharName         EQUATE(1)      ! NOTE(charname(mv)) - print <line feed> rather than '<10>'
-vr:version            EQUATE('1.00') ! the release, as every report prints it
-vr:buildNo            EQUATE(248) ! this engine's build number, compared against a rule file's NEEDBUILD line. KEEP IT MOVING WITH THE RELEASE: a build number that stands still while the engine changes makes NEEDBUILD refuse rule files this engine could in fact run, and it does that SILENTLY - only a rule file asking for a build in the gap ever notices.
+vr:nfCharName         EQUATE(1)       ! NOTE(charname(mv)) - print <line feed> rather than '<10>'
+vr:version            EQUATE('1.0.1') ! the release, as every report prints it. THREE PARTS, and it must match the git tag on GitHub exactly - a release that calls itself one thing in its reports and another on its download page gives a bug reporter two names for the same build
+vr:buildNo            EQUATE(253) ! this engine's build number, compared against a rule file's NEEDBUILD line. KEEP IT MOVING WITH THE RELEASE: a build number that stands still while the engine changes makes NEEDBUILD refuse rule files this engine could in fact run, and it does that SILENTLY - only a rule file asking for a build in the gap ever notices.
 vr:maxMsg             EQUATE(250)
 
 ! rule kinds
@@ -23,19 +23,19 @@ vr:kindRule           EQUATE(1)
 vr:kindBuiltin        EQUATE(2)
 
 ! metavar kinds
-vr:mvTyped            EQUATE(1)      ! built-in data type (STRING, LONG, ...) - typeName holds keyword
-vr:mvClass            EQUATE(2)      ! class/user type (StringTheory, ...)    - typeName holds class name
-vr:mvExpr             EQUATE(3)      ! EXPR    - one balanced expression, no depth-0 commas
-vr:mvArgs             EQUATE(4)      ! ARGS    - zero or more comma-separated args, whole (...) content
-vr:mvLiteral          EQUATE(5)      ! LITERAL - quoted string literal
-vr:mvConst            EQUATE(6)      ! CONST   - integer literal or foldable
-vr:mvAnyVar           EQUATE(7)      ! ANYVAR  - any identifier, untyped
-vr:mvTypeSet          EQUATE(8)      ! TYPESET name - one identifier whose resolved type is IN the named set
+vr:mvTyped            EQUATE(1)       ! built-in data type (STRING, LONG, ...) - typeName holds keyword
+vr:mvClass            EQUATE(2)       ! class/user type (StringTheory, ...)    - typeName holds class name
+vr:mvExpr             EQUATE(3)       ! EXPR    - one balanced expression, no depth-0 commas
+vr:mvArgs             EQUATE(4)       ! ARGS    - zero or more comma-separated args, whole (...) content
+vr:mvLiteral          EQUATE(5)       ! LITERAL - quoted string literal
+vr:mvConst            EQUATE(6)       ! CONST   - integer literal or foldable
+vr:mvAnyVar           EQUATE(7)       ! ANYVAR  - any identifier, untyped
+vr:mvTypeSet          EQUATE(8)       ! TYPESET name - one identifier whose resolved type is IN the named set
 
 ! guard kinds
 vr:guardNone          EQUATE(0)
-vr:guardCompare       EQUATE(1)      ! [func(]mv[)] op 'literal'
-vr:guardClassTest     EQUATE(2)      ! isConst(mv) / isLiteral(mv) / isVar(mv) / isSimple(mv)
+vr:guardCompare       EQUATE(1)       ! [func(]mv[)] op 'literal'
+vr:guardClassTest     EQUATE(2)       ! isConst(mv) / isLiteral(mv) / isVar(mv) / isSimple(mv)
 
 ! guard comparison operators
 vr:opEq               EQUATE(1)
@@ -61,9 +61,9 @@ vr:ctSimple           EQUATE(4) ! isSimple(mv) - the binding has NO depth-0 logi
                                 !   the ~() wrap. BXOR/BAND/BOR are FUNCTIONS (operands), not excluded.
 vr:ctPure             EQUATE(5) ! isPure(mv) - NO '(' AND NO '{' ANYWHERE in the binding. Read the test, not
                                 !   the name: it refuses `y + (3 * z)`, which calls nothing and is perfectly
-                                !   safe to evaluate twice, purely because of the grouping brackets. Its own
-                                !   comment used to promise "pure arithmetic over vars/literals", which is a
-                                !   DIFFERENT and wider test - that one is isCallFree below. Where a rule
+                                !   safe to evaluate twice, purely because of the grouping brackets. It is NOT
+                                !   "pure arithmetic over vars/literals" - that is a DIFFERENT and wider test,
+                                !   and it is isCallFree below. Where a rule
                                 !   only needs "evaluating this twice is safe", isCallFree is the one to
                                 !   reach for; isPure is the blunter instrument and every rule using it is
                                 !   refusing arithmetic it could accept.

@@ -16,6 +16,8 @@
 
   program
 
+  include('StringTheory.inc'),ONCE
+
   map
 Demo procedure()
   end

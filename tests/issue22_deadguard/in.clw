@@ -20,6 +20,8 @@
 
   program
 
+  include('StringTheory.inc'),ONCE
+
   map
 Demo1 procedure()
 Demo2 procedure()

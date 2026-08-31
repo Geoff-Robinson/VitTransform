@@ -30,7 +30,8 @@ Demo procedure()
 
 Demo procedure()
 
-x    longy    long
+x    long
+y    long
 nm   string(20)
 
   code

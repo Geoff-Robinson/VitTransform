@@ -19,6 +19,7 @@
 
   map
 Demo procedure()
+alpha procedure(long p1, long p2),long
   end
 
   code
@@ -34,3 +35,8 @@ ccc  long
                                         r = alpha(bbb, |
                                                   ccc)
   return
+
+alpha procedure(long p1, long p2)
+
+  code
+  return p1 + p2

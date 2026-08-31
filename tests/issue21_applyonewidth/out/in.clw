@@ -19,6 +19,7 @@
 
   map
 Demo procedure()
+alpha procedure(long p1, long p2),long
   end
 
   code
@@ -33,3 +34,8 @@ ccc  long
   code
                                         r = alphabet_soup_replacement_name(bbb, ccc, bbb, ccc)
   return
+
+alpha procedure(long p1, long p2)
+
+  code
+  return p1 + p2

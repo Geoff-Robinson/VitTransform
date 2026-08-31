@@ -45,3 +45,22 @@ carries the full story: defect, mechanism, expected vs actual.
 | `issue28_configdefault` | [#28](https://github.com/msarson/VitTransform/issues/28) Blank config defaults to Debug | harness | Reproduced (pp.Config = Debug) |
 | `issue29_notequiv` | [#29](https://github.com/msarson/VitTransform/issues/29) Leading <> never matches NOT = | rule-driven | Reproduced |
 | (no folder) | [#30](https://github.com/msarson/VitTransform/issues/30) VitStyle fidelity @s80 vs STRING(96) | source-cited | Confirmed in source (GUI display only) |
+
+## Compile checks
+
+Every rule-driven `in.clw` (and issue13's `src\a.clw`) carries a
+`CompileCheck.cwproj` proving the input is valid Clarion 12 -
+`compile-all.bat` builds the lot. Two deliberate exceptions:
+
+- `issue09_omitrevert` - the tokenizer trigger (`Omit(` followed by a
+  glued `|`) is REJECTED by the compiler in every spelling we tried
+  ("OMIT misplaced" / "Invalid OMIT/EMBED expression"), so the input
+  cannot compile BY NATURE. The defect remains reachable through
+  non-compiling input paths (VitStyle's paste-a-snippet preview, mid-
+  edit sources) - see the issue for the re-scoped verdict.
+- `issue27_includeline` - `main.clw` deliberately includes a missing
+  file; that is the bug being demonstrated.
+
+Compile-check byproducts worth keeping: issue10's premise is compiler-
+verified (a local really can be named `code`), and issue21/22/23 inputs
+gained the definitions/includes needed to link.

@@ -1,0 +1,6 @@
+! Rule file for issue #29: a pattern OPENING with <> never matches the
+! two-word NOT = spelling, though the matcher implements the
+! equivalence everywhere past the candidate gate.
+! https://github.com/msarson/VitTransform/issues/29
+
+<> 99  ==>  <> 98

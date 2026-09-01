@@ -82,7 +82,10 @@ VitMatch.Init Procedure(VitRules pRl, VitTokenize pTk)
   self.skipCount  = 0
   if self.anchorLits &= NULL then self.anchorLits &= new AnchorLitQType.
   if self.anchorPost &= NULL then self.anchorPost &= new AnchorPostQType.   !
-  if ~records(self.anchorLits) then self.BuildAnchorLits().                 ! rules are fixed across files: build once
+  self.BuildAnchorLits()                                                    ! rebuild EVERY Init, not only when empty: LoadUserRules/LoadUserText
+                                                                            !   can APPEND rules after a first transform (the VitStyle workbench
+                                                                            !   flow), and a stale set made an appended rule match NOTHING (#6).
+                                                                            !   BuildAnchorLits free()s first, and the rule walk is cheap per file.
   self.freqDirty = true                                                     ! new file/case: recount on first CountTok
 
 ! ------------------------------------------------------------------------------------
@@ -593,6 +596,7 @@ VitMatch.FindAnchorLit Procedure(STRING pKey)
 ! POSITION lower-bound idiom below lands on the first row of the run directly.
 ! ------------------------------------------------------------------------------------
 VitMatch.FindFirstPost Procedure(STRING pKey)
+fpr long,auto
   code
   ! the POSITION(queue) idiom - with the buffer CLEARed (pos = 0) and keyText
   ! set, POSITION lower-bounds on the active (keyText,pos) sort order: it returns the FIRST
@@ -601,7 +605,12 @@ VitMatch.FindFirstPost Procedure(STRING pKey)
   if self.anchorPost &= NULL then return 0.
   clear(self.anchorPost)
   self.anchorPost.keyText = pKey
-  return position(self.anchorPost)
+  fpr = position(self.anchorPost)
+  if ~fpr or fpr > records(self.anchorPost) then return 0.  ! nothing at or after the key
+  get(self.anchorPost, fpr)
+  if errorcode() then return 0.
+  if self.anchorPost.keyText <> pKey then return 0.         ! POSITION lower-bounds, so a next-greater row is a MISS -
+  return fpr                                                !   report it as 0 so the caller's no-postings rescue can fire (#6)
 
 ! ------------------------------------------------------------------------------------
 ! Typed metavar gate: resolve the identifier in the symbol
@@ -819,6 +828,11 @@ seen   byte,auto
     of ')'
       depth -= 1
       if ~depth then break.
+    of '['                              ! a bracket subscript nests like parens (#11): the comma in
+      depth += 1                        !   names[i,j] is not an argument separator. Every sibling
+    of ']'                              !   scanner counts these (DepthDelta); these two were the outliers
+      depth -= 1
+      if depth < 1 then return -1.      ! malformed - refuse, do not guess (mirrors the EOL refusal)
     of ','
       if depth = 1 then n += 1.         ! a separator at OUR level ends an argument
     end
@@ -868,6 +882,8 @@ first long
     if self.TokIsEOL(t) then break.
     txt = self.TokText(t)
     if txt = '(' then dep += 1.
+    if txt = '[' then dep += 1.       ! subscript commas are not separators (#11)
+    if txt = ']' then dep -= 1.
     if txt = ')'
       if ~dep
         do OneSlot                              ! the last argument, closed by ')'
@@ -1406,14 +1422,22 @@ opC  string(4),auto
 ! a label, followed by '.' when the pattern says receiver.method.
 ! ------------------------------------------------------------------------------------
 VitMatch.CandOK Procedure(LONG pS)
+ckOp  string(4),auto
   code
   if self.gd1Lit
     get(self.patQ, 1)
     if errorcode() or self.patQ.tok &= NULL then return true.
-    return self.LitMatches(pS, self.patQ.tok)                                                                      ! the member itself - no clip() copy; = ignores trailing spaces anyway
+    if self.LitMatches(pS, self.patQ.tok) then return true.                                                        ! the member itself - no clip() copy; = ignores trailing spaces anyway
+    ckOp = self.OpCanon(self.patQ.tok)                                                                             ! a leading comparator also matches its two-word NOT spelling
+    if ckOp then return self.AnchorNotPair(pS, ckOp).                                                              !   ('<<>' vs 'NOT =') - the postings walk already admits these (#29)
+    return false
   end
   if self.gd1IdMv
-    if ~self.rl.IsLabelToken(self.TokText(pS)) and ~instring('.', clip(self.TokText(pS)), 1, 1) then return false. ! B0b: a recombined 'self.Direct' receiver token has a '.' and isn't a bare label
+    if ~self.rl.IsLabelToken(self.TokText(pS)) and ~instring('.', clip(self.TokText(pS)), 1, 1) |
+       and ~self.ImplicitType(self.TokText(pS)) |
+       then return false.               ! B0b: a recombined 'self.Direct' receiver token has a '.' and isn't a bare label;
+                                        !   implicit variables (total#, s", r$) are variables too - MatchHere's arm
+                                        !   accepts them, so the gate must not discard them first (#15)
     if self.gd2Dot and self.TokText(pS + 1) <> '.' then return false.
   end
   return true

@@ -249,7 +249,8 @@ inQuotes    Long,auto
       if tok._DataEnd = 1 and tok.valuePtr[1] = '('
         state = 2                                                             ! omit looking for literal
       else
-        pos = svPos; state = 0                                                ! revert - not simple omit
+        pos = svPos; state = 0; inContinuation = false                       ! revert - not simple omit (and clear any lexer state the
+                                                                              !   consumed tokens set: a glued '|' left the flag armed, #9)
       end
 
     of 2                                                                      ! omit looking for literal
@@ -258,7 +259,8 @@ inQuotes    Long,auto
         tempST.unquote('''')                                                  ! store the string we will search for end of OMIT
         state = 3
       else
-        pos = svPos; state = 0                                                ! revert - not simple omit
+        pos = svPos; state = 0; inContinuation = false                       ! revert - not simple omit (and clear any lexer state the
+                                                                              !   consumed tokens set: a glued '|' left the flag armed, #9)
       end
 
     of 3                                                                      ! omit looking for ')'
@@ -299,10 +301,10 @@ inQuotes    Long,auto
             break                                                             ! EOF
           end
         else
-          pos = svPos                                                         ! revert - not simple omit
+          pos = svPos; inContinuation = false                                                         ! revert - not simple omit (see #9 note above)
         end
       else
-        pos = svPos                                                           ! revert - not simple omit
+        pos = svPos; inContinuation = false                                                           ! revert - not simple omit (see #9 note above)
       end
       state = 0
     else
@@ -1777,7 +1779,11 @@ VitTokenize.MoveToks      Procedure(LONG pSrc, LONG pDst, LONG pNumToMove) !,LON
   if pNumToMove > records(self.tokens) - pSrc + 1 then pNumToMove = records(self.tokens) - pSrc + 1.
   loop pNumToMove times
     if self.moveTok(pSrc,pDst) <> st:ok then return st:notOK.
-    if pSrc > pDst then pDst += 1.
+    if pDst and pSrc > pDst     ! backward: the landed token pushed the REMAINING block down one,
+                                !   (pDst = 0 is APPEND per MoveTok - neither pointer moves there)
+      pDst += 1                 !   so the next block token sits at pSrc+1 - advance the source
+      pSrc += 1                 !   alongside the destination or a survivor is moved instead (#2)
+    end
   end
   return st:ok
 
@@ -4013,6 +4019,24 @@ moved   long
     dq:labW  = wid
     dq:gap   = nsp                                             ! for the already-aligned test
     dq:lineW = wid + nsp + size(self.Tokens.tok)
+    z = x                                                      ! the REST of the line - ,AUTO / ,DIM() / &Type tails count
+    loop                                                       !   toward the real width (#8). The EOL token's strBefore (a
+      z += 1                                                   !   trailing comment) does not: comments are AlignComments'
+      get(self.tokens, z)                                      !   business, and the guard protects the CODE column
+      if errorcode() then break.
+      if self.Tokens.tok &= NULL               ! a trivia-only row still holds width - count it, keep walking
+        if not self.Tokens.strBefore &= NULL
+          dq:lineW += size(self.Tokens.strBefore)
+        end
+        cycle
+      end
+      if size(self.Tokens.tok) = 1 and val(self.Tokens.tok) = 10 then break.
+      if not self.Tokens.strBefore &= NULL
+        dq:lineW += size(self.Tokens.strBefore)
+      end
+      dq:lineW += size(self.Tokens.tok)
+    end
+    get(self.tokens, x)                                        ! restore the buffer position
     add(lnQ)
     labTok = 0
   end
@@ -4093,7 +4117,9 @@ FlushDecl routine
   newW = 0
   loop q = 1 to records(lnQ)
     get(lnQ, q)
-    z = wid + (dq:lineW - dq:labW - 1) ! what this line becomes
+    z = wid + (dq:lineW - dq:labW - dq:gap) ! what this line becomes: the new column plus the line's REAL
+                                            !   type+tail width - subtract the line's own gap, not a
+                                            !   constant 1, or wide-gutter runs project too wide (#8)
     if z > newW then newW = z.
   end
   if pMaxWidth > 0 and newW > pMaxWidth and origW <= pMaxWidth
@@ -5550,6 +5576,6 @@ inQuotes long
       end
     end
     if ~inQuotes then return pStartCol.                       ! found and not in quotes or comment
-    pStartCol += 1
-    x = pStartCol
+    x = pStartCol                                             ! classify the REJECTED byte too: skipping it leaves a quote at
+    pStartCol += 1                                            !   the match position uncounted and inverts the state (#25)
   end

@@ -1,0 +1,3 @@
+issue #28 harness: preprocessor.Init with blank config
+pp.Config = "Release"  (documented default everywhere else: "Release")
+RESULT: PASS

@@ -33,9 +33,9 @@
 ! or turn splitting off completely with
 !     --width=0
 !
-! NOTHING BELOW IS ON BY DEFAULT except comment alignment. A plain
-!     VitTransform cosmetic.txt src out
-! aligns trailing comments and does nothing else. Add the groups you want.
+! A PLAIN RUN USES THE 'tidy' DEFAULTSTYLE (end of file): comment alignment,
+! keyword UPPERCASING, reindent-to-2 and statement splitting. --nogroup= opts
+! out per group (#20: this once claimed only comment alignment ran - drift).
 ! =====================================================================
 
 NEEDBUILD 108                                        ! the minimum engine build this file needs

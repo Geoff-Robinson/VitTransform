@@ -1,0 +1,18 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+# Clarion 2.1.0.2447
+Project("{12B76EC0-1D7B-4FA7-A7D0-C524288B48A1}") = "LiteralScanHarness", "LiteralScanHarness.cwproj", "{D4E5F6A7-4444-4D99-8E22-6B7C5D9A2F57}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D4E5F6A7-4444-4D99-8E22-6B7C5D9A2F57}.Debug|Win32.Build.0 = Debug|Win32
+		{D4E5F6A7-4444-4D99-8E22-6B7C5D9A2F57}.Debug|Win32.ActiveCfg = Debug|Win32
+		{D4E5F6A7-4444-4D99-8E22-6B7C5D9A2F57}.Release|Win32.Build.0 = Release|Win32
+		{D4E5F6A7-4444-4D99-8E22-6B7C5D9A2F57}.Release|Win32.ActiveCfg = Release|Win32
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,16 @@
+! Repro for issue #26: FindOptionStart tracks quotes and parens but not
+! [ ] brackets, so an option word inside a bracket subscript splits the
+! replacement.
+! https://github.com/msarson/VitTransform/issues/26
+!
+! The replacement below is meant to be the TEXT q.buf[i, skip] - "skip"
+! is a field name inside a subscript, not an option. The loader
+! truncates the replacement at the bracket and arms the SKIP option.
+!
+! EXPECTED: rule loads with replacement "q.buf[i, skip]".
+! ACTUAL:   replacement is "q.buf[i," (or truncated at the option) with
+!           SKIP set - see the IR dump run.bat prints.
+!
+! Run:  run.bat  (lint mode; prints the parsed rule from the IR dump)
+
+r = 1  ==>  r = q.buf[i, skip]

@@ -1,0 +1,5 @@
+issue #6 harness: rule appended via LoadUserText after first transform
+run 1 (ruleset A only)      changes: 1
+run 2 (same engine + B)     changes: 2  beta rewritten: YES
+run 3 (fresh engine + B)    changes: 2  beta rewritten: YES
+RESULT: PASS - appended rule fired on the reused engine

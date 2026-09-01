@@ -10,8 +10,8 @@
 !     VitStyle vitrules.txt                                pick options visually
 !
 ! WHAT A PLAIN RUN DOES. No switches = the DEFAULTSTYLE below, which is
-! optimised. Every report prints the resolved selection table - which
-! groups ended up on, and why - so any run can be reproduced later.
+! plain (#20: this once said optimised - doc drift). Every report prints the
+! resolved selection table, which groups ended up on and why (reproducible).
 !
 ! THE GROUPS WORTH KNOWING ABOUT
 !     --style=readable            the conservative alternative to the default

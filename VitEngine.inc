@@ -300,6 +300,7 @@ CodeTokOfScope         Procedure(LONG pStart, LONG pEnd),LONG,virtual           
 
 ScopeIsConditional     Procedure(LONG pFromTok, LONG pToTok),LONG,virtual          ! OMIT/COMPILE in the range -
 TriviaHasContinuation  Procedure(STRING pTrivia),LONG,virtual                      ! a '|' in leading trivia that
+LevelSpanBalanced      Procedure(LONG pS, LONG pE),LONG,virtual                    ! 0 = opens outlive the span - refuse the walk (#1/#17)
 SpanTriviaHasComment   Procedure(LONG pFromTok, LONG pToTok),LONG,virtual          ! a '!' in any of those tokens'
 BuiltinMergeGuardChain Procedure(StringTheory pLog),LONG,virtual                   ! consecutive single-line IFs
                                                                                    !   setting the SAME thing -> one

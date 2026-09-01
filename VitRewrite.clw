@@ -284,6 +284,18 @@ wsb    StringTheory
     end
     wt += 1
   end
+  get(self.tk.tokens, sPos)                    ! the MATCH-START token's own strBefore was never counted: the
+  if ~errorcode()                              !   line INDENT when the match starts the line (the normal case,
+    if not self.tk.tokens.strBefore &= NULL    !   where the prefix loop above never runs), or the gap before
+      wsb.setValue(self.tk.tokens.strBefore)   !   the match otherwise. ApplyOne re-applies it on output, and the
+      wlf = wsb._DataEnd                       !   spanW side below counts it - so the check under-counted by
+      loop while wlf > 0                       !   exactly the indent and deep flattens sailed past allowW (#21)
+        if val(wsb.valuePtr[wlf]) = 10 then break.
+        wlf -= 1
+      end
+      wResult += wsb._DataEnd - wlf
+    end
+  end
   wt = ePos + 1
   loop ! tail width to end of line
     if wt > self.tk.records() then break.

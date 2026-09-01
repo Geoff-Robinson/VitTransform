@@ -167,18 +167,18 @@ sTH        LONG,AUTO      ! hundredths of a second
 outFn      StringTheory
 FilesQ   QUEUE(File:queue),PRE(FQ)
          END
-errs     LONG,AUTO
-warns    LONG,AUTO
-x        LONG
-idx      LONG
-posNo    LONG
-isGolden LONG
-exitRc   BYTE             ! a failure the run SURVIVES (a save that failed, golden fails) - every
+errs      LONG,AUTO
+warns     LONG,AUTO
+x         LONG
+idx       LONG
+posNo     LONG
+isGolden  LONG
+exitRc    BYTE            ! a failure the run SURVIVES (a save that failed, golden fails) - every
                           !   exit path checks it and halts 1. Hard refusals halt(1) on the spot.
-dirProbe StringTheory     ! same-directory guard: probe filename written into <outdir>...
-probeSt  StringTheory     !   ...and looked for in the SOURCE directory (see the guard below)
-outDirC  CSTRING(261),AUTO
-pathish  BYTE             ! the unexpected 4th argument looks like half of an unquoted path, not half of a comma list
+dirProbe  StringTheory    ! same-directory guard: probe filename written into <outdir>...
+probeSt   StringTheory    !   ...and looked for in the SOURCE directory (see the guard below)
+outDirC   CSTRING(261),AUTO
+pathish   BYTE            ! the unexpected 4th argument looks like half of an unquoted path, not half of a comma list
 realFiles LONG            ! wildcard rows that were actual FILES - the exit contract counts these (#13)
 
   CODE
@@ -408,9 +408,9 @@ realFiles LONG            ! wildcard rows that were actual FILES - the exit cont
     end
     if wantSumm                                            ! --summary only
       Say('VitMatch golden: ' & clip(fn.getValue()) & |
-              '|Cases: ' & gr.caseCount                 & |
-              '|Pass:  ' & gr.passCount                 & |
-              '|Fail:  ' & gr.failCount                 & |
+              '|Cases: ' & gr.caseCount             & |
+              '|Pass:  ' & gr.passCount             & |
+              '|Fail:  ' & gr.failCount             & |
               '||Results in ' & clip(outFn.getValue()))
     end
     if gr.failCount then exitRc = 1.                                      ! failing goldens must reach the calling script
@@ -507,10 +507,10 @@ realFiles LONG            ! wildcard rows that were actual FILES - the exit cont
   if ~srcSpec._DataEnd
     if wantSumm                                      ! --summary only
       Say('VitRules: parsed ' & clip(fn.getValue()) & |
-              '|Metavars: ' & records(rl.metaVars)      & |
-              '|Rules:    ' & records(rl.rules)         & |
-              '|Errors:   ' & errs                      & |
-              '|Warnings: ' & warns                     & |
+              '|Metavars: ' & records(rl.metaVars)  & |
+              '|Rules:    ' & records(rl.rules)     & |
+              '|Errors:   ' & errs                  & |
+              '|Warnings: ' & warns                 & |
               '||IR dump written to ' & clip(outFn.getValue()))
     end
     if errs then exitRc = 1.                         ! lint mode: rule-file errors ARE the result

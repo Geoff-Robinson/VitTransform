@@ -352,19 +352,19 @@ count     long,AUTO
 
 ! ------------------------------------------------------------------------------------
 VitRules.ParseRuleLine Procedure(StringTheory pLine, LONG pLineNo)
-sepPos    long,auto
-optPos    long,auto
-optEnd    long,auto ! end of the option WORD, for the operand-position message
-hadComma byte                        ! the option arrived comma-separated - the deliberate spelling (#5)
-kwPos     long,auto ! start of the last WORD of the replacement
-kwU       StringTheory
-patTxt    StringTheory
-repTxt    StringTheory
-optTxt    StringTheory
-rep       StringTheory
+sepPos   long,auto
+optPos   long,auto
+optEnd   long,auto ! end of the option WORD, for the operand-position message
+hadComma byte,auto ! the option arrived comma-separated - the deliberate spelling (#5)
+kwPos    long,auto ! start of the last WORD of the replacement
+kwU      StringTheory
+patTxt   StringTheory
+repTxt   StringTheory
+optTxt   StringTheory
+rep      StringTheory
   code
   sepPos = self.PosOutsideQuotes(pLine, '==>')
-  if ~sepPos        ! caller guarantees, but be safe
+  if ~sepPos       ! caller guarantees, but be safe
     self.AddIssue(pLineNo, vr:sevError, 'internal: ==> not found')
     return
   end
@@ -397,10 +397,10 @@ rep       StringTheory
     repTxt.trim()
     hadComma = 0
     if repTxt._DataEnd
-      if repTxt.valuePtr[repTxt._DataEnd] = ','       ! the comma separator spelling ('DELETE, ONCE') is legal -
-        repTxt.setLength(repTxt._DataEnd - 1)         !   strip it (and re-trim) or the exact-length DELETE/COMMENT
-        repTxt.trim()                                 !   tests below never fire and the rule loads as TEXT
-        hadComma = 1                                  !   ...and the comma PROVES the option was deliberate (#5 review)
+      if repTxt.valuePtr[repTxt._DataEnd] = ',' ! the comma separator spelling ('DELETE, ONCE') is legal -
+        repTxt.setLength(repTxt._DataEnd - 1) !   strip it (and re-trim) or the exact-length DELETE/COMMENT
+        repTxt.trim() !   tests below never fire and the rule loads as TEXT
+        hadComma = 1 !   ...and the comma PROVES the option was deliberate (#5 review)
       end
     end
     ! *** AND A KEYWORD THAT TAKES AN OPERAND IS THE SAME MISTAKE ONE TOKEN EARLIER. ***
@@ -412,12 +412,12 @@ rep       StringTheory
     loop while kwPos > 1 and self.IsLabelChar(repTxt.valuePtr[kwPos - 1])
       kwPos -= 1
     end
-    if repTxt._DataEnd                                              ! empty after the split ('pat ==> ONCE'):
+    if repTxt._DataEnd ! empty after the split ('pat ==> ONCE'):
       kwU.setValue(upper(repTxt.valuePtr[kwPos : repTxt._DataEnd])) !   [0 : 0] would slice a freed buffer -
-    else                                                            !   fall through to the empty-replacement
-      kwU.free()                                                    !   error below, as the comment above says
+    else !   fall through to the empty-replacement
+      kwU.free() !   error below, as the comment above says
     end
-    if ~hadComma and repTxt._DataEnd and (choose(kwU._DataEnd < 1, '', kwU.valuePtr[1 : kwU._DataEnd]) = 'RETURN' or choose(kwU._DataEnd < 1, '', kwU.valuePtr[1 : kwU._DataEnd]) = 'DO')  ! a comma-separated option after RETURN/DO is the legal spelling, not a lost operand (#5 review)
+    if ~hadComma and repTxt._DataEnd and (choose(kwU._DataEnd < 1, '', kwU.valuePtr[1 : kwU._DataEnd]) = 'RETURN' or choose(kwU._DataEnd < 1, '', kwU.valuePtr[1 : kwU._DataEnd]) = 'DO') ! a comma-separated option after RETURN/DO is the legal spelling, not a lost operand (#5 review)
       self.AddIssue(pLineNo, vr:sevError, 'rule option ' & upper(optTxt.sub(1, optEnd - optPos))       & |
                     ' sits where an OPERAND belongs - ' & clip(kwU.getValue()) & ' takes one, so the'  & |
                     ' replacement would silently become "' & repTxt.getValue() & '". Write the option' & |
@@ -1784,27 +1784,27 @@ prevCh  string(1),auto
       cycle
     end
     case val(pSt.valuePtr[x])
-    of 39 ! <single quote>
+    of 39        ! <single quote>
       inQ = 1
       prevCh = ''''
       x += 1
       cycle
-    of 40 ! '('
+    of 40        ! '('
       depth += 1
       prevCh = '('
       x += 1
       cycle
-    of 41 ! ')'
+    of 41        ! ')'
       depth -= 1
       prevCh = ')'
       x += 1
       cycle
-    of 91 ! '['                       ! a bracket subscript nests like parens: an option word
-      depth += 1                      !   inside q.buf[i, skip] is a FIELD, not an option
+    of 91        ! '['                       ! a bracket subscript nests like parens: an option word
+      depth += 1 !   inside q.buf[i, skip] is a FIELD, not an option
       prevCh = '['
       x += 1
       cycle
-    of 93 ! ']'
+    of 93        ! ']'
       depth -= 1
       prevCh = ']'
       x += 1

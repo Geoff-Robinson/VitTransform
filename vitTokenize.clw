@@ -249,7 +249,7 @@ inQuotes    Long,auto
       if tok._DataEnd = 1 and tok.valuePtr[1] = '('
         state = 2                                                             ! omit looking for literal
       else
-        pos = svPos; state = 0; inContinuation = false                       ! revert - not simple omit (and clear any lexer state the
+        pos = svPos; state = 0; inContinuation = false                        ! revert - not simple omit (and clear any lexer state the
                                                                               !   consumed tokens set: a glued '|' left the flag armed, #9)
       end
 
@@ -259,7 +259,7 @@ inQuotes    Long,auto
         tempST.unquote('''')                                                  ! store the string we will search for end of OMIT
         state = 3
       else
-        pos = svPos; state = 0; inContinuation = false                       ! revert - not simple omit (and clear any lexer state the
+        pos = svPos; state = 0; inContinuation = false                        ! revert - not simple omit (and clear any lexer state the
                                                                               !   consumed tokens set: a glued '|' left the flag armed, #9)
       end
 
@@ -301,10 +301,10 @@ inQuotes    Long,auto
             break                                                             ! EOF
           end
         else
-          pos = svPos; inContinuation = false                                                         ! revert - not simple omit (see #9 note above)
+          pos = svPos; inContinuation = false                                 ! revert - not simple omit (see #9 note above)
         end
       else
-        pos = svPos; inContinuation = false                                                           ! revert - not simple omit (see #9 note above)
+        pos = svPos; inContinuation = false                                   ! revert - not simple omit (see #9 note above)
       end
       state = 0
     else
@@ -1779,10 +1779,10 @@ VitTokenize.MoveToks      Procedure(LONG pSrc, LONG pDst, LONG pNumToMove) !,LON
   if pNumToMove > records(self.tokens) - pSrc + 1 then pNumToMove = records(self.tokens) - pSrc + 1.
   loop pNumToMove times
     if self.moveTok(pSrc,pDst) <> st:ok then return st:notOK.
-    if pDst and pSrc > pDst     ! backward: the landed token pushed the REMAINING block down one,
-                                !   (pDst = 0 is APPEND per MoveTok - neither pointer moves there)
-      pDst += 1                 !   so the next block token sits at pSrc+1 - advance the source
-      pSrc += 1                 !   alongside the destination or a survivor is moved instead (#2)
+    if pDst and pSrc > pDst         ! backward: the landed token pushed the REMAINING block down one,
+                                    !   (pDst = 0 is APPEND per MoveTok - neither pointer moves there)
+      pDst += 1                     !   so the next block token sits at pSrc+1 - advance the source
+      pSrc += 1                     !   alongside the destination or a survivor is moved instead (#2)
     end
   end
   return st:ok
@@ -4024,7 +4024,7 @@ moved   long
       z += 1                                                   !   trailing comment) does not: comments are AlignComments'
       get(self.tokens, z)                                      !   business, and the guard protects the CODE column
       if errorcode() then break.
-      if self.Tokens.tok &= NULL               ! a trivia-only row still holds width - count it, keep walking
+      if self.Tokens.tok &= NULL                               ! a trivia-only row still holds width - count it, keep walking
         if not self.Tokens.strBefore &= NULL
           dq:lineW += size(self.Tokens.strBefore)
         end
@@ -4036,7 +4036,7 @@ moved   long
       end
       dq:lineW += size(self.Tokens.tok)
     end
-    get(self.tokens, x)                                        ! restore the buffer position
+    get(self.tokens, x) ! restore the buffer position
     add(lnQ)
     labTok = 0
   end
@@ -4094,12 +4094,12 @@ FlushDecl routine
   !      space past the longest label, as this routine has always claimed.
   alignQ = 1
   get(lnQ, 1)
-  z = dq:labW + dq:gap                 ! the column the first declaration starts its type in
+  z = dq:labW + dq:gap                      ! the column the first declaration starts its type in
   loop q = 2 to records(lnQ)
     get(lnQ, q)
     if dq:labW + dq:gap <> z then alignQ = 0 ; break.
   end
-  if alignQ then free(lnQ) ; exit.     ! already level - nothing to say
+  if alignQ then free(lnQ) ; exit.          ! already level - nothing to say
   wid = 0 ; origW = 0
   loop q = 1 to records(lnQ)
     get(lnQ, q)
@@ -4113,7 +4113,7 @@ FlushDecl routine
   ! back as `i  long,auto`. That is a file the tool changed for no gain at all, which is the one
   ! thing a format-preserving rewriter must not do. With +1 such a run is left exactly as
   ! written - the gap is already 1, so the "already exactly right" test below skips it.
-  wid += 1                             ! the column every type starts in
+  wid += 1                                  ! the column every type starts in
   newW = 0
   loop q = 1 to records(lnQ)
     get(lnQ, q)
@@ -4123,7 +4123,7 @@ FlushDecl routine
     if z > newW then newW = z.
   end
   if pMaxWidth > 0 and newW > pMaxWidth and origW <= pMaxWidth
-    free(lnQ) ; exit                   ! would push a fitting run over the limit
+    free(lnQ) ; exit                        ! would push a fitting run over the limit
   end
   loop q = 1 to records(lnQ)
     get(lnQ, q)

@@ -723,9 +723,9 @@ wU  string(12),auto
     if self.rl.rules.repQ.tok &= NULL then cycle.
     wU = upper(self.rl.rules.repQ.tok)
     case wU
-    of   'IF'   orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN' |
-       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END' |
-       orof 'UNTIL' orof 'WHILE'             ! post-test spellings carry the LOOP's '-' (review)
+    of   'IF'    orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN'  |
+       orof 'ELSE'  orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END' |
+       orof 'UNTIL' orof 'WHILE'               ! post-test spellings carry the LOOP's '-' (review)
       return 1
     end
   end
@@ -745,9 +745,9 @@ wU  string(12),auto
     wU = upper(self.rl.rules.patQ.tok)
     if wU = '.' then return 1.
     case wU
-    of   'IF'   orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN' |
-       orof 'ELSE' orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END' |
-       orof 'UNTIL' orof 'WHILE'             ! post-test spellings carry the LOOP's '-' (review)
+    of   'IF'    orof 'LOOP'  orof 'CASE' orof 'EXECUTE' orof 'BEGIN'  |
+       orof 'ELSE'  orof 'ELSIF' orof 'OF'   orof 'OROF'    orof 'END' |
+       orof 'UNTIL' orof 'WHILE' ! post-test spellings carry the LOOP's '-' (review)
       return 1
     end
   end
@@ -1042,9 +1042,9 @@ P loop
            and self.tk.GetTok(x+2) <> ';'           |
            and lower(self.tk.GetTok(x+2)) <> 'orof' |
            and lower(self.tk.GetTok(x+2)) <> 'to'
-          cycle P                                   ! the operand is an EXPRESSION - refuse the whole CASE (#3):
-        end                                         !   the wrap loop below wraps every arm unconditionally, so
-                                                    !   skipping just this arm converted of 'b' & pad to of 98 & pad
+          cycle P                                           ! the operand is an EXPRESSION - refuse the whole CASE (#3):
+        end                                                 !   the wrap loop below wraps every arm unconditionally, so
+                                                            !   skipping just this arm converted of 'b' & pad to of 98 & pad
         x += 1
         param.setValue(self.tk.GetTok(x))
         if ~self.IsSingleChar(param.getValue()) then cycle P.
@@ -2725,7 +2725,7 @@ VitEngine.WalkUnreachable Procedure(LONG pExecStart, LONG pExecEnd, StringTheory
 i         long,auto
 fol       byte,auto
 lvl       string(1),auto
-tty       string(1),auto    ! token TYPE, captured with lvl: the unmarked-vt:end belt reads it (#1)
+tty       string(1),auto ! token TYPE, captured with lvl: the unmarked-vt:end belt reads it (#1)
 isEol     byte,auto
 txt       string(vs:maxName),auto
 tU        string(vs:maxName)
@@ -2734,11 +2734,11 @@ depth     long
 dead      byte
 deadDepth long
 pendHead  byte
-contLine  byte,auto    ! this token opens a '|' CONTINUATION of the line above
-prevCmt   byte         !   ... and that line was commented out, so this one must be too
-tailRj    byte         ! TailRejoinChk verdict: the dead line's tail holds a rejoin
+contLine  byte,auto      ! this token opens a '|' CONTINUATION of the line above
+prevCmt   byte           !   ... and that line was commented out, so this one must be too
+tailRj    byte           ! TailRejoinChk verdict: the dead line's tail holds a rejoin
 lines     long
-execStk   BYTE,DIM(64) ! execStk[depth]=1 when the opener at that depth is EXECUTE
+execStk   BYTE,DIM(64)   ! execStk[depth]=1 when the opener at that depth is EXECUTE
   code
   if pExecStart < 1 or pExecEnd < pExecStart then return 0.
   loop i = pExecStart to pExecEnd
@@ -6662,9 +6662,9 @@ KrLine routine
     edLine = records(KrEdQ)
     krHdrSkip = 0
     krHdrTok = lineFirst
-    get(self.tk.tokens, lineFirst)               ! a column-1 LABEL fronts the header keyword ('P loop while ...') -
+    get(self.tk.tokens, lineFirst)            ! a column-1 LABEL fronts the header keyword ('P loop while ...') -
     if ~errorcode() and self.tk.tokens.type = vt:label and self.tk.tokens.strBefore &= NULL
-      krHdrTok = lineFirst + 1                   !   judge the keyword, not the label (#18 review)
+      krHdrTok = lineFirst + 1                !   judge the keyword, not the label (#18 review)
     end
     case upper(self.tk.GetTok(krHdrTok))
     of 'LOOP' orof 'ELSIF' orof 'OF' orof 'OROF' orof 'UNTIL' orof 'WHILE'
@@ -6685,7 +6685,7 @@ KrLine routine
     if ~krHdrSkip and records(KrEdQ) = edLine
       do KrTryS3
     end
-    if ~krHdrSkip and records(KrEdQ) = edLine                ! S4 for the same reason S3 waits - one
+    if ~krHdrSkip and records(KrEdQ) = edLine ! S4 for the same reason S3 waits - one
       do KrTryS4                              !   delete span per line, or KrApply corrupts
     end
   end
@@ -12519,8 +12519,8 @@ i  long,auto
       cycle
     end
     if upper(self.tk.tokens.tok) = 'CODE'
-      if self.tk.tokens.strBefore &= NULL then cycle.  ! a COLUMN-1 'code' is a LABEL (a local variable), not the
-      return i                                         !   CODE statement - the exclusion BuiltinUnusedVars already applies (#10)
+      if self.tk.tokens.strBefore &= NULL then cycle. ! a COLUMN-1 'code' is a LABEL (a local variable), not the
+      return i                                        !   CODE statement - the exclusion BuiltinUnusedVars already applies (#10)
     end
   end
   return 0
@@ -12735,9 +12735,9 @@ VitEngine.RemoveAutoAttr Procedure(LONG pDeclTok, StringTheory pNote)
 i      long,auto
 ln     long,auto
 autoT  long,auto
-commaT long,auto ! the earlier AutoCheck missed the compound  autoT = 0 ; commaT = 0  write - restored
-barT   long,auto ! a '|' token seen on the current physical line - the declaration continues (#24)
-cmtAt  long,auto ! position of a '!' inside AUTO's strBefore - a comment riding the continuation
+commaT long,auto    ! the earlier AutoCheck missed the compound  autoT = 0 ; commaT = 0  write - restored
+barT   long,auto    ! a '|' token seen on the current physical line - the declaration continues (#24)
+cmtAt  long,auto    ! position of a '!' inside AUTO's strBefore - a comment riding the continuation
 svCmt  StringTheory ! ...salvaged onto the note line, or the user's text vanishes with the span
   code
   get(self.tk.tokens, pDeclTok)
@@ -12750,11 +12750,11 @@ svCmt  StringTheory ! ...salvaged onto the note line, or the user's text vanishe
     get(self.tk.tokens, i)
     if errorcode() then break.
     if self.tk.tokens.lineNo <> ln
-      if ~barT                                     ! not continued by a trailing '|' token - the bar can also live
+      if ~barT                                                                      ! not continued by a trailing '|' token - the bar can also live
         if self.tk.tokens.strBefore &= NULL then break.
-        if ~self.TriviaHasContinuation(self.tk.tokens.strBefore) then break.  ! ...in the next token's trivia
+        if ~self.TriviaHasContinuation(self.tk.tokens.strBefore) then break.        ! ...in the next token's trivia
       end
-      ln = self.tk.tokens.lineNo                   ! an ,AUTO after a '|' is still THIS declaration - follow it (#24)
+      ln = self.tk.tokens.lineNo                                                    ! an ,AUTO after a '|' is still THIS declaration - follow it (#24)
       barT = 0
     end
     if self.tk.tokens.tok &= NULL then cycle.
@@ -12763,23 +12763,23 @@ svCmt  StringTheory ! ...salvaged onto the note line, or the user's text vanishe
       autoT = i
       break
     end
-    if self.tk.tokens.tok = ',' then commaT = i. ! remember the most recent comma before AUTO
+    if self.tk.tokens.tok = ',' then commaT = i.                                    ! remember the most recent comma before AUTO
   end
   if ~autoT then return 0.
-  svCmt.free()                                   ! a comment riding the continuation ('long, | !keep') lives in
-  get(self.tk.tokens, autoT)                     !   AUTO's strBefore and would vanish with the span - salvage it
-  if ~errorcode() and not self.tk.tokens.strBefore &= NULL  ! onto the note line instead (#24 review)
+  svCmt.free()                                                                      ! a comment riding the continuation ('long, | !keep') lives in
+  get(self.tk.tokens, autoT)                                                        !   AUTO's strBefore and would vanish with the span - salvage it
+  if ~errorcode() and not self.tk.tokens.strBefore &= NULL                          ! onto the note line instead (#24 review)
     cmtAt = instring('!', self.tk.tokens.strBefore, 1, 1)
     if cmtAt
       svCmt.setValue(self.tk.tokens.strBefore[cmtAt : size(self.tk.tokens.strBefore)])
-      svCmt.replace('<13>', ' ') ; svCmt.replace('<10>', ' ') ; svCmt.replace('|', '')
+      svCmt.replaceByte(13, 32) ; svCmt.replaceByte(10, 32) ; svCmt.removeByte(124) ! replace all <carriage return> with <space> replace all <line feed> with <space> remove all '|'
       svCmt.trim()
     end
   end
   if commaT and commaT < autoT
-    self.tk.DeleteToks(commaT, autoT)            ! remove ',AUTO' (comma + keyword together)
+    self.tk.DeleteToks(commaT, autoT)                                               ! remove ',AUTO' (comma + keyword together)
   else
-    self.tk.DeleteToks(autoT, autoT)             ! defensive: AUTO with no leading comma
+    self.tk.DeleteToks(autoT, autoT)                                                ! defensive: AUTO with no leading comma
   end
   ! Insert on a MID-LINE token (pDeclTok+1 = the type keyword), NOT the col-1 label:
   ! InsertStringAtEOL walks forward to the line's <10> EOL token, but a first-on-line

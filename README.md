@@ -1,4 +1,4 @@
-# VitTransform - 1.0.1
+# VitTransform - 1.0.2
 
 **A safe, format-preserving code transformer for [Clarion](https://www.softvelocity.com/) source code.**
 
@@ -137,8 +137,8 @@ skip the rest of this section and go directly to the [Quick start](#quick-start)
 
 The rest of this section is for building the tools from the provided source, which requires StringTheory.
 
-There are **two solutions**, one per program. Build both in **Clarion** (I use Clarion 11.13505;
-any recent release should be fine), Release configuration:
+There are **two solutions**, one per program. Build both in **Clarion** (I happen to use Clarion
+11.13505 but any recent release should be fine), Release configuration:
 
 | | |
 |---|---|
@@ -1079,8 +1079,9 @@ VitTransform <rulefile> <source> [outdir] [switches]
 > actually change are ever written.
 
 > **Exit code:** a clean run exits **0**. Anything a calling script must see exits
-> **1** - a refused switch or rule file, rule-file errors, a save that failed - so a batch
-> file can test `ERRORLEVEL` instead of parsing the report.
+> **1** - a refused switch or rule file, rule-file errors, a save that failed, a wildcard
+> that matched no files - so a batch file can test `ERRORLEVEL` instead of parsing the
+> report.
 
 > **Line endings:** output is always **CRLF**. A file VitTransform does not change is not
 > rewritten at all, so it keeps whatever it had; a file it *does* change comes back CRLF even
@@ -1678,7 +1679,7 @@ One label appears in the comments and is worth knowing:
 | `S1` - `S4` in `VitEngine.clw` | the four passes of the `KnownRanges` value walk, named after the routines that run them (`KrTryS1` .. `KrTryS4`). A comment saying "S3 runs only when S2 changed nothing" is naming those routines, not a document |
 
 Every transform report opens with the version and build number of the program that wrote it -
-`VitTransform 1.0.1 (build 253)` is the shape of it - and nothing else. That tells you which copy of
+`VitTransform 1.0.2 (build 254)` is the shape of it - and nothing else. That tells you which copy of
 VitTransform produced the report in front of you, which is worth knowing if you have more than one
 to hand.
 
@@ -2178,7 +2179,7 @@ still happens - it can itself be the only change a run makes.
 No, and there is no runtime DLL to keep beside them either: both exes link the Clarion
 runtime IN (`<Model>Lib</Model>` in each project), so a single .exe on its own is enough -
 copy it anywhere and run it. Only `--thorough` looks for an installation, to expand
-`INCLUDE`s. (BUILDING the two exes needs Clarion 11 and StringTheory - see *Install*.)
+`INCLUDE`s. (BUILDING the two exes needs Clarion and StringTheory - see *Install*.)
 
 **Can I run it from a build script?**
 

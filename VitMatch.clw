@@ -606,11 +606,11 @@ fpr long,auto
   clear(self.anchorPost)
   self.anchorPost.keyText = pKey
   fpr = position(self.anchorPost)
-  if ~fpr or fpr > records(self.anchorPost) then return 0.  ! nothing at or after the key
+  if ~fpr or fpr > records(self.anchorPost) then return 0. ! nothing at or after the key
   get(self.anchorPost, fpr)
   if errorcode() then return 0.
-  if self.anchorPost.keyText <> pKey then return 0.         ! POSITION lower-bounds, so a next-greater row is a MISS -
-  return fpr                                                !   report it as 0 so the caller's no-postings rescue can fire (#6)
+  if self.anchorPost.keyText <> pKey then return 0.        ! POSITION lower-bounds, so a next-greater row is a MISS -
+  return fpr                                               !   report it as 0 so the caller's no-postings rescue can fire (#6)
 
 ! ------------------------------------------------------------------------------------
 ! Typed metavar gate: resolve the identifier in the symbol
@@ -882,7 +882,7 @@ first long
     if self.TokIsEOL(t) then break.
     txt = self.TokText(t)
     if txt = '(' then dep += 1.
-    if txt = '[' then dep += 1.       ! subscript commas are not separators (#11)
+    if txt = '[' then dep += 1.                 ! subscript commas are not separators (#11)
     if txt = ']' then dep -= 1.
     if txt = ')'
       if ~dep
@@ -1427,17 +1427,17 @@ ckOp  string(4),auto
   if self.gd1Lit
     get(self.patQ, 1)
     if errorcode() or self.patQ.tok &= NULL then return true.
-    if self.LitMatches(pS, self.patQ.tok) then return true.                                                        ! the member itself - no clip() copy; = ignores trailing spaces anyway
-    ckOp = self.OpCanon(self.patQ.tok)                                                                             ! a leading comparator also matches its two-word NOT spelling
-    if ckOp then return self.AnchorNotPair(pS, ckOp).                                                              !   ('<<>' vs 'NOT =') - the postings walk already admits these (#29)
+    if self.LitMatches(pS, self.patQ.tok) then return true. ! the member itself - no clip() copy; = ignores trailing spaces anyway
+    ckOp = self.OpCanon(self.patQ.tok)                      ! a leading comparator also matches its two-word NOT spelling
+    if ckOp then return self.AnchorNotPair(pS, ckOp).       !   ('<<>' vs 'NOT =') - the postings walk already admits these (#29)
     return false
   end
   if self.gd1IdMv
     if ~self.rl.IsLabelToken(self.TokText(pS)) and ~instring('.', clip(self.TokText(pS)), 1, 1) |
-       and ~self.ImplicitType(self.TokText(pS)) |
-       then return false.               ! B0b: a recombined 'self.Direct' receiver token has a '.' and isn't a bare label;
-                                        !   implicit variables (total#, s", r$) are variables too - MatchHere's arm
-                                        !   accepts them, so the gate must not discard them first (#15)
+       and ~self.ImplicitType(self.TokText(pS))                                                 |
+       then return false.                                   ! B0b: a recombined 'self.Direct' receiver token has a '.' and isn't a bare label;
+                                                            !   implicit variables (total#, s", r$) are variables too - MatchHere's arm
+                                                            !   accepts them, so the gate must not discard them first (#15)
     if self.gd2Dot and self.TokText(pS + 1) <> '.' then return false.
   end
   return true

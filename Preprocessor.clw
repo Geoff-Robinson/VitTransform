@@ -64,8 +64,8 @@ st StringTheory
   self.ProjDir  = self.DirName(pMainFilePath)
   if ~self.ProjDir then self.ProjDir = '.'.
   self.RootDir  = pRootDir
-  self.BinDir   = clip(pRootDir) & '\bin' ! %BIN% default = %ROOT%\bin
-  self.Config   = choose(~pConfig, 'Release', pConfig)  ! Release, as everything else documents (#28); the CLI already passes it
+  self.BinDir   = clip(pRootDir) & '\bin'              ! %BIN% default = %ROOT%\bin
+  self.Config   = choose(~pConfig, 'Release', pConfig) ! Release, as everything else documents (#28); the CLI already passes it
   free(self.RedDirs)
   st.setValue(pRedFilePath, st:clip)
   if st._dataEnd
@@ -401,7 +401,7 @@ secOfs    long,auto        ! section start line in the included file
     resolved = self.ResolveFile(fileName, myDir)
     if ~resolved
       self.ErrText.Append('INCLUDE not found: ' & clip(fileName) & |
-                          ' (' & clip(pFileLabel) & ' line ' & (i + pLineOfs) & ')<13,10>')  ! + pLineOfs (#27): i is section-relative, the neighbours include it
+                          ' (' & clip(pFileLabel) & ' line ' & (i + pLineOfs) & ')<13,10>') ! + pLineOfs (#27): i is section-relative, the neighbours include it
       self.EmitLine('! #error INCLUDE not found: ' & clip(fileName), pFileLabel, i + pLineOfs)
       cycle
     end

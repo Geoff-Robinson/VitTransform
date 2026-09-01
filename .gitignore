@@ -26,3 +26,6 @@ VitStyle.ui.txt
 *.ir.txt
 *.tokens.txt
 vt-batch.log
+
+# Written by VitTransform at run time - one per run, per source file
+*.progress.txt

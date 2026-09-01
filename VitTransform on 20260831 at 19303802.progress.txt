@@ -1,1 +1,0 @@
-7023822  tests\issue19_valchr\in.clw  parsing

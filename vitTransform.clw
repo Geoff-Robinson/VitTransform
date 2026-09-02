@@ -802,7 +802,8 @@ realFiles LONG            ! wildcard rows that were actual FILES - the exit cont
   outSt.append('files: ' & eng.filesDone & '  changed: ' & eng.filesChanged                  & |
                '  changes: ' & eng.totalChanges & '  time: ' & clip(totTmr.Duration())       & |
                choose(eng.dryRun, '  [dry-run]', '')                                         & |
-               choose(~eng.loadErrors, '', '  NOT LOADED: ' & eng.loadErrors) & '<13,10>') ! on the summary line, not just buried above
+               choose(~eng.loadErrors, '', '  NOT LOADED: ' & eng.loadErrors)                & |
+               choose(~eng.ppErrors,   '', '  HEADERS NOT FOUND: ' & eng.ppErrors) & '<13,10>') ! on the summary line, not just buried above
 
   outFn.setValue(fn)
   outFn.append(clip(stampSt.getValue()) & '.report.txt') ! date-time stamp (' on yyyymmdd at hhmmssth') so repeated runs with the same rulefile keep separate reports instead of overwriting
@@ -813,7 +814,7 @@ realFiles LONG            ! wildcard rows that were actual FILES - the exit cont
   ! the end-of-run box is --summary only, so a bat of many runs goes straight
   ! through. Every number in it is already in the report. The ONE exception is a save
   ! failure: the output you asked for is not on disk, and that must always be seen.
-  if wantSumm or eng.saveErrors > 0
+  if wantSumm or eng.saveErrors > 0 or eng.ppErrors > 0
     Say('VitTransform: ' & clip(srcSpec.getValue())                                              & |
             '|Files:   ' & eng.filesDone                                                         & |
             '|Changed: ' & eng.filesChanged                                                      & |
@@ -821,10 +822,14 @@ realFiles LONG            ! wildcard rows that were actual FILES - the exit cont
             '|Time:    ' & clip(totTmr.Duration())                                               & |
             choose(eng.dryRun, '|DRY RUN - nothing written', '')                                 & |
             choose(eng.saveErrors > 0, '|SAVE ERRORS: ' & eng.saveErrors & ' - see report!', '') & |
+            choose(eng.ppErrors > 0, '|HEADERS NOT FOUND: ' & eng.ppErrors                       & |
+                                     ' - the type registry is incomplete, so typed rules saw'    & |
+                                     ' only part of the program. See report!', '')               & |
             '||Report in ' & clip(outFn.getValue()))
   end
   if eng.saveErrors > 0                                                                         or |   ! output that was asked for is not on disk
-     eng.loadErrors > 0 ! a SOURCE that was asked for was never read - the run did not do what it was told
+     eng.loadErrors > 0                                                                         or |   ! a SOURCE that was asked for was never read - the run did not do what it was told
+     eng.ppErrors > 0 ! a HEADER that was asked for was never found - the type registry is incomplete, so typed rules judged against part of the program
     exitRc = 1
   end
   if exitRc then halt(1).

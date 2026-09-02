@@ -141,6 +141,7 @@ VitEngine.Init Procedure(VitRules pRl)
   self.filesDone    = 0
   self.saveErrors   = 0
   self.loadErrors   = 0
+  self.ppErrors     = 0
 
 ! ------------------------------------------------------------------------------------
 ! enable cross-file type resolution. The Preprocessor splices every INCLUDE
@@ -233,28 +234,36 @@ unMsg        StringTheory !   and the line it goes on
     self.pp.Init(pFn, clip(self.redPath), clip(self.rootDir), clip(self.config))
     self.ppSrc.free()
     if self.pp.Process(src, self.ppSrc, self.ppLineMap) ! PROC: non-zero = preprocessor errors (still expands what it can)
-      pLog.append(clip(pFn) & ': preprocessor warnings:<13,10>' & self.pp.GetErrors() & '<13,10>')
+      ! A HEADER THAT DID NOT RESOLVE IS AN ERROR, NOT A WARNING, AND IT HAS TO REACH THE
+      ! EXIT CODE. Include expansion exists to build the cross-file type registry, and the
+      ! typed metavars in a rule file are resolved against it. A missing header leaves that
+      ! registry incomplete, so every typed rule in the run decided against a partial view of
+      ! the program - the result is not the one the user asked for even though the run
+      ! finished. Counting it here is what lets a calling script tell the two apart.
+      self.ppErrors += 1
+      pLog.append(clip(pFn) & ': preprocessor errors (the type registry is incomplete, so ' & |
+                  'typed rules saw only part of the program):<13,10>' & self.pp.GetErrors() & '<13,10>')
     end
     self.Progress('tokenising expanded (' & self.ppSrc.Length() & ' bytes)')
     self.exptk.ParseText(self.ppSrc)
-    self.syms.expTk    &= self.exptk                    ! persistent: Build reads it on resymbol
-    self.syms.hdrBuilt  = 0                             ! new file's expansion -> rebuild the registry once
+    self.syms.expTk    &= self.exptk ! persistent: Build reads it on resymbol
+    self.syms.hdrBuilt  = 0          ! new file's expansion -> rebuild the registry once
     pLog.append(clip(pFn) & ': +includes -> ' & self.ppSrc.Length() & ' expanded byte(s), ' & |
                 self.exptk.records() & ' token(s)<13,10>')
-    do ExpLevelFingerprint                              ! '+'/'-' census of the expanded stream (context-drift detector)
-    if self.verbose                                     ! full EXPANDED-stream dump (level+type+text per token) -
-      dbg.free()                                        !   diffing two contexts' dumps names the exact tokens whose
-      self.exptk._List(dbg, 1)                          !   stamps drift (NB _List free()s its target first)
+    do ExpLevelFingerprint                          ! '+'/'-' census of the expanded stream (context-drift detector)
+    if self.verbose                                 ! full EXPANDED-stream dump (level+type+text per token) -
+      dbg.free()                                    !   diffing two contexts' dumps names the exact tokens whose
+      self.exptk._List(dbg, 1)                      !   stamps drift (NB _List free()s its target first)
       pLog.append('--- exptk tokens ---<13,10>' & dbg.getValue() & '<13,10>')
     end
   else
-    self.syms.expTk    &= NULL                          ! B0 path: in-file registry only
+    self.syms.expTk    &= NULL                      ! B0 path: in-file registry only
     self.syms.hdrBuilt  = 0
   end
   self.Progress('building symbols (' & self.tk.records() & ' tokens)')
-  self.syms.traceReg = self.verbose                     ! registry decision trace under --verbose
-  self.syms.Build(self.tk)                              ! scopes/symbols from raw self.tk; registry from expTk when set
-  if self.syms.regEofDepth or self.syms.regEofStack     ! ALWAYS-ON health line - the registry desync signature
+  self.syms.traceReg = self.verbose                 ! registry decision trace under --verbose
+  self.syms.Build(self.tk)                          ! scopes/symbols from raw self.tk; registry from expTk when set
+  if self.syms.regEofDepth or self.syms.regEofStack ! ALWAYS-ON health line - the registry desync signature
     pLog.append('WARNING type-registry scan ended unbalanced: depth ' & self.syms.regEofDepth & ', owner stack ' |
        & self.syms.regEofStack & ' (registry may be polluted - run --verbose for the trace)<13,10>')
   end
@@ -667,8 +676,18 @@ passChanges long
   loop r = 1 to records(self.rl.rules)
     get(self.rl.rules, r)
     if errorcode() then break.
-    if ~self.rl.GroupActive(self.rl.rules.groupId) then cycle.                          ! unselected GROUP - rule/builtin inert this run
-    if self.onlyId and self.rl.rules.ruleId <> self.onlyId then cycle.                  ! these two MUST precede the builtin
+    ! --only= NAMES ONE RULE BY ITS LINE NUMBER, AND NAMING IT IS ASKING FOR IT, so the
+    ! group test is skipped for that one rule. GroupActive decides the DEFAULT selection, and
+    ! a rule asked for by id is not a default. Every analysis builtin lives inside a group
+    ! that ships off, so testing the group first filtered them all out: the run finished
+    ! having done nothing and exited 0, which reads exactly like "that rule found nothing in
+    ! this file" - the one answer this switch exists to rule out. Trying one analysis on its
+    ! own is what --only= is for.
+    if self.onlyId
+      if self.rl.rules.ruleId <> self.onlyId then cycle.
+    elsif ~self.rl.GroupActive(self.rl.rules.groupId)
+      cycle                                                                             ! unselected GROUP - rule/builtin inert this run
+    end
     if self.skipId and self.rl.rules.ruleId = self.skipId then cycle.                   !   branch below, which cycles on its own. They
                                                                                         !   Placed after it, --only=<id> still runs
                                                                                         !   every BUILTIN - CombineAdjacentLiterals,
@@ -3584,12 +3603,10 @@ k long,auto
 
 ! First <10> (EOL) token at an index greater than pTok, or 0.
 VitEngine.FirstEolAfter Procedure(LONG pTok)
-i long,auto
+x long,auto
   code
-  i = pTok + 1
-  loop while i <= records(self.tk.tokens)
-    if self.IsEolTok(i) then return i.
-    i += 1
+  loop x = pTok+1 to records(self.tk.tokens)
+    if self.IsEolTok(x) then return x.
   end
   return 0
 
@@ -3760,24 +3777,22 @@ i   long,auto
 ! worthless. Only the words are compared.
 ! ------------------------------------------------------------------------------------
 VitEngine.LineCommentText Procedure(LONG pFirst, LONG pEol, StringTheory pOut)
-i   long,auto
+x   long,auto
 bp  long,auto
 sb  StringTheory
   code
   pOut.free()
-  loop i = pFirst to pEol
-    get(self.tk.tokens, i)
+  loop x = pFirst to pEol
+    get(self.tk.tokens, x)
     if errorcode() then break.
     if self.tk.tokens.strBefore &= NULL then cycle.
     sb.setValue(self.tk.tokens.strBefore)
-    bp = sb.findByte(33)          ! '!'
+    bp = sb.findByte(33)              ! '!'
     if ~bp then cycle.
-    sb.RemoveFromPosition(1,bp)   ! everything AFTER the '!'
-    sb.replaceByte(9, 32)         ! a tab is white space like any other here replace all <tab> with <space>
-    loop while sb.findChars('  ') ! runs of spaces collapse: only the WORDS are the text
-      sb.replace('  ', ' ')
-    end
-    sb.trim()
+    sb.RemoveFromPosition(1,bp)       ! keep everything AFTER the '!'
+    sb.replaceByte(9, 32)             ! a tab is white space like any other here replace all <tab> with <space>
+    sb.trim()                         ! trim first - thanks Carl
+    loop while sb.replace('  ', ' '). ! runs of spaces collapse: only the WORDS are the text
     if pOut._DataEnd then pOut.append(' ').
     pOut.append(sb)
   end
@@ -3786,13 +3801,14 @@ sb  StringTheory
 VitEngine.SpanTokEqual Procedure(LONG pAF, LONG pAE, LONG pBF, LONG pBE)
 k   long,auto
 o   long,auto
-ta  StringTheory                  ! holds token A while token B is fetched - no fixed width to overflow
+ta  StringTheory                      ! holds token A while token B is fetched - no fixed width to overflow
+lit byte,auto                         ! token A is a string literal, so its case is data and must match exactly
   code
   if pAE - pAF <> pBE - pBF then return 0.
   o = pBF - pAF
   loop k = pAF to pAE
     get(self.tk.tokens, k)
-    if errorcode() then return 0. ! BOTH gets are checked. A failed fetch leaves the queue
+    if errorcode() then return 0.     ! BOTH gets are checked. A failed fetch leaves the queue
     ! buffer on the PREVIOUS record, so an unchecked get compares a token with itself and
     ! answers 1 - the spans are the same length, so nothing else catches it. `ta` HOLDS the
     ! first token's text while the second is fetched, because the get below overwrites the
@@ -3803,14 +3819,25 @@ ta  StringTheory                  ! holds token A while token B is fetched - no 
     ! simply always right and no over-long token has to be refused.
     if self.tk.tokens.tok &= NULL
       ta.free()
+      lit = 0
     else
       ta.setValue(self.tk.tokens.tok)
-      ta.upper()
+      lit = choose(self.tk.tokens.type = vt:literal)
+      if ~lit then ta.upper().        ! a name is caseless in Clarion; a string literal is not
     end
-    get(self.tk.tokens, k + o)    !   buffer on the PREVIOUS record, so the routine compared a
-    if errorcode() then return 0. !   token with itself and answered 1 - the spans are the same.
+    get(self.tk.tokens, k + o)        !   buffer on the PREVIOUS record, so the routine compared a
+    if errorcode() then return 0.     !   token with itself and answered 1 - the spans are the same.
     if self.tk.tokens.tok &= NULL
       if ta._DataEnd then return 0.
+    elsif lit or self.tk.tokens.type = vt:literal
+      ! A STRING LITERAL IS DATA, NOT A NAME, so the two are compared byte for byte. Clarion
+      ! identifiers and keywords carry no meaning in their case and stay caseless above.
+      ! 'abc' and 'ABC' hold different characters, and answering "same" for them tells the
+      ! callers that two branches run the same statement when they do not - the hoists then
+      ! move one copy out and delete the other, and the branch that stored the other spelling
+      ! silently stores this one instead. The closing quote is part of the token, so two
+      ! literals differing only in trailing spaces do not compare equal here either.
+      if choose(ta._DataEnd < 1, '', ta.valuePtr[1 : ta._DataEnd]) <> self.tk.tokens.tok then return 0.
     else
       if choose(ta._DataEnd < 1, '', ta.valuePtr[1 : ta._DataEnd]) <> upper(self.tk.tokens.tok) then return 0.
     end
@@ -5469,7 +5496,7 @@ nx2      long                                        ! AUTO unsafe: read before 
   if self.tk.GetTok(pIx + 1) <> '(' then return 0.
   if ~self.DgRecvAt(pIx + 2, pRecvU, memU, nx) then return 0.
   if memU <> '._DATAEND' then return 0.
-  if self.tk.GetTok(nx)     <> '<' then return 0.
+  if self.tk.GetTok(nx)     <> '<<' then return 0.
   if self.tk.GetTok(nx + 1) <> '1' then return 0.
   if self.tk.GetTok(nx + 2) <> ',' then return 0.
   if self.tk.GetTok(nx + 3) <> '''''' then return 0. ! the empty literal
@@ -5858,7 +5885,7 @@ VitEngine.DgGuardAt Procedure(LONG pIx, STRING pRecvU)
   code
   if upper(self.tk.GetTok(pIx)) <> 'IF' then return 0.
   if self.DgMemberAt(pIx + 1, pRecvU) <> '._DATAEND' then return 0.
-  if self.tk.GetTok(pIx + 2) <> '<' then return 0.
+  if self.tk.GetTok(pIx + 2) <> '<<' then return 0.
   if self.tk.GetTok(pIx + 3) <> '1' then return 0.
   if upper(self.tk.GetTok(pIx + 4)) <> 'THEN' then return 0.
   if upper(self.tk.GetTok(pIx + 5)) <> 'RETURN' then return 0.
@@ -14131,8 +14158,8 @@ msB  long,auto
     end
   end
   self.MgSpanRaw(mq:condS, mq:condE, condTxt)               ! as written: this text is re-emitted
-  mq:condTx = condTxt.getValue()
   if condTxt._DataEnd > 400 then allChar = 0 ; allPure = 0. ! too wide to carry - leave it alone
+  mq:condTx = condTxt.getValue()                            ! tested FIRST: this field is a fixed width and truncates in silence
   if ~self.MgCondIsPure(mq:condS, mq:condE, pureU) then allPure = 0.
   msB = self.MgOneCharTest(mq:condS, mq:condE, recvTxt)
   if msB > 0
@@ -14837,7 +14864,7 @@ opn  byte,auto               ! an escape group is open
       if opn
         pOut.append(',' & b) ! another value in the group already open
       else
-        pOut.append('<' & b)
+        pOut.append('<<' & b)
         opn = 1
       end
       cycle
@@ -14881,7 +14908,7 @@ VitEngine.MgLitByte Procedure(LONG pB, StringTheory pOut)
 c  string(1),auto
   code
   if pB < 32 or pB > 126 ! not printable - it must be an escape
-    pOut.append('<' & pB & '>')
+    pOut.append('<<' & pB & '>')
     return
   end
   c = chr(pB)

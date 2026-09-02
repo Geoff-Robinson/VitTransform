@@ -1,4 +1,4 @@
-# VitTransform - 1.0.2
+# VitTransform - 1.0.3
 
 **A safe, format-preserving code transformer for [Clarion](https://www.softvelocity.com/) source code.**
 
@@ -684,7 +684,7 @@ gets; `tidy` belongs to `cosmetic.txt` and is what a plain run of *that* gets.
 | `plain` | `vitrules.txt` | **The default.** `blank-collapse`, `zero-collapse`, `choose-collapse`, `lenclip-collapse`, `fastcompare-off`, `st-findchar-keep`, `st-getvalue-asis` - the cleanups that remove redundancy from what you wrote, and none of the three axes that rewrite working code just to make it run faster |
 | `optimised` | `vitrules.txt` | `blank-collapse`, `zero-collapse`, `fastcompare-on`, `choose-collapse`, `lenclip-collapse`, `st-findbyte`, `st-getvalue-slice` |
 | `readable` | `vitrules.txt` | `blank-explicit`, `zero-explicit`, `fastcompare-off`, `choose-explicit`, `lenclip-collapse`, `st-findchar`, `st-getvalue-keep` |
-| `extreme` | `vitrules.txt` | **Everything that changes what the code does**, and nothing that changes its layout. `optimised`'s list, plus `st-getvalue-slice-all`, `analysis`, `deadchoose`, `deadcode` and `general-compound-assign`. **It comments code out** - unused routines, unreachable statements, dead stores. Much the biggest diff the tool produces: `--dry-run` and read it first. Spelled out below the table. |
+| `extreme` | `vitrules.txt` | **Everything that changes what the code does**, and nothing that changes its layout. `optimised`'s list, plus `st-getvalue-slice-all`, `analysis`, `deadchoose`, `deadcode` and `general-compound-assign`. **It comments code out** - unused routines, unreachable statements, dead stores - and its hoist drops a duplicated statement outright. Much the biggest diff the tool produces: `--dry-run` and read it first. Spelled out below the table. |
 | `tidy` | `cosmetic.txt` | `cosmetic-aligncomments`, `cosmetic-keywordcase-upper`, `cosmetic-reindent-2`, `cosmetic-splitstatements` - this is why a plain `cosmetic.txt` run upper-cases keywords and re-indents |
 
 **`extreme`, spelled out.** It is `optimised`'s list with four additions and one substitution:
@@ -694,9 +694,12 @@ slice rather than only the ones in a return or a comparison; `analysis`, which i
 (`DeadGuard` and `DeadLeft`), which clears up after the slice rewrite this style turns on; and
 `deadcode` plus `general-compound-assign`.
 
-**`deadcode` comments code out** - unused routines, unreachable statements, dead stores - so this
-style does more than make code faster. Nothing is ever deleted, every removal carries a note saying
-why, and the report lists them all. The cosmetic axes deliberately stay out, because they are
+**`deadcode` mostly comments code out** - unused routines, unreachable statements, dead stores - so
+this style does more than make code faster. Those three leave the text where it is with a note
+saying why, and the report lists them all. The fourth is different, and worth knowing before you
+switch it on: when both halves of an IF start or finish with the same statement, the hoist moves
+that statement outside the IF and removes the second copy, so that one line goes rather than being
+marked. The cosmetic axes deliberately stay out, because they are
 *choices*: including one would pick your keyword case and indent width for you.
 
 Expect far more changes, and wider lines. On one 15,000-line file the slice-everywhere rule alone
@@ -751,7 +754,7 @@ its layout builtins on as well, switch them on with `--group=`.
 | *(nothing)* | The default style, `plain`: safe general cleanups plus StringTheory call-pattern modernisation - `setValue(sub(...))` -> `Crop`, prepend+append -> `Enclose`, absorbing a redundant `clip()` into the call's own flag, redundant `clip()` dropped from comparisons and - on a variable provably declared STRING, CSTRING or PSTRING - from bare condition tests (`if clip(s)` -> `if s`; a bare string in a condition is already the non-blank test, and the type gate matters because on a numeric the two spellings genuinely differ), `instring`/`findChars` -> `findChar`/`containsChar`, `cat` -> `Append`, adjacent-literal combining, doubled-bracket removal, single-char `CASE` -> `val()`, **UnusedVars** and **AutoCheck**. It also runs **`MergeGuardChain`** (the `merge-guards` group, on by default): consecutive single-line `IF`s that set the same thing become one guard - a structural change, so it is called out here rather than left to the group table. Type-gated: StringTheory rules only touch receivers it can prove are StringTheory (`--thorough` widens that proof across includes). |
 | `--style=optimised` | Everything `plain` does, plus the three changes that buy speed: `fastcompare`, `st-findbyte`, `st-getvalue-slice`. Faster code, at the cost of longer and less obvious lines. |
 | `--style=readable` | The conservative alternative - the longer, more explicit form rather than the compact one. |
-| `--style=extreme` | Every group that changes what the code does, layout excepted: `optimised` plus the slice everywhere (`st-getvalue-slice-all`), plus `analysis`, `deadchoose`, `deadcode` and `general-compound-assign`. **It comments dead code out as well as rewriting** - that is `deadcode`'s job and it is included on purpose. Much the biggest diff the tool produces; `--dry-run` and read it. |
+| `--style=extreme` | Every group that changes what the code does, layout excepted: `optimised` plus the slice everywhere (`st-getvalue-slice-all`), plus `analysis`, `deadchoose`, `deadcode` and `general-compound-assign`. **It comments dead code out as well as rewriting** - that is `deadcode`'s job and it is included on purpose; its hoist also removes a duplicated statement outright. Much the biggest diff the tool produces; `--dry-run` and read it. |
 | `--group=analysis` | The three deeper analyses: `IfChainToCase`, `TrailingSpaces`, `KnownRanges`. Off by default because they read further into your code than anything else here. |
 | `--group=deadcode` | `UnusedRoutines`, `UnreachableCode`, `UnusedAssignments`, `HoistCommonBranchCode` - these **comment out** code, never delete it. |
 | `--group=general-compound-assign` | `tot = tot + 1` -> `tot += 1`. Off by default: it is a house-style choice, not a correctness fix. |
@@ -1080,8 +1083,9 @@ VitTransform <rulefile> <source> [outdir] [switches]
 
 > **Exit code:** a clean run exits **0**. Anything a calling script must see exits
 > **1** - a refused switch or rule file, rule-file errors, a save that failed, a wildcard
-> that matched no files - so a batch file can test `ERRORLEVEL` instead of parsing the
-> report.
+> that matched no files, or a header that could not be found while expanding includes
+> (the type registry is incomplete when that happens, so the typed rules only saw part
+> of your program) - so a batch file can test `ERRORLEVEL` instead of parsing the report.
 
 > **Line endings:** output is always **CRLF**. A file VitTransform does not change is not
 > rewritten at all, so it keeps whatever it had; a file it *does* change comes back CRLF even
@@ -1679,7 +1683,7 @@ One label appears in the comments and is worth knowing:
 | `S1` - `S4` in `VitEngine.clw` | the four passes of the `KnownRanges` value walk, named after the routines that run them (`KrTryS1` .. `KrTryS4`). A comment saying "S3 runs only when S2 changed nothing" is naming those routines, not a document |
 
 Every transform report opens with the version and build number of the program that wrote it -
-`VitTransform 1.0.2 (build 254)` is the shape of it - and nothing else. That tells you which copy of
+`VitTransform 1.0.3 (build 255)` is the shape of it - and nothing else. That tells you which copy of
 VitTransform produced the report in front of you, which is worth knowing if you have more than one
 to hand.
 

@@ -176,7 +176,7 @@ CharNameOfByte         Procedure(LONG pByte),STRING,virtual   ! pretty name for 
 FoldStr                Procedure(STRING in),STRING,virtual   ! simplify integer numeric expressions eg. 4+1 -> 5  -4+1 -> -3
 FoldStr                Procedure(LONG pStart=1, LONG pEnd=0), virtual
 MatchLeftBracket       Procedure(String pLeftBracket, String pRightBracket, Long pStart=1),LONG,virtual ! returns matching token number
-MatchRightBracket      Procedure(String pLeftBracket, String pRightBracket, Long pStart=1),LONG,virtual ! returns matching token number
+MatchRightBracket      Procedure(String pLeftBracket, String pRightBracket, Long pStart=0),LONG,virtual ! searches BACKWARDS; 0 = from the last token
 GetParms               Procedure(StringTheory pParms,*Long pStart,*LONG pEnd), LONG, virtual  ! returns number of parms
 
 FindSeq                Procedure(STRING in,   LONG pStart=1, LONG pEnd=0),LONG,virtual  ! find a sequence of tokens. 1st char is sep character,2ndChar is noCaseChar,3rd char is ws char that indicates white space ok before token

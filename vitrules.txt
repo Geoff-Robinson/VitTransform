@@ -1,7 +1,7 @@
 ! =====================================================================
 ! vitrules.txt - the shipped VitTransform rule file.
 !
-! Ships with VitTransform 1.0.1. The NEEDBUILD line below names the minimum
+! Ships with VitTransform 1.0.3. The NEEDBUILD line below names the minimum
 ! engine build this file needs, and the engine refuses it if it is older.
 !
 ! HOW TO USE IT
@@ -1422,10 +1422,10 @@ STYLE readable  = blank-explicit, zero-explicit, fastcompare-off, |
 !
 ! ONE THING THAT MUST BE SAID BESIDE THE NAME, not three sections away:
 ! deadcode COMMENTS CODE OUT - unused routines, unreachable statements,
-! dead stores. Someone reaching for extreme to get fast code gets those
-! too. Nothing is deleted, every removal carries a note saying why, and
-! the report lists them, so it is recoverable - but it IS a surprise, and
-! surprises are answered with documentation, not with omission.
+! dead stores - and its hoist REMOVES a statement duplicated in both
+! halves of an IF. Someone reaching for extreme gets all of it: the first
+! three keep their text behind a marker and the report lists them, the
+! hoist does not - a surprise, and surprises want documenting, not omitting.
 !
 ! THE COSMETIC AXES STAY OUT, and that one is structural rather than
 ! taste. keywordcase, reindent and blockend are CHOICES - lower OR upper
@@ -1951,9 +1951,9 @@ ENDGROUP
 ! Dead-code analysis: assignments and branches that cannot affect the
 ! result.
 !
-! It COMMENTS the code out rather than deleting it, so nothing is lost -
-! but this is still the most opinionated thing in the file, and it is
-! off until you ask for it.
+! Three of the four comment the code out rather than delete it; the hoist
+! MOVES a statement shared by both halves of an IF and drops the duplicate,
+! so that line goes. The most opinionated group here - off until you ask.
 !
 !     --group=deadcode
 ! ---------------------------------------------------------------------

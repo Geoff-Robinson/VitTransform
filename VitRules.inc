@@ -14,8 +14,8 @@
 !
 vr:maxName            EQUATE(50)
 vr:nfCharName         EQUATE(1)       ! NOTE(charname(mv)) - print <line feed> rather than '<10>'
-vr:version            EQUATE('1.0.2') ! the release, as every report prints it. THREE PARTS, and it must match the git tag on GitHub exactly - a release that calls itself one thing in its reports and another on its download page gives a bug reporter two names for the same build
-vr:buildNo            EQUATE(254) ! this engine's build number, compared against a rule file's NEEDBUILD line. KEEP IT MOVING WITH THE RELEASE: a build number that stands still while the engine changes makes NEEDBUILD refuse rule files this engine could in fact run, and it does that SILENTLY - only a rule file asking for a build in the gap ever notices.
+vr:version            EQUATE('1.0.3') ! the release, as every report prints it. THREE PARTS, and it must match the git tag on GitHub exactly - a release that calls itself one thing in its reports and another on its download page gives a bug reporter two names for the same build
+vr:buildNo            EQUATE(255) ! this engine's build number, compared against a rule file's NEEDBUILD line. KEEP IT MOVING WITH THE RELEASE: a build number that stands still while the engine changes makes NEEDBUILD refuse rule files this engine could in fact run, and it does that SILENTLY - only a rule file asking for a build in the gap ever notices.
 vr:maxMsg             EQUATE(250)
 
 ! rule kinds

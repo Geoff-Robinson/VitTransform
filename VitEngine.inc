@@ -167,6 +167,7 @@ filesChanged           LONG
 filesDone              LONG
 saveErrors             LONG                                                        ! failed WriteOutput saves (e.g. missing output dir)
 loadErrors             LONG                                                        ! sources that were asked for and could not be loaded - these reach ERRORLEVEL
+ppErrors               LONG                                                        ! headers that could not be expanded - the type registry is then incomplete
 curPass                LONG
 wantReparse            BYTE                                                        ! set by a builtin to request rejoin/reparse
 rulesDirty             BYTE                                                        ! a level-hazard rule replacement fired since the last reparse. A MEMBER, not a

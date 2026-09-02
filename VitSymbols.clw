@@ -589,7 +589,7 @@ kind       BYTE                                               ! vs:tk* of the ow
                     of ','
                       if pSeen and ~pOpt then aMin += 1.                                            ! a parameter ENDS here: required unless <> or '='
                       pSeen = 0 ; pOpt = 0 ; pAng = 0
-                    of '<'
+                    of '<<'
                       pAng = 1 ; pOpt = 1                                                           ! <STRING pFormat> - omittable
                     of '>'
                       pAng = 0

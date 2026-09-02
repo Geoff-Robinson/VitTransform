@@ -693,7 +693,7 @@ inQuotes    Long,auto
         get(self.tokens, prevStrIx)
         self.Tokens.Level = '+'
         put(self.tokens)
-        get(self.tokens, x)                                                        ! restore the buffer the loop is on
+        get(self.tokens, x) ! restore the buffer the loop is on
       end
     end
     ! The three DEMOTION rules above (paren depth, '&', and the MODULE-after-comma) all
@@ -721,7 +721,18 @@ inQuotes    Long,auto
     !               would state that directly and close the whole class. That is the better
     !               shape; this is the fix that is proven against the evidence in hand.
     prevStrIx = 0
-    if self.Tokens.Type = vt:reservedWord and ~parenDep and prevCh <> '&' and prevCh <> ',' and prevCh <> '.'
+    ! AN OPERATOR IN FRONT OF THE WORD MEANS IT IS BEING READ, NOT DECLARED. A declaration
+    ! puts a structure keyword at the start of its line or straight after a label, never after
+    ! an operator or an '='. Several of these words are ordinary variable names as well -
+    ! `Tab`, `Option`, `Menu`, `Report`, `Window` - so `x = Tab` at the end of a line offered
+    ! the same shape a declaration does (keyword, then end of line) and opened a level nothing
+    ! ever closed. Everything below it then sat one level too deep, which makes the balance
+    ! guards refuse and leaves the type registry short of scopes: silent missed transforms,
+    ! the same symptom the method-call exclusion below was added for. Testing the whole
+    ! operator table also covers the '&' of `grp &GROUP`, which used to be named on its own.
+    if self.Tokens.Type = vt:reservedWord and ~parenDep      |
+       and prevCh <> ',' and prevCh <> '.' and prevCh <> '=' |
+       and ~self.operator[val(prevCh)+1]
       case upper(self.Tokens.tok)
       of   'INTERFACE' orof 'VIEW'        orof 'JOIN'    orof 'REPORT'             ! the eight added later
       orof 'HEADER'    orof 'FOOTER'      orof 'DETAIL'  orof 'FORM'
@@ -2371,6 +2382,12 @@ ans     long
 depth   long
 x       long,auto
   code
+  ! THE DEFAULT MUST MATCH THE PROTOTYPE'S, and for a BACKWARD search that default is 0,
+  ! meaning "start at the last token". Clarion substitutes the value written on the
+  ! PROTOTYPE at the call site, so a 1 there would arrive here, pass the test below
+  ! untouched, and reduce the loop to token 1 alone - which can never match and so
+  ! returns 0 every time. The forward MatchLeftBracket defaults to 1 because that is
+  ! where a forward search starts; the two are not interchangeable.
   if pStart < 1 or pStart > records(self.tokens) then pStart = records(self.tokens).
   ! note we search BACKWARDS
   loop x = pStart to 1 by -1
@@ -2444,15 +2461,15 @@ tk  VitTokenize, static,thread
 ! ------------------------------------------------------------------------------------
 VitTokenize.FoldStr               Procedure(LONG pStart=1, LONG pEnd=0) !STRING, virtual
 x              long,auto
-cb             long,auto                                  ! close bracket
+cb             long,auto                      ! close bracket
 endTok         long,auto
 endOffset      long,auto
-eOff           long,auto                                  ! endoffset used when recursing down on expression in brackets
-svPEnd         long,auto                                  ! store end for Plus loop
-svMEnd         long,auto                                  ! store end for Multiplication loop
+eOff           long,auto                      ! endoffset used when recursing down on expression in brackets
+svPEnd         long,auto                      ! store end for Plus loop
+svMEnd         long,auto                      ! store end for Multiplication loop
 calc           stringTheory
-firstNumTok    LONG                                       ! indicate position of first eligible number token - we will add others to this token
-insertNegative LONG                                       ! used when amt in brackets is negative eg. X+(2-4) or (2-4)+X
+firstNumTok    LONG                           ! indicate position of first eligible number token - we will add others to this token
+insertNegative LONG                           ! used when amt in brackets is negative eg. X+(2-4) or (2-4)+X
  code
   if pStart < 1 then pStart = 1.
   if pEnd < 1 or pEnd > Records(self.tokens)
@@ -2461,16 +2478,16 @@ insertNegative LONG                                       ! used when amt in bra
 
   endOffset = records(self.tokens) - pEnd
 L loop
-    if pEnd <= pStart then break.                         ! cannot simplify
+    if pEnd <= pStart then break.             ! cannot simplify
     svPEnd = pEnd
     do FoldAdditions
-    pEnd = records(self.tokens) - endOffset               ! adjust end position in case there have been deletions
-    if svPEnd <> pEnd then cycle.                         ! transformations made
+    pEnd = records(self.tokens) - endOffset   ! adjust end position in case there have been deletions
+    if svPEnd <> pEnd then cycle.             ! transformations made
 
     loop
       ! see if we can do simple evaluate
       calc.SetValue(evaluate(self.JoinToks(pStart,pEnd)))
-      if calc._DataEnd and calc._DataEnd < 15             ! too many digits might mean rounding
+      if calc._DataEnd and calc._DataEnd < 15 ! too many digits might mean rounding
         self.SetTok(pStart,calc.valuePtr[1 : calc._DataEnd])
         loop pEnd = pEnd to pStart+1 by - 1
           self.DeleteTok(pEnd)
@@ -2480,23 +2497,33 @@ L loop
 
       svMEnd = pEnd
       do FoldMultiplications
-      pEnd = records(self.tokens) - endOffset             ! adjust end position in case there have been deletions
-      if svMEnd = pEnd then break.                        ! no transformations made
+      pEnd = records(self.tokens) - endOffset ! adjust end position in case there have been deletions
+      if svMEnd = pEnd then break.            ! no transformations made
     end
 
-    pEnd = records(self.tokens) - endOffset               ! adjust end position in case there have been deletions
+    pEnd = records(self.tokens) - endOffset   ! adjust end position in case there have been deletions
     !if svPEnd <> pEnd then cycle.  ! transformations made
 
-    if svPEnd = pEnd then break.                          ! no transformations made
+    if svPEnd = pEnd then break.              ! no transformations made
   end
 
 
-FoldMultiplications routine                               ! includes divisions - calculate adjacent tokens eg. 4*6 or 10/2
+FoldMultiplications routine                   ! includes divisions - calculate adjacent tokens eg. 4*6 or 10/2
 ! note for now we are only folding positive numbers eg. 4*5 but not (yet) 4*-5
+!
+! A '^' AGAINST EITHER END OF THE TRIPLE STOPS THE FOLD. Exponentiation binds tighter than
+! multiplication, division and modulus, so in  2 * 3 ^ 2  the '^' takes the 3 and  2 * 3  is
+! not a subexpression at all: folding it to 6 turns a length of 18 into 36. The same applies
+! on the left - in  3 ^ 2 * 4  the 2 belongs to the '^'. FoldAdditions never needed this
+! guard because it only folds at a delimiter, and the delimiter table holds none of
+! * / % ^ - so this walk is the one place where a tighter operator can be stepped over.
+! Whole expressions go through Clarion's own EVALUATE first, which honours precedence; this
+! routine only runs when that returned nothing, which is when a variable is present.
  data
 state    long
 isNumber long
 isMult   long
+adjHat   long                                             ! a '^' sits against this triple - leave it alone
  code
 
   loop x = pStart to pEnd
@@ -2531,6 +2558,18 @@ isMult   long
       end
     of 2                                                  ! looking for second number
       if isNumber
+        adjHat = false
+        if x - 3 >= pStart
+          if self.GetTok(x - 3) = '^' then adjHat = true. ! <first> is the right operand of a '^'
+        end
+        if x + 1 <= pEnd
+          if self.GetTok(x + 1) = '^' then adjHat = true. ! <second> is the left operand of a '^'
+        end
+        get(self.Tokens, x)                               ! GetTok moved the record pointer - put it back
+        if adjHat
+          state = 0
+          cycle
+        end
         calc.append(self.tokens.tok)
         calc.SetValue(evaluate(calc.getValue()))
         if calc._DataEnd and calc._DataEnd < 15           ! too many digits might mean rounding
@@ -3255,7 +3294,7 @@ bnd     long,auto                              ! the boundary: last char of the 
     of 39                                      ! <single quote>
       z += 2                                   ! '' escaped quote - atomic
     of 60                                      ! '<'
-      if z + 2 <= inner and self.Tokens.tok[z + 2] = '<'
+      if z + 2 <= inner and self.Tokens.tok[z + 2] = '<<'
         z += 2                                 ! << escaped less-than - atomic
       else
         gEnd = 0
@@ -3296,6 +3335,24 @@ bnd     long,auto                              ! the boundary: last char of the 
       end
     else
       z += 1
+    end
+    ! ---- A REPEAT COUNT BELONGS TO THE CHARACTER IN FRONT OF IT. ----
+    ! `'*{20}'` is twenty asterisks: the count applies to the character before the brace, so
+    ! that character and its `{...}` are ONE unit. Cutting between them leaves a count with
+    ! nothing to repeat on the second half, and cutting inside the braces splits the number
+    ! itself - the first half then carries an unclosed brace and does not compile. Absorb the
+    ! whole group into the unit just consumed, so no boundary is ever offered inside it. This
+    ! is the same forward scan the escape group above uses for its '>'. A doubled `{{` is an
+    ! escaped brace and never a count, so it is left for the case arm; a '{' with no closing
+    ! '}' is left alone too, and the boundary in front of it stays available.
+    if z <= inner and self.Tokens.tok[z + 1] = '{{'
+      if z + 1 > inner or self.Tokens.tok[z + 2] <> '{{'
+        gEnd = 0
+        loop gz = z + 1 to inner
+          if self.Tokens.tok[gz + 1] = '}' then gEnd = gz ; break.
+        end
+        if gEnd then z = gEnd + 1.
+      end
     end
     ! ---- THE BOUNDARY IS z - 1: THE LAST CHARACTER OF THE UNIT JUST CONSUMED. ----
     ! Every branch above has already stepped z PAST its unit, so z names the first character

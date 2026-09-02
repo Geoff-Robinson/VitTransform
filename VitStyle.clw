@@ -889,9 +889,9 @@ mems  StringTheory
   free(OvrQ)                                                 ! the profile now IS the selection
   ApplyOverrides()
   BuildStyleList()
-  message('Saved profile ' & clip(profNm) & ' to|' & clip(profFn.getValue())                                        & |
-          '||Batch use:|VitTransform <rules> <src> <out> --stylefile=VitStyle.profiles.txt --style=' & clip(profNm) & |
-          choose(userLoaded = 1, ' --userrules=VitStyle.rules.txt', ''),                                              |
+  message('Saved profile ' & clip(profNm) & ' to|' & clip(profFn.getValue())                                           & |
+          '||Batch use:|VitTransform <<rules> <<src> <<out> --stylefile=VitStyle.profiles.txt --style=' & clip(profNm) & |
+          choose(userLoaded = 1, ' --userrules=VitStyle.rules.txt', ''),                                                 |
           'VitStyle', ICON:Asterisk)
 
 ! ====================================================================================
@@ -909,7 +909,19 @@ have  StringTheory
 nmU   STRING(vr:maxName),AUTO
   code
   nmU = upper(pName)
-  if exists(profFn.getValue()) and have.LoadFile(profFn.getValue())
+  ! A FILE THAT IS THERE BUT CANNOT BE READ MUST NOT BE OVERWRITTEN. What goes out below is
+  ! what came in, plus this profile - so a read that failed leaves nothing to carry over, and
+  ! the save would replace every profile already stored with just this one. Whether the file
+  ! EXISTS and whether it could be READ are two different questions, and only the second one
+  ! licenses a write. A file that is genuinely absent is the fresh-header case below, which is
+  ! correct. A file held open by another program, or on a path that has gone away, is not.
+  if exists(profFn.getValue())
+    if ~have.LoadFile(profFn.getValue())
+      message('Could not read ' & clip(profFn.getValue()) & '||' & have.LastError           & |
+              '||Nothing has been saved. Saving now would replace the profiles already in ' & |
+              'that file with just this one.', 'VitStyle', ICON:Exclamation)
+      return 0
+    end
     have.LineEndings(st:unix)
     have.split('<10>')
     loop i = 1 to have.records()
@@ -1700,7 +1712,7 @@ SetDemo PROCEDURE()
     'n    LONG<13,10>'                              & |
     '  CODE<13,10>'                                 & |
     '  if s = '''' then n = 1.<13,10>'              & |
-    '  if n <> 0 then s = ''x''.<13,10>'            & |
+    '  if n <<> 0 then s = ''x''.<13,10>'           & |
     '  if clip(s) = ''ab'' then n = 2.<13,10>'      & |
     '  s = choose(n = 1, true, false)<13,10>'       & |
     '  if st.getValue() = ''y'' then n = 3.<13,10>' & |
@@ -2283,10 +2295,26 @@ pcol    LONG,AUTO
 ! ------------------------------------------------------------------------------------
 WbSave PROCEDURE()
 prosp  StringTheory
+chk    StringTheory ! proves the file on disk can be READ before anything is written over it
 e      LONG,AUTO
-nWarn  LONG,AUTO ! NB not 'w' - labels are caseless and W is the main WINDOW label (the global-r lesson, mirrored)
+nWarn  LONG,AUTO    ! NB not 'w' - labels are caseless and W is the main WINDOW label (the global-r lesson, mirrored)
 ln     LONG
   code
+  ! A FILE THAT IS THERE BUT CANNOT BE READ MUST NOT BE OVERWRITTEN. The compose below starts
+  ! from what is on disk and adds the draft, so a read that failed leaves nothing to start
+  ! from - and the save would replace the whole rule file with just this one rule. Whether the
+  ! file EXISTS and whether it could be READ are two different questions, and only the second
+  ! one licenses a write. A file held open by another program, or on a path that has gone
+  ! away, exists and cannot be read.
+  if exists(userFn.getValue())
+    if ~chk.LoadFile(userFn.getValue())
+      message('Could not read ' & clip(userFn.getValue()) & '||' & chk.LastError             & |
+              '||Nothing has been saved. Saving now would replace the whole file with just ' & |
+              'this rule, because the rules already in it could not be read.',                 |
+              'VitStyle', ICON:Exclamation)
+      return 0
+    end
+  end
   e = WbLint(1)
   if e
     message('The combined set has ' & e & ' lint error(s) - a rule only saves clean (see the panel).', 'VitStyle', ICON:Exclamation)

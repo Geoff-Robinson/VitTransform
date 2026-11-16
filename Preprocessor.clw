@@ -10,13 +10,13 @@
 ! Runs before the lexer. See Preprocessor.inc for the design summary. The whole
 ! algorithm was validated against a real Clarion .RED before being written here.
 !
-! Environment assumptions to confirm at first compile:
+! Facts this file relies on:
 !   * EXISTS(path) is the standard Clarion file-existence built-in.
 !   * Paths are native Windows backslash form (matching the .RED and the IDE).
 !   * StringTheory.Split(',', '''', '''', true) is quote-aware with quote removal
 !     (Clarion: '''' is one single-quote char; '"' would strip double quotes).
 ! ===========================================================================
-  MEMBER         ! decoupled from the transpiler program for VitTransform (was MEMBER('Transpiler'))
+  MEMBER ! a MEMBER of no program: VitTransform and the Clarion-to-C++ transpiler both link this file
 
   MAP
   end
@@ -41,6 +41,7 @@ dbg StringTheory ! trace-only local, not used for any real parsing
   self.DepthErrReported &= NEW StringTheory
   self.ErrText         &= NEW StringTheory
   self.PPDefines       &= NEW StringTheory ! the equates OMIT/COMPILE conditions test
+  self.SeedDefines     &= NEW StringTheory ! the project flags PPDefines is reset to per file
 
 ! ---------------------------------------------------------------------------
 preprocessor.Destruct PROCEDURE()
@@ -52,12 +53,13 @@ preprocessor.Destruct PROCEDURE()
   if not self.DepthErrReported &= null then DISPOSE(self.DepthErrReported).
   if not self.ErrText &= null then DISPOSE(self.ErrText).
   if not self.PPDefines &= null then DISPOSE(self.PPDefines).
+  if not self.SeedDefines &= null then DISPOSE(self.SeedDefines).
 
 ! ---------------------------------------------------------------------------
 ! Init - record the main file's directory (the '.' anchor), set macro values,
 ! and parse the .RED into the search table.
 ! ---------------------------------------------------------------------------
-preprocessor.Init PROCEDURE(STRING pMainFilePath, string pRedFilePath, string pRootDir, string pConfig)
+preprocessor.Init PROCEDURE(STRING pMainFilePath, string pRedFilePath, string pRootDir, string pConfig, <STRING pDefines>)
 st StringTheory
   code
   self.MainFile = self.BaseName(pMainFilePath)
@@ -65,70 +67,207 @@ st StringTheory
   if ~self.ProjDir then self.ProjDir = '.'.
   self.RootDir  = pRootDir
   self.BinDir   = clip(pRootDir) & '\bin'              ! %BIN% default = %ROOT%\bin
-  self.Config   = choose(~pConfig, 'Release', pConfig) ! Release, as everything else documents (#28); the CLI already passes it
+  self.Config   = choose(~pConfig, 'Release', pConfig) ! Release, as everything else documents; the CLI already passes it
   free(self.RedDirs)
-  st.setValue(pRedFilePath, st:clip)
+  self.ErrText._dataEnd = 0                            ! the diagnostics start HERE, not at Process: what LoadRed
+  self.RedVer = 0                                      !   has to say about a redirection file is the reason every
+  st.setValue(pRedFilePath, st:clip)                   !   include after it comes back "not found"
   if st._dataEnd
     self.LoadRed(st, 0)
   end
+  self.ErrBase = self.ErrText._dataEnd                 ! Process rewinds to here rather than to zero, so they survive
+  if omitted(pDefines)
+    self.SeedProjectFlags(clip(pRedFilePath), '')
+  else
+    self.SeedProjectFlags(clip(pRedFilePath), clip(pDefines))
+  end
+
+
+! ---------------------------------------------------------------------------
+! SeedProjectFlags - build SeedDefines: the Clarion version flags the .red file
+! name implies (Clarion110.red -> version 110), CUMULATIVE - a _Cnn_ flag is 1
+! exactly when the compiler version is at least that, so every release token up
+! to and including the .red's version is set to 1 and every later one is left 0
+! (_C111_ stays 0 on an 11.0 build) - plus each flag named on --define=. Both
+! the _Cnn_ and the legacy _VER_Cnn spellings are seeded, and the short major
+! _Cn_ (e.g. _C11_). PPDefines is reset to SeedDefines before every file, so
+! these answer OMIT/COMPILE conditions the way the compiler's own built-ins do.
+! A PROJECT redirection file carries no version in its own name and chains to the
+! release file; when the name it was given says nothing, the version comes from the
+! highest any file in that chain implies, so the flags still answer correctly.
+! _WIDTH32_ is 1 from Clarion 6 on, which builds 32-bit only. The other config-dependent flags
+! (_Unicode_, _ABCDllMode_ ...) are not version-ordered and are not inferred; name them on
+! --define= when a build sets them. A name given on --define= answers before any flag seeded
+! here, so --define=_WIDTH32_=0 turns that one off.
+! ---------------------------------------------------------------------------
+preprocessor.SeedProjectFlags PROCEDURE(STRING pRedFilePath, STRING pDefines)
+tok    STRING(12),AUTO
+nm     STRING(160),AUTO
+ver    LONG,AUTO
+maj    LONG,AUTO
+i      LONG,AUTO
+relSt  StringTheory
+dc     StringTheory
+  code
+  self.SeedDefines._dataEnd = 0
+  ! --- the --define= names FIRST, each NAME (=> 1) or NAME=value. A flag is looked up by its first
+  !     entry, so a name given here answers before any flag seeded below: --define=_WIDTH32_=0
+  !     turns the seeded one off ---
+  if pDefines
+    dc.setValue(pDefines)
+    dc.split(',')
+    loop i = 1 to dc.records()
+      nm = upper(left(dc.getLine(i)))
+      if ~nm then cycle.
+      if relSt.findByte(61, 1,, nm)            ! '='
+        self.SeedDefines.append('|' & clip(nm))
+      else
+        self.SeedDefines.append('|' & clip(nm) & '=1')
+      end
+    end
+  end
+  ! --- version from the .red basename: the digit run just before '.RED' ---
+  ver = self.RedVersion(pRedFilePath)          ! a PROJECT redirection file carries no version in its own name, and
+  if ~ver then ver = self.RedVer.              !   chaining to the release file is the shape the shipped ones use -
+                                               !   take the version from the chain rather than seed nothing at all,
+                                               !   which leaves every version-guarded region answering the wrong way
+  maj = ver / 10                               ! 110 -> 11, 60 -> 6, 55 -> 5 (a REAL stored in a LONG truncates)
+  ! --- the release build-numbers, cumulative: a token <= ver gets its flag ---
+  relSt.setValue('50 55 60 61 62 63 70 71 72 73 80 90 91 100 110 111 120 130')
+  relSt.split(' ')
+  loop i = 1 to relSt.records()
+    tok = relSt.getLine(i)
+    if ~tok then cycle.
+    if tok > ver then cycle.
+    self.SeedDefines.append('|_C' & clip(tok) & '_=1')
+    self.SeedDefines.append('|_VER_C' & clip(tok) & '=1')
+  end
+  loop i = 5 to maj                             ! the short major spelling, _C11_ and the like
+    self.SeedDefines.append('|_C' & i & '_=1')
+  end
+  ! Clarion 6 on builds 32-bit only
+  if ver >= 60 then self.SeedDefines.append('|_WIDTH32_=1').
+! ---------------------------------------------------------------------------
+! LoadedEmpty - did LoadFile fail only because the file holds nothing? An empty include or
+! redirection file is empty, not unreadable (ruled 30 Oct 2026). StringTheory 3.90 sets
+! winErrorCode to 0 for a file of zero bytes and to the Windows error when it cannot open one -
+! but to 0 as well when the name is blank or the file is not there, so EXISTS tells those apart.
+! 1 = it is there and empty, and pSt is left empty too.
+! ---------------------------------------------------------------------------
+preprocessor.LoadedEmpty PROCEDURE(StringTheory pSt, STRING pPath)
+  code
+  if pSt.winErrorCode or ~exists(clip(pPath)) then return 0.
+  pSt.free()
+  return 1
+
+! ---------------------------------------------------------------------------
+! RedVersion - the Clarion version a redirection file NAME implies: the run of
+! digits immediately before '.RED' in its base name. 'Clarion110.red' gives 110
+! and 'MyApp.red' gives 0, because there is nothing in that name to read.
+! A SINGLE digit is a whole version, as it is in a Clarion folder's name:
+! 'Clarion9.red' is Clarion 9, so it gives 90, the number the release flags are
+! counted in. Read as 9 it would be below every release, and set no flag at all.
+! ---------------------------------------------------------------------------
+preprocessor.RedVersion PROCEDURE(STRING pRedFilePath)
+base   STRING(260),AUTO
+ver    LONG,AUTO
+p1     LONG,AUTO
+p2     LONG,AUTO
+relSt  StringTheory
+  code
+  base = upper(self.BaseName(pRedFilePath))
+  p2 = relSt.findChars('.RED', 1,, base)
+  if ~p2 then p2 = len(clip(base)) + 1.
+  p2 -= 1                                      ! last char before '.RED'
+  p1 = p2
+  loop while p1 >= 1 and base[p1] >= '0' and base[p1] <= '9'
+    p1 -= 1
+  end
+  p1 += 1
+  ver = 0
+  if p1 <= p2 then ver = base[p1 : p2].        ! 'CLARION110' -> 110
+  if p1 = p2 then ver *= 10.
+  return ver
 
 ! ---------------------------------------------------------------------------
 ! LoadRed - parse a .RED file into RedDirs (in priority order). Honours sections
-! ([Common] and section-less lines are used for source includes; [Copy]/[Debug]/
-! [Release] are skipped), '--' comments, %macros%, trailing '|' stop, quoted
-! paths, and nested {include redfile} (priority: earlier lines win).
+! ([Common], section-less lines and the section for the configuration being
+! built are used for source includes; the others are skipped), '--' comments,
+! %macros%, trailing '|' stop, quoted paths, and nested {include redfile}
+! (priority: earlier lines win).
 ! ---------------------------------------------------------------------------
 preprocessor.LoadRed PROCEDURE(StringTheory pRedPath, long pDepth)
 red         StringTheory
 ln          StringTheory
 i           long,auto
 j           long,auto
-loc:section string(32)                                           !! cannot use section - reserved word
-mask        string(64)
+loc:section string(32) !! cannot use section - reserved word
+mask        string(64),auto
 stop        byte,auto
 eqPos       long,auto
 p2          long,auto
+vNow        long,auto
+rawRed      string(512),auto
+cfg         string(32),auto
   code
   if pDepth > PP:MaxDepth or ~pRedPath._dataEnd then return.
-  if ~red.LoadFile(pRedPath.getValue()) then return.             ! missing .RED -> no entries
-  red.lineEndings(st:Unix)                                       ! normalise CRLF/CR -> LF remove all <carriage return>
+  if ~red.LoadFile(pRedPath.getValue()) and ~self.LoadedEmpty(red, pRedPath.getValue()) ! missing .RED -> no entries, and SAID: a chained file that never
+    self.ErrText.Append('RED not found: ' & clip(pRedPath.getValue()) & '<13,10>')
+    return                                                                              !   loaded is why every include after it is "not found"
+  end
+  vNow = self.RedVersion(pRedPath.getValue())                                           ! the version THIS name implies - a project .red has
+  if vNow > self.RedVer then self.RedVer = vNow.                                        !   none, and the file it chains to is where it is
+  do SetRedDir                                                                          ! %REDDIR% is THIS file's directory
+  red.lineEndings(st:Unix)                                                              ! normalise CRLF/CR -> LF  ! remove all <carriage return>
   red.Split('<10>',,,,st:clip,st:left)
-  red.removeLines()                                              ! strip blank lines
+  red.removeLines()                                                                     ! strip blank lines
+  cfg = upper(left(self.Config))                                                        ! the one configuration section THIS build owns
 !  loc:section = ''                                          ! pre-section region behaves like Common
   loop i = 1 to red.records()
     ln.SetValue(red.getLine(i))
-    if ln.startsWith('--') then cycle.                           ! comment line
-    if ln.valuePtr[1] = '['                                      ! [Section]
-      loc:section = upper(ln.between('[',']'))
+    if ln.startsWith('--') then cycle.                                                  ! comment line
+    if ln.valuePtr[1] = '['                                                             ! [Section]
+      loc:section = upper(left(ln.between('[',']')))                                    ! left(): a section written [ Common ] is the same
+                                                                                        !   one, and a compare ignores TRAILING spaces only
       cycle
     end
-    if ln._dataEnd > 7 and upper(ln.valuePtr[1:8]) = '{{INCLUDE' ! nested red file
+    if ln._dataEnd > 7 and upper(ln.valuePtr[1:8]) = '{{INCLUDE'                        ! nested red file
       p2 = ln.matchBrackets('{{','}')
       if p2
         ln.crop(9,p2-1)
         ln.trim()
         if ln._dataEnd
-          self.NormalizeDir(ln)                                  ! resolve macros/relativity
+          self.ExpandMacros(ln)                                                         ! macros first: the fallback below reads the path
+          rawRed = ln.getValue()                                                        ! the name as the .RED WROTE it
+          self.NormalizeDir(ln)                                                         ! resolve macros/relativity
+          if rawRed and ~self.IsAbsolute(rawRed)                                        ! a nested .RED names a file beside the .RED that
+            if ~EXISTS(clip(ln.getValue()))                                             !   names it, not beside the project. The project
+              ln.setValue(self.JoinPath(clip(self.RedDir), clip(rawRed)),st:Clip)       ! reading is tried FIRST, so
+            end                                                                         !   nothing that resolves today moves anywhere
+          end                                                                           !   - this is only where it found nothing
           self.LoadRed(ln, pDepth + 1)
+          do SetRedDir                                                                  ! back to THIS file's directory for its remaining lines
         end
       end
       cycle
     end
-    if loc:section AND loc:section <> 'COMMON' then cycle.       ! [Copy]/[Debug]/[Release] not for source
-    eqPos = ln.findByte(61)                                      ! '='
-    if ~eqPos then cycle.
-    if eqPos > 1
-      mask = ln.valuePtr[1 : eqPos - 1]
-      ln.removeFromPosition(1,eqPos)
-      ln.trim()
-    end
+    if loc:section AND loc:section <> 'COMMON' AND loc:section <> cfg then cycle.       ! [Copy] is not for source, and
+                                                                                        !   neither is the configuration that is NOT being
+                                                                                        !   built - but the one that IS carries that build's
+                                                                                        !   own directories, which is what it is there for
+    eqPos = ln.findByte(61)                                                             ! '='
+    if eqPos < 2 then cycle.                                                            ! no '=', or nothing in front of it: a line with no mask of its own
+                                                                                        !   names no file pattern, so its directories go under none
+    mask = ln.valuePtr[1 : eqPos - 1]
+    ln.removeFromPosition(1,eqPos)
+    ln.trim()
     ln.split(';','"','"',true,st:clip,st:left)
     loop j = 1 to ln.records()
       ln.setValueFromLine(j)
-      ln.unquote('"','"')                                        ! drop quotes around spaced paths (if not already removed in split)
+      ln.unquote('"','"')                                                               ! drop quotes around spaced paths (if not already removed in split)
       ln.trim()
       if ~ln._dataEnd then cycle.
-      if ln.endsWith('|')                                        ! trailing '|' -> stop marker
+      if ln.endsWith('|')                                                               ! trailing '|' -> stop marker
         stop = 1
         ln.adjustlength(-1)
         ln.clip()
@@ -144,8 +283,17 @@ p2          long,auto
     end
   end
 
+! ---- %REDDIR% is the directory of the .RED being read - set on entry, and set again after a nested
+!      include has been read. Made ABSOLUTE: NormalizeDir joins a relative directory to ProjDir, and
+!      this one is relative to where the tool was started, not to the project.
+SetRedDir routine
+  self.RedDir = self.DirName(pRedPath.getValue())
+  if ~self.RedDir then self.RedDir = '.'.
+  if ~self.IsAbsolute(self.RedDir) then self.RedDir = self.JoinPath(path(), self.RedDir).
+
 ! ---------------------------------------------------------------------------
-! ExpandMacros - substitute the supported %MACRO% values (case-insensitive).
+! ExpandMacros - substitute the supported %MACRO% values (case-insensitive). %REDDIR% is
+! the directory of the .RED being read; LoadRed sets it per file.
 ! Unknown macros are left intact (their directories simply won't exist).
 ! ---------------------------------------------------------------------------
 preprocessor.ExpandMacros PROCEDURE(StringTheory s)
@@ -153,6 +301,7 @@ preprocessor.ExpandMacros PROCEDURE(StringTheory s)
   s.Replace('%ROOT%',          clip(self.RootDir), 0, 1, 0,st:nocase)
   s.Replace('%BIN%',           clip(self.BinDir),  0, 1, 0,st:nocase)
   s.Replace('%CONFIGURATION%', clip(self.Config),  0, 1, 0,st:nocase)
+  s.Replace('%REDDIR%',        clip(self.RedDir),  0, 1, 0,st:nocase)
   s.trim() ! just in case
 
 ! ---------------------------------------------------------------------------
@@ -179,18 +328,18 @@ preprocessor.NormalizeDir PROCEDURE(StringTheory pDir)
     return
   end
 
-  if pDir._dataEnd = 1                               ! '.'
+  if pDir._dataEnd = 1                                  ! '.'
     pdir.setValue(self.ProjDir,st:Clip)
-  elsif pDir._dataEnd = 2 and pdir.valuePtr[2] = '.' ! '..'
-    pdir.setValue(self.DirName(self.ProjDir),st:Clip)
+  elsif pDir._dataEnd = 2 and pdir.valuePtr[2] = '.'    ! '..'
+    pdir.setValue(self.ParentDir(self.ProjDir),st:Clip)
   else
     case val(pdir.valuePtr[2])
-    of 92 orof 47                                    ! '\' orof '/'
+    of 92 orof 47                                       ! '\' orof '/'
       pdir.setValue(self.JoinPath(self.ProjDir, pDir.slice(3)),st:Clip)
     else
       case pDir.sub(2,2)
       of '.\' orof './'
-        pdir.setValue(self.JoinPath(self.DirName(self.ProjDir), pDir.slice(4)),st:Clip)
+        pdir.setValue(self.JoinPath(self.ParentDir(self.ProjDir), pDir.slice(4)),st:Clip)
       else
         pdir.setValue(self.JoinPath(self.ProjDir, pDir.getValue()),st:Clip)
       end
@@ -250,8 +399,16 @@ i     long,auto
   loop i = 1 to records(self.RedDirs)
     get(self.RedDirs, i)
     if ~self.MaskMatches(self.RedDirs.Mask, base) then cycle.
-    cand = self.JoinPath(clip(self.RedDirs.Dir), base)
-    if EXISTS(clip(cand)) then return clip(cand).
+    ! A BLANK DIRECTORY IS NOT "HERE". An entry that was nothing but the stop bar, or
+    ! whose only content was a macro with no value, reaches this table with no directory
+    ! at all. JoinPath then hands back the BARE name and EXISTS resolves it against the
+    ! directory the tool was STARTED in - so a file of that name sitting there is spliced
+    ! instead of the right one, silently, which is the failure NormalizeDir exists to
+    ! prevent. Skip the lookup; the entry's stop flag still means what it says.
+    if self.RedDirs.Dir
+      cand = self.JoinPath(clip(self.RedDirs.Dir), base)
+      if EXISTS(clip(cand)) then return clip(cand).
+    end
     if self.RedDirs.Stop then return ''. ! '|' stop: search no further
   end
   return ''
@@ -303,12 +460,16 @@ preprocessor.Process PROCEDURE(*StringTheory pMainSource, *StringTheory pExpande
   free(self.LineMap)
   self.Seen._dataEnd      = 0
   self.DepthErrReported._dataEnd = 0
-  self.ErrText._dataEnd   = 0
+  self.ErrText._dataEnd   = self.ErrBase
+  ! Rewind to what Init recorded rather than to nothing. A redirection file that
+  ! would not load is the reason every include after it comes back "not found",
+  ! and wiping the line that says so left the user the symptom and not the cause -
+  ! or, on a source with no unresolvable include at all, nothing whatever.
   ! Compile-time-equate state must not survive a Process
   ! call: PPDefines carried one file's equates into every later file's
   ! OMIT/COMPILE conditions. (OMIT/COMPILE region state needs no reset here -
   ! it is a LOCAL stack in ProcessText, so it cannot outlive its file.)
-  if not self.PPDefines &= null then self.PPDefines._dataEnd = 0.
+  if not self.PPDefines &= null then self.PPDefines.setValue(self.SeedDefines). ! seeded project flags (_Cnn_ + --define=), rebuilt each file
   self.ProcessText(pMainSource, clip(self.MainFile), 0)
   return self.ErrText.Count('<13,10>')
 
@@ -321,19 +482,21 @@ work      StringTheory
 body      StringTheory
 chosen    StringTheory
 tl        StringTheory
+! #Removed as not used: raw       StringTheory
 i         long,auto
 nLines    long,AUTO
-myDir     string(512)      ! the directory of the file whose text THIS call is walking -
+myDir     string(512),auto ! the directory of the file whose text THIS call is walking -
 incDir    string(512),auto !       a bare sibling INCLUDE in it resolves here first, as Clarion does
 RegionQ   QUEUE,PRE(rgq)   ! OMIT/COMPILE regions, innermost last. A LOCAL, so each
-Term        string(64)     !   file's regions die with its call frame - the call stack
+Term        &string        !   file's regions die with its call frame - the call stack
 Sup         byte           !   IS the region stack, and an unterminated region in an
           END              !   include cannot leak into the file that included it
-rgTerm    string(64)       ! CheckOmitCompile out-params
+rgTerm    StringTheory     ! CheckOmitCompile out-params
 rgSup     byte
 fileName  string(512)
 secName   string(256)
 onceFlag  byte
+incOk     byte,auto        ! ParseDirective: 1 = a directive, 2 = one that will not parse, 0 = not one
 resolved  string(512),auto
 keyStr    string(800),auto
 secOfs    long,auto        ! section start line in the included file
@@ -354,7 +517,9 @@ secOfs    long,auto        ! section start line in the included file
   nLines = work.records()
   loop i = 1 to nLines
     tl.SetValue(work.getLine(i))
-    tl.Trim()
+    tl.Trim(' <9>')                                                                  ! spaces AND tabs: a tab-indented INCLUDE, OMIT,
+                                                                                     !   COMPILE or SECTION is still that directive, and
+                                                                                     !   every test below is fed from this one line
     ! Conditional compilation (LangRef pp.63-69).
     ! Inside an active region every line is checked for the INNERMOST region's
     ! terminator string (it commonly sits inside a comment, e.g. '!***' closing
@@ -371,37 +536,59 @@ secOfs    long,auto        ! section start line in the included file
     ! are tracked so guard-style conditions (the equate defined inside the
     ! guarded region) evaluate correctly.
     if records(RegionQ)
-      get(RegionQ, records(RegionQ)) ! innermost region governs
+      get(RegionQ, records(RegionQ))                                                 ! innermost region governs
       ! the terminator is matched EXACTLY. The LRM (p67/p3495) says the block "ends with
       ! the line that contains the same STRING CONSTANT as the terminator" - and a string
       ! constant's content is case-significant. A caseless compare ends the block EARLY on a
       ! line that merely differs in case, which leaks source the author omitted back into the
       ! stream as live code. Same failure direction as an OMIT that ends on its own directive
       ! line, and the same reason to be strict about it.
-      if tl.findChars(clip(rgq:Term)) > 0
+      ! And it is looked for in the line AS WRITTEN, not in the trimmed copy the directive tests
+      ! read: a terminator that ends or starts with a blank ('** ', ' END') is in the line only
+      ! before the trim, and searched for after it the block would never close.
+      work.setValueFromLine(i)
+      if work.findChars(rgq:Term) > 0
+        dispose(rgq:Term)
         delete(RegionQ)
         cycle
       end
       if rgq:Sup then cycle.
     end
+    do SemiDirective
     if self.CheckOmitCompile(tl, rgTerm, rgSup)
       clear(RegionQ)
-      rgq:Term = rgTerm
+      rgq:Term &= new string(rgTerm._DataEnd)
+      rgq:Term = rgTerm.getValue()
       rgq:Sup  = rgSup
       add(RegionQ)
       cycle
     end
     self.TrackEquate(tl)
     !if ~t1._dataEnd or tl.valuePtr[1] = '!' or tl.valuePtr[1] = '|' then cycle. ! blank or comment or continuation
-    if tl._dataEnd < 7 or upper(tl.valuePtr[1 : 7]) <> 'INCLUDE' or ~self.ParseDirective(tl, fileName, secName, onceFlag)
+    if tl._dataEnd < 7 or upper(tl.valuePtr[1 : 7]) <> 'INCLUDE'
+      self.EmitLine(work.getLine(i), pFileLabel, i + pLineOfs)
+      cycle
+    end
+    incOk = self.ParseDirective(tl, fileName, secName, onceFlag)
+    if incOk <> 1
+      ! A LINE THAT OPENS WITH THE KEYWORD AND ITS '(' AND STILL WILL NOT PARSE IS A
+      ! MALFORMED INCLUDE. Emitting it as ordinary source text and saying nothing leaves a
+      ! hole in the expanded stream with the error count reading zero - the type registry is
+      ! short a whole header and the run reports itself clean. ParseDirective answers 2 for
+      ! exactly that shape and 0 for a line that was never the directive (a label beginning
+      ! with the same letters), so nothing is said about ordinary code.
+      if incOk = 2
+        self.ErrText.Append('INCLUDE not understood: ' & clip(work.getLine(i)) &     |
+                            ' (' & clip(pFileLabel) & ' line ' & (i + pLineOfs) & ')<13,10>')
+      end
       self.EmitLine(work.getLine(i), pFileLabel, i + pLineOfs)
       cycle
     end
     ! ---- it is an INCLUDE directive ----
     resolved = self.ResolveFile(fileName, myDir)
     if ~resolved
-      self.ErrText.Append('INCLUDE not found: ' & clip(fileName) & |
-                          ' (' & clip(pFileLabel) & ' line ' & (i + pLineOfs) & ')<13,10>') ! + pLineOfs (#27): i is section-relative, the neighbours include it
+      self.ErrText.Append('INCLUDE not found: ' & clip(fileName) &                   |
+                          ' (' & clip(pFileLabel) & ' line ' & (i + pLineOfs) & ')<13,10>') ! + pLineOfs: i is section-relative, the neighbours include it
       self.EmitLine('! #error INCLUDE not found: ' & clip(fileName), pFileLabel, i + pLineOfs)
       cycle
     end
@@ -410,10 +597,10 @@ secOfs    long,auto        ! section start line in the included file
     ! the entire filename, so subsequent uses of INCLUDE(filename, section) will
     ! be ignored." So the key is the resolved path ALONE - a ,ONCE include is
     ! skipped when the file was already included in ANY form, sectioned or
-    ! whole. (An earlier cut keyed sections separately, so a second section of
-    ! an already-included file spliced again under ONCE - declarations the real
-    ! compiler would never see twice reached the type registry twice.) ONCE
-    ! stays an attribute of THIS directive: a plain re-INCLUDE splices again.
+    ! whole. Keyed per section, a second section of an already-included file
+    ! would splice again under ONCE, and declarations the real compiler never
+    ! sees twice would reach the type registry twice. ONCE stays an attribute
+    ! of THIS directive: a plain re-INCLUDE splices again.
     if onceFlag AND self.Seen.FindChars(CLIP(keyStr))
       cycle
     end
@@ -426,29 +613,29 @@ secOfs    long,auto        ! section start line in the included file
       ! shallowest attempt has already failed; the cycle/skip behaviour below
       ! is completely unchanged either way.
       if not self.DepthErrReported.FindChars(CLIP(keyStr))
-        self.ErrText.Append('INCLUDE nested too deep (>' & PP:MaxDepth & '): ' & |
+        self.ErrText.Append('INCLUDE nested too deep (>' & PP:MaxDepth & '): ' &     |
                             clip(fileName) & '<13,10>')
         self.EmitLine('! #error INCLUDE nested too deep: ' & clip(fileName), pFileLabel, i + pLineOfs)
         self.DepthErrReported.Append(CLIP(keyStr))
       end
       cycle
     end
-    if ~body.LoadFile(clip(resolved))
+    if ~body.LoadFile(clip(resolved)) and ~self.LoadedEmpty(body, resolved)
       self.ErrText.Append('INCLUDE unreadable: ' & clip(resolved) & '<13,10>')
       self.EmitLine('! #error INCLUDE unreadable: ' & clip(fileName), pFileLabel, i + pLineOfs)
       cycle
     end
     secOfs = 0
     if secName
-      self.ExtractSection(body, secName, chosen, secOfs) ! named section only
-      if ~secOfs                                         ! say so: a typo'd section otherwise includes NOTHING, silently
+      self.ExtractSection(body, secName, chosen, secOfs)                             ! named section only
+      if ~secOfs                                                                     ! say so: a typo'd section otherwise includes NOTHING, silently
         self.ErrText.Append('SECTION not found: ' & clip(secName) & ' in ' & clip(resolved) & |
                             ' (' & clip(pFileLabel) & ' line ' & i + pLineOfs & ')<13,10>')
         self.EmitLine('! #error SECTION not found: ' & clip(secName), pFileLabel, i + pLineOfs)
         cycle
       end
     else
-      self.StripSections(body, chosen)                   ! whole file, SECTION lines blanked (line count preserved for the map)
+      self.StripSections(body, chosen)                                               ! whole file, SECTION lines blanked (line count preserved for the map)
     end
     self.Seen.Append(CLIP(keyStr))
     ! OMIT/COMPILE region state is per FILE, not global:
@@ -457,8 +644,8 @@ secOfs    long,auto        ! section start line in the included file
     ! recursion below gets its own empty stack and this file's regions are
     ! untouched when it returns - the call stack IS the region stack, with
     ! nothing to save or restore.
-    incDir = self.DirName(resolved)                      ! what THAT file's own bare includes resolve against
-    if ~incDir then incDir = myDir.                      !       (a name found with no path at all keeps this file's)
+    incDir = self.DirName(resolved)                                                  ! what THAT file's own bare includes resolve against
+    if ~incDir then incDir = myDir.                                                  !       (a name found with no path at all keeps this file's)
     self.ProcessText(chosen, self.BaseName(resolved), pDepth + 1, secOfs, incDir)
   end
   ! a region still open at end of file SUPPRESSED everything from its directive to EOF
@@ -470,7 +657,56 @@ secOfs    long,auto        ! section start line in the included file
                         '" (' & clip(pFileLabel) & ') - '                          & |
                         choose(rgq:Sup = 1, 'everything to end of file was OMITTED', |
                                             'the region ran to end of file') & '<13,10>')
+    dispose(rgq:Term)
     delete(RegionQ)
+  end
+
+! ---- A DIRECTIVE AFTER A ';'. The compiler takes INCLUDE, OMIT and COMPILE after a line break
+!      or after a ';' and white space (LRM, compiler messages: "INCLUDE has to follow a
+!      line-break, or a semi-colon"), so in  n = 1 ; INCLUDE('x.inc')  the INCLUDE is a
+!      directive. When tl does not open with one, the line is searched for a ';' outside a
+!      string literal and in front of any comment that a directive follows. The text before
+!      that ';' is a statement and goes out as a line of its own, in its own columns; tl
+!      becomes the directive, and the tests after this read it as they read one that starts
+!      its line, and an EQUATE in front of the ';' is still tracked. Only a directive that
+!      parses is split off - anything else leaves the line exactly as it was. ----
+SemiDirective routine
+  data
+sdK    long,auto
+sdQ    byte
+sdRaw  StringTheory
+sdRem  StringTheory
+sdTerm StringTheory
+sdSup  byte
+sdFile string(512)
+sdSec  string(256)
+sdOnce byte
+  code
+  if self.CheckOmitCompile(tl, sdTerm, sdSup) then exit.
+  if tl._dataEnd >= 7 and upper(tl.valuePtr[1 : 7]) = 'INCLUDE' then exit.
+  sdRaw.SetValue(work.getLine(i))
+  ! 39 is a quote - a doubled one toggles twice - 33 a '!', which outside a literal starts the
+  ! comment, and 59 the ';'
+  loop sdK = 1 to sdRaw._dataEnd
+    case val(sdRaw.valuePtr[sdK])
+    of 39
+      sdQ = 1 - sdQ
+    of 33
+      if ~sdQ then break.
+    of 59
+      if sdQ or sdK = sdRaw._dataEnd then cycle.
+      sdRem.SetValue(sdRaw.valuePtr[sdK + 1 : sdRaw._dataEnd])
+      sdRem.Trim(' <9>')
+      if sdRem._dataEnd < 4 then cycle.
+      if ~self.CheckOmitCompile(sdRem, sdTerm, sdSup)
+        if sdRem._dataEnd < 7 or upper(sdRem.valuePtr[1 : 7]) <> 'INCLUDE' then cycle.
+        if self.ParseDirective(sdRem, sdFile, sdSec, sdOnce) <> 1 then cycle.
+      end
+      self.TrackEquate(tl)
+      if sdK > 1 then self.EmitLine(sdRaw.valuePtr[1 : sdK - 1], pFileLabel, i + pLineOfs).
+      tl.SetValue(sdRem)
+      break
+    end
   end
 
 ! ---------------------------------------------------------------------------
@@ -482,54 +718,60 @@ secOfs    long,auto        ! section start line in the included file
 ! region's terminator + suppress flag; the CALLER pushes it onto its region
 ! stack, which is what lets regions nest where the LangRef allows.
 ! ---------------------------------------------------------------------------
-preprocessor.CheckOmitCompile PROCEDURE(StringTheory pTrimmed, *STRING pTerm, *BYTE pSuppress)
-s        string(512)
-u        string(512)
-term     string(64),AUTO
-cond     string(128),AUTO
-isOmit   byte
+preprocessor.CheckOmitCompile PROCEDURE(StringTheory pTrimmed, StringTheory pTerm, *BYTE pSuppress)
+u        StringTheory ! the directive upper-cased, for the keyword test only: the terminator and the condition are sliced from pTrimmed in source case
+isOmit   byte,auto
 condVal  byte,AUTO
-p        long
+p        long,auto
 p1       long,AUTO
 p2       long,AUTO
 pc       long,AUTO
 pr       long,AUTO
   code
-  s = pTrimmed.getValue()
-  u = upper(s)
-  if u[1 : 5] = 'OMIT('  OR u[1 : 5] = 'OMIT '
+  u.setValue(pTrimmed)
+  u.upper()
+  ! A TAB SEPARATES THE KEYWORD FROM ITS '(' EXACTLY AS A SPACE DOES, and a compare
+  ! ignores TRAILING spaces only, so 'OMIT' + tab never equalled 'OMIT '. The region then
+  ! never opened: the omitted block AND its terminator line were spliced into the expanded
+  ! stream as live code, with nothing reported.
+  if u.startsWith('OMIT(') or u.startsWith('OMIT ', true, st:NoClip) or u.startsWith('OMIT<9>', true, st:NoClip)
     isOmit = true
     p = 5
-  elsif u[1 : 8] = 'COMPILE(' OR u[1 : 8] = 'COMPILE '
+  elsif u.startsWith('COMPILE(') or u.startsWith('COMPILE ', true, st:NoClip) or u.startsWith('COMPILE<9>', true, st:NoClip)
     isOmit = false
     p = 8
   else
     return false
   end
-  loop while p <= len(clip(u)) AND u[p] = ' '
+  loop while p <= u._DataEnd and (u.valuePtr[p] = ' ' or u.valuePtr[p] = '<9>')
     p += 1
   end
-  if p > len(clip(u)) OR u[p] <> '(' then return false.
-  p1 = instring('''', s, 1, p)
+  if p > u._DataEnd or u.valuePtr[p] <> '(' then return false.
+  p1 = pTrimmed.findByte(39, p)                      ! the opening quote of the terminator
   if ~p1 then return false.
-  p2 = instring('''', s, 1, p1 + 1)
+  p2 = pTrimmed.findByte(39, p1 + 1)                 ! its closing quote
   if p2 <= p1 + 1 then return false.
-  term = s[p1+1 : p2-1]
-  pc = instring(',', s, 1, p2 + 1)
-  pr = instring(')', s, 1, p2 + 1)
-  if pc > 0 AND (pr = 0 OR pc < pr) AND pr > pc + 1
-    cond = s[pc+1 : pr-1]
-    condVal = self.EvalPPCondition(cond)
+  pTerm.setValue(pTrimmed.valuePtr[p1 + 1 : p2 - 1]) ! the terminator, whole - however long its author made it
+  pc = pTrimmed.findByte(44, p2 + 1)                 ! ','
+  pr = pTrimmed.findByte(41, p2 + 1)                 ! ')'
+  if pc > 0 and (pr = 0 or pc < pr) and pr > pc + 1
+    condVal = self.EvalPPCondition(pTrimmed.valuePtr[pc + 1 : pr - 1])
   else
     condVal = true
   end
-  pTerm     = term
   pSuppress = choose(isOmit = true, condVal, 1 - condVal)
   return true
 
 ! ---------------------------------------------------------------------------
 ! EvalPPCondition - 'NAME' -> defined and non-zero; 'NAME=value' -> equality
 ! against the tracked EQUATE registry; undefined names evaluate to 0.
+! An equate's value can itself be a NAME - UseText EQUATE(False), MyDebug
+! EQUATE(_DEBUG_) - and the compiler reads that name's value, so the chain is
+! followed to a value that is not a name. A name with no definition reads 0, as
+! an undefined equate does. TRUE and FALSE are declared in EQUATES.CLW, which
+! every program sees, so they read 1 and 0 when no file the reader has seen
+! defines them. A tab in the condition - after the comma, beside the '=' - is
+! white space, as a space is.
 ! ---------------------------------------------------------------------------
 preprocessor.EvalPPCondition PROCEDURE(STRING pCond)
 c    StringTheory
@@ -538,11 +780,13 @@ vl   string(64),AUTO
 defv string(64),AUTO
 p    long,AUTO
 q    long,AUTO
+hop  long,AUTO
+isNm byte,AUTO
   code
   c.SetValue(upper(pCond))
-  c.Trim()
+  c.Trim(' <9>')
   if c._dataEnd < 1 then return true.
-  p = c.findByte(61) ! '='
+  p = c.findByte(61)                    ! '='
   if p > 1
     nm = left(c.sub(1, p - 1))
     vl = left(c.slice(p + 1))
@@ -550,19 +794,61 @@ q    long,AUTO
     nm = left(c.getValue())
     vl = ''
   end
+  loop q = 1 to size(nm)
+    if nm[q] = '<9>' then nm[q] = ' '.
+    if vl[q] = '<9>' then vl[q] = ' '.
+  end
+  nm = left(nm)
+  vl = left(vl)
   p = instring('|' & clip(nm) & '=', upper(self.PPDefines.getValue()), 1, 1)
   if ~p
     defv = '0'
   else
     p += len(clip(nm)) + 2
-    q = instring('|', self.PPDefines.getValue(), 1, p)
+    q = self.PPDefines.findByte(124, p) ! '|'
     if ~q then q = self.PPDefines._dataEnd + 1.
     defv = self.PPDefines.sub(p, q - p)
   end
+  if ~p and nm = 'TRUE' then defv = '1'.
+  loop hop = 1 to 32
+    do IsName
+    if ~isNm then break.
+    nm = defv
+    defv = '0'
+    p = instring('|' & clip(nm) & '=', upper(self.PPDefines.getValue()), 1, 1)
+    if p
+      p += len(clip(nm)) + 2
+      q = self.PPDefines.findByte(124, p)
+      if ~q then q = self.PPDefines._dataEnd + 1.
+      defv = self.PPDefines.sub(p, q - p)
+    elsif nm = 'TRUE'
+      defv = '1'
+    end
+  end
+  do IsName
+  if isNm then defv = '0'.
   if vl
     return choose(left(defv) = left(vl))
   end
   return choose(left(defv) <> '0' AND defv)
+
+! ---- is defv a NAME - a letter or '_' first, then letters, digits, '_' and ':'? A
+!      value that is not (a number, a quoted string, an expression) is the value itself.
+!      Still a name after thirty-two steps, the chain is a loop of names, and reads 0.
+IsName routine
+  isNm = 0
+  defv = left(defv)
+  if ~defv then exit.
+  q = val(defv[1])
+  if (q < 65 or q > 90) and q <> 95 then exit.
+  loop q = 2 to len(clip(defv))
+    case val(defv[q])
+    of 48 to 57 orof 65 to 90 orof 95 orof 58
+    else
+      exit
+    end
+  end
+  isNm = 1
 
 ! ---------------------------------------------------------------------------
 ! TrackEquate - record 'Label EQUATE(value)' lines so OMIT/COMPILE conditions
@@ -575,24 +861,30 @@ nm   string(64),AUTO
 vl   string(64),AUTO
 p    long,AUTO
 q    long,AUTO
-r    long,AUTO
+! #Removed as not used: r    long,AUTO
   code
   u.SetValue(upper(pTrimmed.getValue()))
   p = u.findChars(' EQUATE')
   if ~p then p = u.findChars('<9>EQUATE').
   if p < 2 then return.
   nm = left(u.sub(1, p - 1))
+  ! `Label<9><9>EQUATE(1)`: the probe matched at the SECOND tab and the first stayed in the name,
+  ! where clip() does not reach it - a tab after the label is a separator, so it becomes a space
+  loop q = 1 to len(clip(nm))
+    if nm[q] = '<9>' then nm[q] = ' '.
+  end
+  nm = left(nm)
   if instring(' ', clip(nm), 1, 1) > 0 then return.
   ! Prefixed labels (ST:Debug) are LEGAL equates and pervasive in COMPILE/OMIT conditions, so
   ! rejecting a name for holding one drops whole COMPILE regions. Only a LEADING colon is invalid.
   if nm[1] = ':' then return.
-  q = u.findByte(40, p)   ! '('
+  q = u.findByte(40, p) ! '('
   if ~q
     vl = '1'
   else
-    r = u.findByte(41, q) ! ')'
-    if r <= q + 1 then return.
-    vl = left(u.sub(q + 1, r - q - 1))
+    ! ')'
+    if u.findByte(41, q) <= q + 1 then return.
+    vl = left(u.sub(q + 1, u.findByte(41, q) - q - 1))
   end
   if instring('|' & clip(nm) & '=', upper(self.PPDefines.getValue()), 1, 1) > 0 then return.
   self.PPDefines.Append('|' & clip(nm) & '=' & clip(vl))
@@ -602,19 +894,54 @@ r    long,AUTO
 ! A directive must START the line (after trimming); INCLUDE text inside a string
 ! or after other code is not a directive. Quote-aware arg split handles both the
 ! 1-arg INCLUDE('f') and 2-arg INCLUDE('f','sect') forms.
+!
+! THREE ANSWERS, not two. 1 = a directive, parsed. 0 = never a directive, so the
+! caller emits the line and says nothing: a label that merely begins with the same
+! letters (INCLUDEFILE EQUATE(1)) is ordinary code. 2 = it opened with the keyword
+! and its '(' and would not parse - a malformed directive, which the caller reports
+! rather than leaving a silent hole in the expanded stream.
 ! ---------------------------------------------------------------------------
 preprocessor.ParseDirective PROCEDURE(StringTheory ln, *STRING pFile, *STRING pSection, *BYTE pOnce)
 args    StringTheory
+gap     StringTheory
 p1      long,AUTO
 p2      long,AUTO
-cpos    long,AUTO      ! position of a trailing '!', so ONCE is never read out of a comment
+p3      long,AUTO
+pq      long,AUTO
+! #Removed as not used: cpos    long,AUTO ! position of a trailing '!', so ONCE is never read out of a comment
   code
   pFile = '' ; pSection = '' ; pOnce = 0
-  p1 = ln.findByte(40) ! '('
-  if ~p1 or |
-     ln.Sub(8, p1 - 8) ! between INCLUDE and '(' must be blank
-    return 0
+  p1 = ln.findByte(40)                                   ! '(' - and the opening quote: WHICHEVER COMES FIRST
+  pq = ln.findByte(39)                                   !   picks the arm. A '(' can sit in a trailing comment
+  if ~p1 or (pq and pq < p1)                             !   or in the name itself, and a whole-line search for
+    p1 = pq                                              !   one sent such a line down the bracketed arm, where
+    if ~p1 then return 0.                                !   it failed and went out as text in silence. NO
+    gap.SetValue(ln.Sub(8, p1 - 8))                      !   BRACKETS is a spelling real sources use, so it is
+    gap.Trim(' <9>')                                     !   read. Whitespace must still separate the keyword
+    if gap._DataEnd then return 0.                       !   from the quote: that keeps INCLUDEFILE out of here
+    p2 = ln.findByte(33, p1)                             ! a trailing comment ends the arguments
+    if p2
+      args.SetValue(ln.Slice(p1, p2 - 1))
+    else
+      args.SetValue(ln.Slice(p1, ln._DataEnd))
+    end
+    args.Trim(' <9>')
+    ! ONLY THE ONE-ARGUMENT FORM IS READ HERE. A comma means a section name or an option,
+    ! and what those look like without brackets is not something to guess at: answering 0
+    ! leaves such a line exactly as it is handled today, which is the safe answer.
+    if args.findByte(44) then return 0.                  ! <39>,<39>
+    args.Split(',', '''', '''', true,st:clip,st:left)    ! quote-aware, strip quotes - as the bracketed arm does
+    if ~args.records() then return 0.
+    pFile = args.getLine(1)
+    if ~pFile then return 0.
+    p3 = ln.findByte(39, 1,, pFile)                      ! the same ampersand rule the bracketed arm applies
+    if p3 > 1 and instring('&', clip(pFile), 1, p3) then pFile = sub(pFile, 1, p3 - 1).
+    return 1
   end
+  gap.SetValue(ln.Sub(8, p1 - 8))                        ! between INCLUDE and '(' must be WHITESPACE. A TAB
+  gap.Trim(' <9>')                                       !   separates exactly as a space does, and a bare-string
+  if gap._DataEnd then return 0.                         !   test calls one NON-blank, so the whole line went out
+                                                         !   as ordinary text with the include never expanded
   ! the MATCHING ')', not the first one. The case that makes this a real
   ! bug rather than a tidy-up is the commonest path on Windows -
   !     INCLUDE('C:\Program Files (x86)\...\thing.inc')
@@ -626,20 +953,26 @@ cpos    long,AUTO      ! position of a trailing '!', so ONCE is never read out o
   ! it - but that needs a quote-aware scan and is a far rarer shape than a program-files
   ! path. Documented rather than fixed, deliberately.
   p2 = ln.MatchBrackets('(', ')', p1)
-  if ~p2 or |
-     p2 <= p1 + 1                                   ! `INCLUDE()` - nothing to parse
-    return 0
-  end
+  if ~p2 or                                              |
+     p2 <= p1 + 1                                        ! `INCLUDE()` - nothing to parse; or a '(' inside the
+    return 2                                             !   name that never closes, which leaves MatchBrackets
+  end                                                    !   at 0. Either way it was MEANT to be a directive
   ! ONE SCAN, ONE ANSWER. A second, independent ln.between('(',')') here would find its
   ! right delimiter with a plain search (StringTheory.FindBetweenPosition) - the identical
   ! defect to the one above, and it could disagree with p2. Slice between the brackets
   ! already matched instead.
-  args.SetValue(ln.Slice(p1 + 1, p2 - 1))           ! arg list inside the parens (Slice takes the two
-                                                    !   positions we already hold, so no length arithmetic)
-  args.Split(',', '''', '''', true,st:clip,st:left) ! quote-aware, strip quotes; clip+left so ' <39>Sect<39>' unquotes too
-  if ~args.records() then return 0.
+  args.SetValue(ln.Slice(p1 + 1, p2 - 1))                ! arg list inside the parens (Slice takes the two positions we already hold, so no length arithmetic)
+  args.Split(',', '''', '''', true,st:clip,st:left)      ! quote-aware, strip quotes; clip+left so ' <39>Sect<39>' unquotes too
+  if ~args.records() then return 2.
   pFile = args.getLine(1)
   if args.records() > 1 then pSection = args.getLine(2).
+  ! THE PRE-PROCESSOR IGNORES '&' CONCATENATION: INCLUDE('EQUA' & 'TES.CLW') opens EQUA.CLW,
+  ! and so must this. Split strips only the OUTER quotes, so a surviving quote with an '&'
+  ! after it is where the first literal ended - cut there and the answer matches the
+  ! compiler. Without the '&' test a quote is left alone: a doubled '' is one quote INSIDE
+  ! the name, and that is a different question from this one.
+  p3 = ln.findByte(39, 1,, pFile)                        ! <single quote>
+  if p3 > 1 and instring('&', clip(pFile), 1, p3) then pFile = sub(pFile, 1, p3 - 1).
   ! CHOOSE(expr, val1, val2) treats a positive-integer expr as a 1-based INDEX into the
   ! value list, not a boolean (confirmed against Clarion's own docs). INSTRING()
   ! returns a POSITION, so `choose(instringResult, 1, 0)` returns 1 only when the match
@@ -647,9 +980,9 @@ cpos    long,AUTO      ! position of a trailing '!', so ONCE is never read out o
   ! ONCE deduplicated nothing. The single-argument CHOOSE(expr) is the real boolean-to-0/1
   ! converter: use it, or an explicit `expr <> 0`, whenever the condition is not already
   ! guaranteed to be exactly 0 or 1.
-  cpos = ln.findByte(33, p2 + 1)                    ! bound the ONCE search at a trailing comment '!'
-  if cpos
-    pOnce = choose(ln.Instring('ONCE', 1, p2 + 1, cpos - 1, st:nocase))
+  ! bound the ONCE search at a trailing comment '!'
+  if ln.findByte(33, p2 + 1)
+    pOnce = choose(ln.Instring('ONCE', 1, p2 + 1, ln.findByte(33, p2 + 1) - 1, st:nocase))
   else
     pOnce = choose(ln.Instring('ONCE', 1, p2 + 1, 0, st:nocase))
   end
@@ -661,8 +994,8 @@ cpos    long,AUTO      ! position of a trailing '!', so ONCE is never read out o
 ! ---------------------------------------------------------------------------
 preprocessor.ExtractSection PROCEDURE(*StringTheory pBody, string pSection, *StringTheory pResult, *LONG pStartLine)
 bw    StringTheory
-tl    StringTheory
-i     long
+! #Removed as not used: tl    StringTheory
+i     long,auto
 cap   byte
   code
   pStartLine = 0
@@ -671,16 +1004,16 @@ cap   byte
   bw.lineEndings(st:Unix)
   bw.Split('<10>')
   loop i = 1 to bw.records()
-    tl.SetValue(bw.getLine(i)) ; tl.Trim()
-    if self.IsSectionLine(tl)                                                                          ! the word SECTION then a '(' - a label merely STARTING
-      tl.SetBetween('(',')',,,,,true)                                                                  !   'Section' (SectionSize EQUATE(100)) is BODY, and the
-      tl.unquote('''', '''')                                                                           !   a 7-char prefix test would end the capture there,
-      cap = choose(upper(choose(tl._DataEnd < 1, '', tl.valuePtr[1 : tl._DataEnd])) = upper(pSection)) ! silently truncating the section
-      if cap and ~pStartLine then pStartLine = i.                                                      ! the section body starts at line i+1 of the included file
-      cycle                                                                                            ! never emit the SECTION line
+    bw.setValueFromLine(i) ; bw.Trim(' <9>')
+    if self.IsSectionLine(bw)                     ! the word SECTION then a '(' - a label merely STARTING
+      bw.SetBetween('(',')',,,,,true)             !   'Section' (SectionSize EQUATE(100)) is BODY, and the
+      bw.unquote('''', '''')                      !   a 7-char prefix test would end the capture there,
+      cap = choose(upper(choose(bw._DataEnd < 1, '', bw.valuePtr[1 : bw._DataEnd])) = upper(pSection)) ! silently truncating the section
+      if cap and ~pStartLine then pStartLine = i. ! the section body starts at line i+1 of the included file
+      cycle                                       ! never emit the SECTION line
     end
     if cap
-      pResult.Append(bw.getLine(i))                                                                    ! original line, untrimmed
+      pResult.Append(bw.getLine(i))               ! original line, untrimmed
       pResult.Append('<13,10>')
     end
   end
@@ -691,7 +1024,7 @@ cap   byte
 ! ---------------------------------------------------------------------------
 preprocessor.StripSections PROCEDURE(*StringTheory pBody, *StringTheory pResult)
 bw    StringTheory
-tl    StringTheory
+! #Removed as not used: tl    StringTheory
 i     long,auto
   code
   pResult._dataEnd = 0
@@ -699,10 +1032,10 @@ i     long,auto
   bw.lineEndings(st:Unix)
   bw.Split('<10>')
   loop i = 1 to bw.records()
-    tl.SetValue(bw.getLine(i)) ; tl.Trim()
-    if self.IsSectionLine(tl)   ! the containsChar('(') form still blanked a label
-      pResult.Append('<13,10>') !   like SectionSize EQUATE(100). BLANK the marker
-      cycle                     !   line (deleting it shifted every later line's map entry)
+    bw.setValueFromLine(i) ; bw.Trim(' <9>')
+    if self.IsSectionLine(bw)   ! a section marker line and only that: a label
+      pResult.Append('<13,10>') !   like SectionSize EQUATE(100) is not one. BLANK the
+      cycle                     !   line: deleting it would shift every later line's map entry
     end
     pResult.Append(bw.getLine(i))
     pResult.Append('<13,10>')
@@ -710,8 +1043,12 @@ i     long,auto
 
 ! ---------------------------------------------------------------------------
 ! IsSectionLine - a real SECTION('name') directive: the word SECTION, optional
-! spaces, then '('. Mirrors CheckOmitCompile's OMIT/COMPILE test. A column-1
-! label that merely STARTS with the letters (SectionSize, SectionNo) is code.
+! whitespace, then '('. Mirrors CheckOmitCompile's OMIT/COMPILE test. A column-1
+! label that merely STARTS with the letters (SectionSize, SectionNo) is code:
+! the separator test below refuses it, because its 8th character is a letter.
+! The separator may be a TAB. A compare ignores TRAILING spaces only, so testing
+! the 8 characters against 'SECTION ' missed a tab and the section boundary went
+! unseen - the capture of the section before it ran straight on through this one.
 ! ---------------------------------------------------------------------------
 preprocessor.IsSectionLine PROCEDURE(StringTheory pTrimmed)
 u    string(512)
@@ -719,9 +1056,9 @@ p    long,AUTO
   code
   u = upper(pTrimmed.getValue())
   if u[1 : 8] = 'SECTION(' then return 1.
-  if u[1 : 8] <> 'SECTION ' then return 0.
-  p = 9
-  loop while p <= len(clip(u)) AND u[p] = ' '
+  if u[1 : 7] <> 'SECTION' then return 0.
+  p = 8
+  loop while p <= len(clip(u)) AND (u[p] = ' ' or u[p] = '<9>')
     p += 1
   end
   return choose(p <= len(clip(u)) AND u[p] = '(')
@@ -768,6 +1105,44 @@ i     long,auto
   end
   return ''
 
+! The directory ABOVE pDir. This is NOT DirName: DirName answers "the directory part of a
+! path", and for a path that is only a navigation step there is no part to take. DirName('.')
+! is '' - correct for what DirName means, and useless as a parent, because '' is read further
+! down as "the current directory" and so the step up is silently lost. A redirection entry of
+! `..\shared` then resolved to `shared`: the project directory itself, not its parent. If a
+! file of that name happened to live there it was spliced in instead of the right one.
+!
+! A trailing navigation step cannot be cancelled by removing it - the parent of `..` is
+! `..\..`, not '' - so those spellings are extended rather than popped. A single plain name
+! DOES pop, to '', which correctly means the directory the project sits in.
+preprocessor.ParentDir PROCEDURE(STRING pDir)
+d     string(512)
+n     long,auto
+  code
+  d = pDir
+  ! A TRAILING SEPARATOR FIRST. BaseName answers blank for `src\`, and a blank segment would
+  ! send this down the pop arm and take one level too few. Nothing reaches here with one -
+  ! ProjDir comes from DirName, which strips it - but the answer should not depend on that.
+  loop
+    n = len(clip(d))
+    if ~n then break.
+    if d[n] <> '\' and d[n] <> '/' then break.
+    if n = 1                              ! nothing but a separator: blank it rather than
+      d = ''                              !   hand BaseName a path it answers with a
+      break                               !   zero-length SUB
+    end
+    d = sub(d, 1, n - 1)
+  end
+  if ~d then return '..'.                 ! blank means HERE, and above here is '..'
+  case self.BaseName(d)                   ! the final segment, whatever separators were used
+  of '.'
+    if len(clip(d)) = 1 then return '..'. ! '.' on its own - say '..', not '.\..'
+    return clip(d) & '\..'
+  of '..'
+    return clip(d) & '\..'                ! cannot be popped - go up from where it lands
+  end
+  return self.DirName(d)                  ! a real name pops; '' here means the project's own parent
+
 preprocessor.BaseName PROCEDURE(STRING pPath)
 s     string(512)
 i     long,auto
@@ -801,7 +1176,8 @@ d     string(512)
   code
   d = pDir
   if ~d then return clip(pName).
-  if d[len(clip(d))] = '\' OR d[len(clip(d))] = '/'
+  case val(d[len(clip(d))])
+  of 92 orof 47 ! '\' orof '/'
     return clip(d) & clip(pName)
   end
   return clip(d) & '\' & clip(pName)

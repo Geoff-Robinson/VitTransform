@@ -10,15 +10,21 @@
 
 VitTimer.Start                Procedure()
  CODE
-    self.StartDate = today()
-    self.StartTime = clock()
+    loop                              ! the date read again after the time: midnight between the
+      self.StartDate = today()        !   two reads would pair the old day with the new day's time
+      self.StartTime = clock()
+      if today() = self.StartDate then break.
+    end
     self.EndDate = 0
     self.EndTime = 0
 
 VitTimer.Stop                 Procedure()
  CODE
-    self.EndDate = today()
-    self.EndTime = clock()
+    loop ! as in Start: the date again after the time
+      self.EndDate = today()
+      self.EndTime = clock()
+      if today() = self.EndDate then break.
+    end
 
 VitTimer.Duration             Procedure() !,STRING
 
@@ -37,18 +43,19 @@ L:Duration LONG,AUTO
     L:Duration = self.EndTime - self.StartTime
 
     LOOP while L:Duration < 0
-        L:Duration += 8640000        ! add a day
+        L:Duration += 8640000         ! add a day
         L:Days -= 1
     end
 
-    if ~L:Days and ~L:Duration       ! GCR 25Feb2014
+    if ~L:Days and ~L:Duration        ! GCR 25Feb2014
         return('Too fast to measure')
     end
 
+    ! assignment to LONG truncates - do NOT wrap these lines in int(). They are correct exactly as they are.
     L:Hours    = L:Duration / 360000
-    L:Duration = L:Duration % 360000 ! keep remainder after removing hours
+    L:Duration %= 360000              ! keep remainder after removing hours
     L:Mins     = L:Duration / 6000
-    L:Duration = L:Duration % 6000   ! keep remainder after removing minutes
+    L:Duration %= 6000                ! keep remainder after removing minutes
 
     Return( clip(choose(~L:Days, '',L:Days  & ' day'    & choose(L:Days  < 2, ' ', 's ')) & |
                  choose(~L:Hours,'',L:Hours & ' hour'   & choose(L:Hours < 2, ' ', 's ')) & |

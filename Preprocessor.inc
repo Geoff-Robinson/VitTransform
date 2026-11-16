@@ -22,7 +22,7 @@
   OMIT('__EndPreprocessorInc__', _PreprocessorIncPresent_)
 _PreprocessorIncPresent_ EQUATE(1)
 
-  INCLUDE('StringTheory.inc'), ONCE ! Transpiler.inc only re-exported StringTheory + unused TK:/ST: equates (decoupled for VitTransform)
+  INCLUDE('StringTheory.inc'), ONCE                                                     ! Transpiler.inc only re-exported StringTheory + unused TK:/ST: equates (decoupled for VitTransform)
 
 ! Maximum INCLUDE nesting depth - a safety net against runaway/circular includes.
 ! it is the ONLY thing catching a cycle.
@@ -52,43 +52,52 @@ OrigLine            LONG
 ! priority order (earlier lines first). Resolution walks this in Seq order.
 ! ---------------------------------------------------------------------------
 RedDirQueue       QUEUE, TYPE
-Seq                 LONG          ! global priority order
-Mask                STRING(64)    ! e.g. '*.clw', '*.*'
-Dir                 STRING(256)   ! macro-expanded directory (native backslash form)
-Stop                BYTE          ! trailing '|' in the .RED -> stop searching if not found here
+Seq                 LONG                                                                ! global priority order
+Mask                STRING(64)                                                          ! e.g. '*.clw', '*.*'
+Dir                 STRING(256)                                                         ! macro-expanded directory (native backslash form)
+Stop                BYTE                                                                ! trailing '|' in the .RED -> stop searching if not found here
                   END
 
 ! ---------------------------------------------------------------------------
 ! Preprocessor
 ! ---------------------------------------------------------------------------
 Preprocessor      CLASS, TYPE, MODULE('Preprocessor.clw'), LINK('Preprocessor.clw')
-RedDirs             &RedDirQueue  ! parsed .RED search table (owned)
-LineMap             &LineMapQueue ! bound to the caller's queue during Process
-Out                 &StringTheory ! bound to the caller's expanded output during Process
-Seen                &StringTheory ! |-delimited lowercased resolved paths already included (owned).
-                                  ! FILENAME keys only: ONCE is filename-wide per the LangRef, so a
-                                  ! sectioned include records the same key as a whole-file one.
-DepthErrReported    &StringTheory ! |-delimited paths already given a "nested too deep" error (owned) -
-                                  ! tracks error *reporting* only, separate
-                                  ! from Seen (which governs actual include-skip behaviour) - see the
-                                  ! note at the check site in Preprocessor.clw for why these can't just
-                                  ! share one field.
-ErrText             &StringTheory ! accumulated preprocessor diagnostics (owned)
-MainFile            STRING(256)   ! base name of the main source (line-map label for top level)
-ProjDir             STRING(256)   ! directory of the main source; '.' in the .RED resolves here
-RootDir             STRING(256)   ! %ROOT% macro value
-BinDir              STRING(256)   ! %BIN%  macro value
-Config              STRING(32)    ! %CONFIGURATION% macro value (Debug / Release)
-                                  ! (OMIT/COMPILE region state is a LOCAL stack in ProcessText - one per
-                                  ! file, so the call stack is the region stack and nested regions in a
-                                  ! pass-through block are honoured, as the LangRef allows)
-PPDefines           &StringTheory ! '|NAME=VALUE' compile-time equate registry (owned) -
-                                  ! fed by TrackEquate, read by EvalPPCondition
+RedDirs             &RedDirQueue                                                        ! parsed .RED search table (owned)
+LineMap             &LineMapQueue                                                       ! bound to the caller's queue during Process
+Out                 &StringTheory                                                       ! bound to the caller's expanded output during Process
+Seen                &StringTheory                                                       ! |-delimited lowercased resolved paths already included (owned).
+                                                                                        ! FILENAME keys only: ONCE is filename-wide per the LangRef, so a
+                                                                                        ! sectioned include records the same key as a whole-file one.
+DepthErrReported    &StringTheory                                                       ! |-delimited paths already given a "nested too deep" error (owned) -
+                                                                                        ! tracks error *reporting* only, separate
+                                                                                        ! from Seen (which governs actual include-skip behaviour) - see the
+                                                                                        ! note at the check site in Preprocessor.clw for why these can't just
+                                                                                        ! share one field.
+ErrText             &StringTheory                                                       ! accumulated preprocessor diagnostics (owned)
+ErrBase             LONG                                                                ! how much of ErrText Init recorded: Process rewinds to HERE, not to
+                                                                                        ! zero, so a redirection file that never loaded is still reported
+MainFile            STRING(256)                                                         ! base name of the main source (line-map label for top level)
+ProjDir             STRING(256)                                                         ! directory of the main source; '.' in the .RED resolves here
+RootDir             STRING(256)                                                         ! %ROOT% macro value
+BinDir              STRING(256)                                                         ! %BIN%  macro value
+Config              STRING(32)                                                          ! %CONFIGURATION% macro value (Debug / Release)
+RedDir              STRING(256)                                                         ! %REDDIR% macro value: the directory of the .RED being read (LoadRed sets it per file)
+                                                                                        ! (OMIT/COMPILE region state is a LOCAL stack in ProcessText - one per
+                                                                                        ! file, so the call stack is the region stack and nested regions in a
+                                                                                        ! pass-through block are honoured, as the LangRef allows)
+RedVer              LONG                                                                ! the highest version any .RED basename LoadRed opened implies, chained
+                                                                                        ! files included - the version flags fall back to it when the file
+                                                                                        ! named on the command line carries no version in its own name
+SeedDefines         &StringTheory                                                       ! the project flags (_Cnn_ from the .red version, plus --define=) - PPDefines is reset to this per file
+PPDefines           &StringTheory                                                       ! '|NAME=VALUE' compile-time equate registry (owned) -
+                                                                                        ! fed by TrackEquate, read by EvalPPCondition
 
 Construct           PROCEDURE()
 Destruct            PROCEDURE()
 ! pRootDir = Clarion install root (%ROOT%); pConfig = 'Debug'/'Release' (optional)
-Init                PROCEDURE(STRING pMainFilePath, STRING pRedFilePath, STRING pRootDir, STRING pConfig)
+Init                PROCEDURE(STRING pMainFilePath, STRING pRedFilePath, STRING pRootDir, STRING pConfig, <STRING pDefines>)
+SeedProjectFlags    PROCEDURE(STRING pRedFilePath, STRING pDefines)                     ! seed _Cnn_ from the .red version (cumulative) and the --define= flags into SeedDefines
+RedVersion          PROCEDURE(STRING pRedFilePath), LONG                                ! the version a .red FILE NAME implies: Clarion110.red -> 110, no digit run -> 0
 ! Expand pMainSource into pExpandedOut and fill pLineMap. Returns the number of
 ! preprocessor errors encountered (0 = clean).
 Process             PROCEDURE(*StringTheory pMainSource, *StringTheory pExpandedOut, *LineMapQueue pLineMap), LONG, PROC
@@ -98,18 +107,19 @@ GetErrors           PROCEDURE(), STRING
 ! ---- internals ----
 LoadRed             PROCEDURE(stringTheory pRedPath, LONG pDepth), PRIVATE
 ExpandMacros        PROCEDURE(stringTheory s), PRIVATE
-ResolveFile         PROCEDURE(STRING pName, <STRING pFromDir>), STRING, PRIVATE    ! pFromDir = the INCLUDING file's directory, tried before ProjDir
+LoadedEmpty         PROCEDURE(StringTheory pSt, STRING pPath), BYTE, PRIVATE            ! a LoadFile that failed only because the file holds nothing: pSt emptied, 1
+ResolveFile         PROCEDURE(STRING pName, <STRING pFromDir>), STRING, PRIVATE         ! pFromDir = the INCLUDING file's directory, tried before ProjDir
 MaskMatches         PROCEDURE(STRING pMask, STRING pBase), BYTE, PRIVATE
-! These three prototypes said 'StringTheory' BY VALUE
-! while every definition in Preprocessor.clw takes '*StringTheory' - native
-! Clarion tolerated the mismatch, C++ treats decl and definition as different
-! functions. Aligned to the definitions (also avoids copying a heap-owning
-! class by value).
-ProcessText         PROCEDURE(*StringTheory pSrc, STRING pFileLabel, LONG pDepth, LONG pLineOfs=0, <STRING pFileDir>), PRIVATE  ! section includes carry their true start line
+! These three take *StringTheory, as their definitions in Preprocessor.clw do.
+! Native Clarion tolerates a by-value prototype against a by-reference
+! definition; the Clarion-to-C++ transpiler that shares this file reads them as
+! two different functions, and a by-value StringTheory would copy a heap-owning
+! class.
+ProcessText         PROCEDURE(*StringTheory pSrc, STRING pFileLabel, LONG pDepth, LONG pLineOfs=0, <STRING pFileDir>), PRIVATE ! section includes carry their true start line
 ParseDirective      PROCEDURE(StringTheory pLine, *STRING pFile, *STRING pSection, *BYTE pOnce), BYTE, PRIVATE
-ExtractSection      PROCEDURE(*StringTheory pBody, STRING pSection, *StringTheory pResult, *LONG pStartLine), PRIVATE  ! pStartLine = SECTION line index (0 = section not found)
+ExtractSection      PROCEDURE(*StringTheory pBody, STRING pSection, *StringTheory pResult, *LONG pStartLine), PRIVATE ! pStartLine = SECTION line index (0 = section not found)
 StripSections       PROCEDURE(*StringTheory pBody, *StringTheory pResult), PRIVATE
-CheckOmitCompile    PROCEDURE(StringTheory pTrimmed, *STRING pTerm, *BYTE pSuppress), BYTE, PRIVATE
+CheckOmitCompile    PROCEDURE(StringTheory pTrimmed, StringTheory pTerm, *BYTE pSuppress), BYTE, PRIVATE
                                     ! OMIT('t'[,cond]) / COMPILE('t'[,cond]) region opener. Fills the
                                     ! region's terminator + suppress flag; the CALLER stacks it (regions
                                     ! nest when parsing is continuing)
@@ -120,13 +130,14 @@ IsSectionLine       PROCEDURE(StringTheory pTrimmed), BYTE, PRIVATE
 EvalPPCondition     PROCEDURE(STRING pCond), BYTE, PRIVATE
 TrackEquate         PROCEDURE(StringTheory pTrimmed), PRIVATE
 EmitLine            PROCEDURE(STRING pLine, STRING pFileLabel, LONG pOrigLine), PRIVATE
-SeenKey             PROCEDURE(STRING pResolved), STRING, PRIVATE  ! '|key|' lowercase lookup token
+SeenKey             PROCEDURE(STRING pResolved), STRING, PRIVATE                        ! '|key|' lowercase lookup token
 DirName             PROCEDURE(STRING pPath), STRING, PRIVATE
+ParentDir           PROCEDURE(STRING pDir), STRING, PRIVATE                             ! the directory ABOVE pDir, understanding the navigation spellings - NOT DirName
 BaseName            PROCEDURE(STRING pPath), STRING, PRIVATE
 HasExtension        PROCEDURE(STRING pName), BYTE, PRIVATE
 IsAbsolute          PROCEDURE(STRING pName), BYTE, PRIVATE
 JoinPath            PROCEDURE(STRING pDir, STRING pName), STRING, PRIVATE
-NormalizeDir        PROCEDURE(stringTheory pDir), PRIVATE  ! expand macros + resolve '.'/'..' (mutates pDir)
+NormalizeDir        PROCEDURE(stringTheory pDir), PRIVATE                               ! expand macros + resolve '.'/'..' (mutates pDir)
                   END
 
   __EndPreprocessorInc__

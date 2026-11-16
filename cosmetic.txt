@@ -9,8 +9,8 @@
 !     VitTransform cosmetic.txt src\*.clw out               write into out\
 !     VitStyle cosmetic.txt                                 pick options visually
 !
-! WHY A SEPARATE FILE RATHER THAN A SWITCH. vitrules.txt has over 200
-! ungrouped rules and ten ungrouped BUILTIN lines that are always on, and
+! WHY A SEPARATE FILE RATHER THAN A SWITCH. vitrules.txt has hundreds of
+! rules, and a number of BUILTIN lines, in no group: they are always on, and
 ! no --nogroup can silence them - a run prints the total beside 'ungrouped
 ! rules:'. A rule file is self-contained, so the honest way to get
 ! layout-only is a file that contains layout only. This one holds no
@@ -19,23 +19,23 @@
 ! WHAT RUNS WHATEVER YOU SELECT. Two tidy-ups live in the engine, not in
 ! any rule file, and they run whether or not anything else changed the file:
 !   - trailing spaces and tabs are removed from the ends of lines
-!   - a line wider than the file's own prevailing width is split at a
-!     sensible point (after a ',' at the outermost call depth, before a
-!     top-level '&', or after the opening '(')
+!   - a line wider than 240 characters is split at a sensible point
+!     (after a ',' at the outermost call depth, before a top-level '&',
+!     or after the opening bracket)
 ! Either can be the ONLY change a run makes - that is what lets a
 ! layout-only run do useful work on a file the rules have nothing to say
 ! about. A file where even these change nothing is not written at all.
 !
-! LINE WIDTH. By default the limit is the file's own prevailing width plus
-! 12, capped at 200 - so a codebase that keeps to 90 columns stays near 90,
-! and one that already runs wide is not narrowed. Set it yourself with
+! LINE WIDTH. By default a line is split when it grows past 240
+! characters, whatever the rest of the file looks like. Shorter lines are
+! left exactly as you wrote them. Set the limit yourself with
 !     --width=120
 ! or turn splitting off completely with
 !     --width=0
 !
 ! A PLAIN RUN USES THE 'tidy' DEFAULTSTYLE (end of file): comment alignment,
 ! keyword UPPERCASING, reindent-to-2 and statement splitting. --nogroup= opts
-! out per group (#20: this once claimed only comment alignment ran - drift).
+! out of any one of them by name, and --group= switches one on.
 ! =====================================================================
 
 NEEDBUILD 108                                        ! the minimum engine build this file needs
@@ -66,7 +66,7 @@ ENDGROUP
 ! This axis has three members: cosmetic-keywordcase-lower for lower case,
 ! -upper for UPPER CASE, and -title for Title Case. Only one can be on.
 !
-! No member is selected by default, so nothing is re-cased unless you ask:
+! The default style, tidy, picks -upper. To have this one instead:
 !     --group=cosmetic-keywordcase-lower
 ! ---------------------------------------------------------------------
 GROUP cosmetic-keywordcase-lower, CHOICE(keywordcase)
@@ -82,8 +82,8 @@ ENDGROUP
 ! This axis has three members: cosmetic-keywordcase-lower for lower case,
 ! -upper for UPPER CASE, and -title for Title Case. Only one can be on.
 !
-! No member is selected by default, so nothing is re-cased unless you ask:
-!     --group=cosmetic-keywordcase-upper
+! The default style, tidy, picks this one. To keep keyword case as written:
+!     --nogroup=cosmetic-keywordcase-upper
 ! ---------------------------------------------------------------------
 GROUP cosmetic-keywordcase-upper, CHOICE(keywordcase)
 BUILTIN KeywordCase, STYLE('upper')
@@ -98,7 +98,7 @@ ENDGROUP
 ! This axis has three members: cosmetic-keywordcase-lower for lower case,
 ! -upper for UPPER CASE, and -title for Title Case. Only one can be on.
 !
-! No member is selected by default, so nothing is re-cased unless you ask:
+! The default style, tidy, picks -upper. To have this one instead:
 !     --group=cosmetic-keywordcase-title
 ! ---------------------------------------------------------------------
 GROUP cosmetic-keywordcase-title, CHOICE(keywordcase)
@@ -111,9 +111,9 @@ ENDGROUP
 ! This axis has three members - cosmetic-reindent-2, -3 and -4 - one per
 ! width. Only one can be on.
 !
-! No width is selected by default, so indentation is left exactly as you
-! wrote it unless you ask:
-!     --group=cosmetic-reindent-2
+! The default style, tidy, picks this one. To leave the indentation exactly
+! as you wrote it:
+!     --nogroup=cosmetic-reindent-2
 ! ---------------------------------------------------------------------
 GROUP cosmetic-reindent-2, CHOICE(reindent)
 BUILTIN Reindent, WIDTH(2)
@@ -124,8 +124,8 @@ ENDGROUP
 ! This axis has three members - cosmetic-reindent-2, -3 and -4 - one per
 ! width. Only one can be on.
 !
-! No width is selected by default, so indentation is left exactly as you
-! wrote it unless you ask:
+! The default style, tidy, picks cosmetic-reindent-2. To have this width
+! instead:
 !     --group=cosmetic-reindent-3
 ! ---------------------------------------------------------------------
 GROUP cosmetic-reindent-3, CHOICE(reindent)
@@ -137,8 +137,8 @@ ENDGROUP
 ! This axis has three members - cosmetic-reindent-2, -3 and -4 - one per
 ! width. Only one can be on.
 !
-! No width is selected by default, so indentation is left exactly as you
-! wrote it unless you ask:
+! The default style, tidy, picks cosmetic-reindent-2. To have this width
+! instead:
 !     --group=cosmetic-reindent-4
 ! ---------------------------------------------------------------------
 GROUP cosmetic-reindent-4, CHOICE(reindent)
@@ -157,7 +157,7 @@ ENDGROUP
 ! A trailing ; with nothing after it is removed rather than left to
 ! produce an empty line.
 !
-! Off by default:  --group=cosmetic-splitstatements
+! On in the default style, tidy. Leave it out: --nogroup=cosmetic-splitstatements
 ! ---------------------------------------------------------------------
 GROUP cosmetic-splitstatements, OFF
 BUILTIN SplitStatements
@@ -221,11 +221,11 @@ ENDGROUP
 !     VitTransform cosmetic.txt src\*.clw out
 ! does the sensible thing with no switches at all.
 !
-! WHY THERE IS A DEFAULTSTYLE LINE: with no --style= on the command line
-! every CHOICE axis resolved to (none), the only group left on was
-! cosmetic-aligncomments, and `ungrouped rules: 0` meant there was nothing to
-! fire - the run reported 0 changes and wrote nothing. A layout-only rule file
-! that does nothing unless you know to pass --style= is a trap, not a default.
+! WHY THERE IS A DEFAULTSTYLE LINE: every CHOICE axis needs a member picked
+! before it does anything, and a rule file whose rules all sit in groups has
+! nothing ungrouped to fire. Without a default style, a run with no --style=
+! would only line up comments and clip the ends of lines; with it, a run with
+! no switches tidies the file as the STYLE line below says.
 ! ---------------------------------------------------------------------
 STYLE tidy = cosmetic-aligncomments, cosmetic-keywordcase-upper, |
              cosmetic-reindent-2, cosmetic-splitstatements

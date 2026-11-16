@@ -1,5 +1,5 @@
-! VitStyle - the rule-selection chooser (S3 of the selection arc; design v01
-! section 5 + v02 sections 5c/5d).
+! VitStyle - the rule-selection chooser: pick what runs, watch it run on your
+! own source, and save the choice as a named profile.
 ! (c) 2019-2026 Geoffrey C. Robinson.  vitessegr AT gmail DOT com
 ! Released under the MIT License - see LICENSE.
 !
@@ -8,10 +8,10 @@
 !
 ! Shows every GROUP/CHOICE of the rule file with its resolved state, lets the
 ! user pick a shipped STYLE or a saved profile, toggle groups, and save the
-! result as a named PROFILE in VitStyle.profiles.txt NEXT TO THE EXE (decision
-! 3). A profile is one STYLE line (names only, never line numbers;
-! name members express deselection) + a LASTUSED marker so the chooser
-! reopens where the user left off.
+! result as a named PROFILE in VitStyle.profiles.txt NEXT TO THE EXE. A profile
+! is one STYLE line (names only, never line numbers; name members express
+! deselection), a SETTINGS line carrying its alignment settings, and a LASTUSED
+! marker naming the profile saved last - the one the chooser opens on.
 !
 ! THE HONESTY INVARIANT: this program decides NOTHING. The
 ! checkboxes merely edit an override list that is fed to VitRules.Resolve -
@@ -33,12 +33,12 @@
 !
   PROGRAM
 
-  INCLUDE('KEYCODES.CLW'),ONCE                                                 ! MouseLeft2 for the ALRT double-click (not in EQUATES.CLW;
-                                                                               ! template apps include it for you, a hand-coded PROGRAM must ask)
+  INCLUDE('KEYCODES.CLW'),ONCE                                                         ! MouseLeft2 for the ALRT double-click (not in EQUATES.CLW;
+                                                                                       ! template apps include it for you, a hand-coded PROGRAM must ask)
   INCLUDE('StringTheory.inc'),ONCE
   INCLUDE('VitTokenize.inc'),ONCE
   INCLUDE('VitRules.inc'),ONCE
-  INCLUDE('VitSymbols.inc'),ONCE                                               ! the live-preview engine (same classes VitTransform links)
+  INCLUDE('VitSymbols.inc'),ONCE                                                       ! the live-preview engine (same classes VitTransform links)
   INCLUDE('VitMatch.inc'),ONCE
   INCLUDE('VitRewrite.inc'),ONCE
   INCLUDE('VitTimer.inc'),ONCE
@@ -46,91 +46,89 @@
 
   MAP
     LoadEverything()
-    RefreshProfiles()                                                          ! drop+reload profile styles from profFn
-    HarvestDocs()                                                              ! comment block above each GROUP line -> docsQ
+    RefreshProfiles()                                                                  ! drop+reload profile styles from profFn
+    HarvestDocs()                                                                      ! comment block above each GROUP line -> docsQ
+    HarvestDocsFile(STRING pFn)                                                        ! one rule file's blocks - the shipped file, then the user file
     BuildStyleList()
-    BuildDisplay()                                                             ! groups queue -> DispQ + effective table + doc panel
-    ApplyOverrides()                                                           ! ovrQ -> csv lists -> rl.Resolve -> BuildDisplay -> RefreshPreview
-    ToggleCurrent()                                                            ! flip the highlighted group via the override list
-    ShowDoc()                                                                  ! doc panel for the highlighted group
+    BuildDisplay()                                                                     ! groups queue -> DispQ + effective table + doc panel
+    ApplyOverrides()                                                                   ! ovrQ -> csv lists -> rl.Resolve -> BuildDisplay -> RefreshPreview
+    ToggleCurrent()                                                                    ! flip the highlighted group via the override list
+    ShowDoc()                                                                          ! doc panel for the highlighted group
     SaveProfile()
-    WriteProfileLine(STRING pName, STRING pMembers),BYTE,PROC                  ! read-modify-write profFn; 0 = save failed (box already shown)
-    CurrentMembers(),STRING                                                    ! FULL-spelling member list of the resolved state
+    ShippedStyleNamed(STRING pName),BYTE                                               ! 1 = a shipped STYLE answers to that name, as FindStyle reads it
+    WriteProfileLine(STRING pName, STRING pMembers, <STRING pSettings>),BYTE,PROC      ! read-modify-write profFn; 0 = save failed (box already shown)
+    AlignSettings()                                                                    ! the Alignment settings dialog (layer 3)
+    CaptureAlignDefaults()                                                             ! the engine's own alignment defaults, taken once at startup
+    AlignToScratch()                                                                   ! the live engine's alignment settings onto the workbench's scratch engine
+    ApplyStyleSettings()                                                               ! those defaults, then the applied style's SETTINGS body
+    KeepStyleAlign()                                                                   ! what that style gives, kept in StyAl
+    AlignSwitches(StringTheory pOut, StringTheory pNo)                                 ! the switches for every setting in force that the style does not give
+    CurrentMembers(),STRING                                                            ! FULL-spelling member list of the resolved state
     ExeDir(),STRING
-    RefreshPreview()                                                           ! run eng.TransformText on the source buffer under the current selection
-    BuildPreviewLists(StringTheory pSrc, StringTheory pOut, StringTheory pLog) ! split + diff + change list
-    ResizeControls()                                                           ! reflow the preview + lists to the current window size
-    LoadSourceFile(<string pFn>)                                               ! open a .clw/.inc as the preview source (in-file fidelity)
-    PasteSnippet()                                                             ! paste a snippet as the preview source (ASSUME fidelity)
-    SetDemo()                                                                  ! built-in demo source
-    GotoChange()                                                               ! scroll both panes to the highlighted change
-    SyncPanes(BYTE pWhich)                                                     ! 1 = before selected -> scroll after; 2 = after selected -> scroll before
-    SortChanges()                                                              ! (re)sort the change list by rule# or line# per sortMode
-    OverrideLists(StringTheory pGrps, StringTheory pNogr)                      ! OvrQ -> csv pick/unpick lists (shared by ApplyOverrides + the workbench test)
-    Workbench()                                                                ! the modal rule workbench
-    WbBuildRuleList()                                                          ! existing user rules -> the workbench droplist
-    WbLoadPick()                                                               ! droplist pick -> editor (edit-in-place) / (new rule)
-    WbComposeUser(StringTheory pOut, *LONG pDraftLn)                           ! prospective VitStyle.rules.txt text = disk file + draft (replace or append)
-    WbLint(BYTE pShowOk),LONG,PROC                                             ! lint the prospective COMBINED set on the scratch instances; fills the panel; returns SEV:Error count
-    WbTest()                                                                   ! run the draft on the current preview source via the scratch engine
-    WbSave(),LONG                                                              ! lint gate + write userFn; 1 = saved (refresh happens post-close)
-    WbAfterSave()                                                              ! AFTER close(WbW): full reload + force group on + profile offer -
-                                                                               !     main-window controls must never be touched while the modal child is open
-    LoadUiPrefs()                                                              ! colour: read VitStyle.ui.txt (CHGCOLOR/CHGCOLOR2) or defaults
-    SaveUiPrefs()                                                              ! colour: write it (best-effort)
-    DarkenColor(LONG pC),LONG                                                  ! colour: selected-variant shade of the changed-line fill
-    UiNum(StringTheory pSt, STRING pKey),LONG                                  ! colour: digit-walk the number after pKey in the UPPERED prefs text (0 = absent)
+    RefreshPreview()                                                                   ! run eng.TransformText on the source buffer under the current selection
+    BuildPreviewLists(StringTheory pSrc, StringTheory pOut, StringTheory pLog)         ! split + diff + change list
+    ResizeControls()                                                                   ! reflow the preview + lists to the current window size
+    LoadSourceFile(<string pFn>)                                                       ! open a .clw/.inc as the preview source (in-file fidelity)
+    PasteSnippet()                                                                     ! paste a snippet as the preview source (ASSUME fidelity)
+    SetDemo()                                                                          ! built-in demo source
+    GotoChange()                                                                       ! scroll both panes to the highlighted change
+    SyncPanes(BYTE pWhich)                                                             ! 1 = before selected -> scroll after; 2 = after selected -> scroll before
+    SortChanges()                                                                      ! (re)sort the change list by rule# or line# per sortMode
+    OverrideLists(StringTheory pGrps, StringTheory pNogr)                              ! OvrQ -> csv pick/unpick lists (shared by ApplyOverrides + the workbench test)
+    Workbench()                                                                        ! the modal rule workbench
+    WbBuildRuleList()                                                                  ! existing user rules -> the workbench droplist
+    WbLoadPick()                                                                       ! droplist pick -> editor (edit-in-place) / (new rule)
+    WbComposeUser(StringTheory pOut, *LONG pDraftLn)                                   ! prospective VitStyle.rules.txt text = disk file + draft (replace or append)
+    WbLint(BYTE pShowOk),LONG,PROC                                                     ! lint the prospective COMBINED set on the scratch instances; fills the panel; returns SEV:Error count
+    WbTest()                                                                           ! run the draft on the current preview source via the scratch engine
+    WbIsCopy(),BYTE                                                                    ! 1 = the draft's group already holds this rule, word for word (read from WbLint's scratch set)
+    WbSave(),LONG                                                                      ! lint gate + write userFn; 1 = saved (refresh happens post-close)
+    WbAfterSave()                                                                      ! AFTER close(WbW): full reload + force group on + profile offer - main-window
+                                                                                       !   controls must never be touched while the modal child is open
+    LoadUiPrefs()                                                                      ! colour: read VitStyle.ui.txt (CHGCOLOR/CHGCOLOR2) or defaults
+    SaveUiPrefs()                                                                      ! colour: write it (best-effort)
+    DarkenColor(LONG pC),LONG                                                          ! colour: selected-variant shade of the changed-line fill
+    UiNum(StringTheory pSt, STRING pKey),LONG                                          ! colour: digit-walk the number after pKey in the UPPERED prefs text (0 = absent)
   END
 
 rl        VitRules
-eng       VitEngine                                                            ! owns tk/syms/rw/tmr for the in-process preview
-wbRl      VitRules                                                             ! SCRATCH rules instance - startup user-file validation + workbench lint/test;
-                                                                               !     the LIVE rl/eng are never touched by a draft
-wbEng     VitEngine                                                            ! scratch engine over wbRl for the workbench test run
+eng       VitEngine                                                                    ! owns tk/syms/rw/tmr for the in-process preview
+wbRl      VitRules                                                                     ! SCRATCH rules instance - startup user-file validation + workbench lint/test; the LIVE rl/eng are never touched by a draft
+wbEng     VitEngine                                                                    ! scratch engine over wbRl for the workbench test run
 rulesFn   StringTheory
 profFn    StringTheory
-userFn    StringTheory                                                         ! VitStyle.rules.txt next to the exe
-raw       StringTheory                                                         ! rule file raw text (doc harvesting)
+userFn    StringTheory                                                                 ! VitStyle.rules.txt next to the exe
+raw       StringTheory                                                                 ! rule file raw text (doc harvesting)
 scratch   StringTheory
 selSt     StringTheory
-srcBuf    StringTheory                                                         ! the current preview SOURCE (demo / opened file / pasted snippet)
-outBuf    StringTheory                                                         ! transformed text
-logBuf    StringTheory                                                         ! change log from TransformText
-fidelity  STRING(96),AUTO                                                      ! 80 overflowed by 3 on the longest
-                                                                               !   form - 'file: ' + 55 of the name +
-                                                                               !   '  (in-file types only)' = 83 - and it
-                                                                               !   is the DISCLAIMER at the end that was
-                                                                               !   cut, which is the half that matters.
-                                                                               ! badge - what the preview is running against
-prevChg   LONG,AUTO                                                            ! change count of the last preview run
-engReady  BYTE,AUTO                                                            ! eng.Init done
-progBef   LONG                                                                 ! the Before row we last KNOW about (baseline). A NewSelection whose row = this is our own echo / a no-op - skip.
-progAft   LONG                                                                 ! ditto for After
-syncLock  BYTE                                                                 ! re-entrancy guard held across a sync (NB SyncPanes must NOT test it - the handler holds it while calling SyncPanes)
-lastSync  LONG ! clock() (centiseconds) of the last sync - the DEBOUNCE: the echo of our select() lands within ~50ms and is skipped, breaking the ping-pong
-syncRow   LONG                                                                 ! scratch row for the sync handlers (global 'r' clashed with local r's)
-! syncOn SHIPS AS 1, i.e. pane sync is ON. If you are chasing a sync loop, read the
-! value above and not a comment: this one said "0 = OFF" for a long time while the
-! declaration said BYTE(1), which would send you looking anywhere but here. Set it to 0
-! to turn pane sync off - the tool stays perfectly usable without it. The debounce is
-! the guard repeated at every use: if ~syncOn or syncLock or (clock() >= lastSync and clock() - lastSync < 5).
+srcBuf    StringTheory                                                                 ! the current preview SOURCE (demo / opened file / pasted snippet)
+outBuf    StringTheory                                                                 ! transformed text
+logBuf    StringTheory                                                                 ! change log from TransformText
+fidelity  STRING(96),AUTO                                                              ! 80 overflowed by 3 on the longest form - 'file: ' + 55 of the name + '  (in-file types only)'
+                                                                                       !   = 83 - and it is the DISCLAIMER at the end that was cut, which is the half that matters.
+                                                                                       ! badge - what the preview is running against
+engReady  BYTE,AUTO                                                                    ! eng.Init done
+progBef   LONG                                                                         ! the Before row we last KNOW about (baseline). A NewSelection whose row = this is our own echo / a no-op - skip.
+progAft   LONG                                                                         ! ditto for After
+syncLock  BYTE                                                                         ! re-entrancy guard held across a sync (NB SyncPanes must NOT test it - the handler holds it while calling SyncPanes)
+lastSync  LONG                                                                         ! clock() (centiseconds) of the last sync - the DEBOUNCE: the echo of our
+                                                                                       !   select() lands within ~50ms and is skipped, breaking the ping-pong
+syncRow   LONG                                                                         ! scratch row for the sync handlers (global 'r' clashed with local r's)
+! syncOn SHIPS AS 1, i.e. pane sync is ON. Set it to 0 to turn pane sync off - the tool
+! stays perfectly usable without it. The debounce is the guard repeated at every use: if ~syncOn or syncLock or (clock() >= lastSync and clock() - lastSync < 5).
 ! the `clock() >= lastSync` half is the MIDNIGHT guard. CLOCK() is centiseconds since
 ! midnight, so at the rollover it restarts at 0 and `clock() - lastSync` goes hugely NEGATIVE -
 ! which is < 5, so the debounce swallowed every sync for the rest of the session. Comparing
 ! first means a rolled-over clock reads as "the window has passed", and the next sync resets
 ! lastSync to the new day's value, so it recovers on the first click rather than never.
-syncOn    BYTE(1)                                                              ! pane->pane click sync master switch. 1 = ON, and that is what ships - see the note above.
-shortCap  BYTE                                                                 ! 1 = the change-list button row is in its
-                                                                               !   NARROW form. Set by ResizeControls and
-                                                                               !   read by SortChanges, which also writes
-                                                                               !   ?SortBtn's caption - without this the two
-                                                                               !   fight and the long text reappears on a
-                                                                               !   narrow window at the next sort.
-sortMode  BYTE                                                                 ! 0 = changes sorted by rule#, 1 = by line#
+syncOn    BYTE(1)                                                                      ! pane->pane click sync master switch. 1 = ON, and that is what ships - see the note above.
+shortCap  BYTE                                                                         ! 1 = the change-list button row is in its NARROW form. Set by ResizeControls and read by SortChanges, which also writes
+                                                                                       !   ?SortBtn's caption - without this the two fight and the long text reappears on a narrow window at the next sort.
+sortMode  BYTE                                                                         ! 0 = changes sorted by rule#, 1 = by line#
 
 DocsQ     QUEUE,PRE(dq)
 name        STRING(vr:maxName)
-txt         STRING(2000)
+txt         STRING(8000)
           END
 
 DispQ     QUEUE,PRE(pq)
@@ -141,102 +139,167 @@ info        STRING(20)
 grpRow      LONG
           END
 
-OvrQ      QUEUE,PRE(oq)                   ! per-group override, one row per touched group,
-grpRow      LONG               ! row order = click order (latest wins in its list)
-mode        BYTE               ! 1 = force-on, 2 = force-off
+OvrQ      QUEUE,PRE(oq)                                                                ! per-group override, one row per touched group,
+grpRow      LONG                                                                       ! row order = click order (latest wins in its list)
+mode        BYTE                                                                       ! 1 = force-on, 2 = force-off
           END
 
-StyQ      QUEUE,PRE(sq)        ! style droplist backing store
+StyQ      QUEUE,PRE(sq)                                                                ! style droplist backing store
 shown       STRING(70)
-nm          STRING(vr:maxName) ! '' = file defaults
+nm          STRING(vr:maxName)                                                         ! '' = file defaults
           END
 
-PvBefQ    QUEUE,PRE(bq)        ! before pane, one row per source line (2 cols = ln + txt)
+PvBefQ    QUEUE,PRE(bq)                                                                ! before pane, one row per source line (2 cols = ln + txt)
 ln          LONG
-txt         STRING(255)        ! '> ' prefix marks changed lines.
-txtFg       LONG               ! colour: the * column tuple - text, fill, SELECTED text, SELECTED fill.
-txtBg       LONG               !   ALL FOUR longs must sit right after txt - the colour failure fits
-txtSFg      LONG               !   a 2-long fg/bg tuple exactly (the LIST read the sync field as the
-txtSBg      LONG               !   selected pair). COLOR:None (-1) = no override, theme default.
-aln         LONG               ! S4 sync: the aligned AFTER line (trailing data field, not displayed - like DispQ.grpRow)
+txt         STRING(255)                                                                ! '> ' prefix marks changed lines.
+txtFg       LONG                                                                       ! colour: the * column tuple - text, fill, SELECTED text, SELECTED fill.
+txtBg       LONG                                                                       !   ALL FOUR longs must sit right after txt - the colour failure fits
+txtSFg      LONG                                                                       !   a 2-long fg/bg tuple exactly (the LIST read the sync field as the
+txtSBg      LONG                                                                       !   selected pair). COLOR:None (-1) = no override, theme default.
+aln         LONG                                                                       ! pane sync: the aligned AFTER line (trailing data field, not displayed - like DispQ.grpRow)
           END
 
-PvAftQ    QUEUE,PRE(aq)        ! after pane, one row per transformed line
+PvAftQ    QUEUE,PRE(aq)                                                                ! after pane, one row per transformed line
 ln          LONG
 txt         STRING(255)
-txtFg       LONG               ! colour tuple - see PvBefQ
+txtFg       LONG                                                                       ! colour tuple - see PvBefQ
 txtBg       LONG
 txtSFg      LONG
 txtSBg      LONG
-bln         LONG               ! S4 sync: the aligned BEFORE line
+bln         LONG                                                                       ! pane sync: the aligned BEFORE line
           END
 
-ChgQ      QUEUE,PRE(cq)        ! change list (from the rule log) - cols: Line, Rule, Change
-ln          LONG               ! source line
-rule        LONG               ! rule id (SORT key for by-rule# vs by-line#)
-desc        STRING(255)        ! the change text (before ==> after)
+ChgQ      QUEUE,PRE(cq)                                                                ! change list (from the rule log) - cols: Line, Rule, Change
+ln          LONG                                                                       ! source line
+rule        LONG                                                                       ! rule id (SORT key for by-rule# vs by-line#)
+desc        STRING(255)                                                                ! the change text (before ==> after)
           END
 
-curStyle   STRING(vr:maxName)  ! '' = file defaults
+EffQ      QUEUE,PRE(eq)                                                                ! the Effective selection panel, one row per line of the engine's selection table
+txt         STRING(255)
+          END
+
+curStyle   STRING(vr:maxName)                                                          ! '' = file defaults
 styPickTxt STRING(70)
 rulesLbl   STRING(120),AUTO
-docTxt     STRING(2000),AUTO
-effTxt     STRING(2500),AUTO
+docTxt     STRING(8000),AUTO
 profNm     STRING(vr:maxName)
+setGapV    LONG                                                                        ! Alignment-settings dialog binds (mirror eng.cmt* while open)
+setLimitV  LONG
+setSlackV  LONG
+setOutV    LONG
+setDeclV   LONG
+setWrapV   LONG
+setSplitV  LONG
+setReachV  LONG
+setRunV    LONG
+setWidthV  LONG
+setWidthP  LONG                                                                        ! the width the dialog PREFILLED: an untouched spin must leave widthArg as it was
+setNeverV  LONG                                                                        ! 1 = Never split ticked (widthArg -1)
+setNeverP  LONG                                                                        !   and as the dialog prefilled it
+setFloorV  LONG                                                                        ! 1 near / 2 commented / 3 all (OPTION index)
+setOpV     LONG                                                                        ! 1 code / 2 bar
+setEndV    LONG                                                                        ! 1 take / 2 count
+setContV   LONG                                                                        ! 1 indent / 2 none
+setBarV    LONG                                                                        ! 1 bar / 2 comment
+setKeepV   LONG                                                                        ! 1 aligned / 2 off
 x          LONG
 nameOk     LONG
 
+EngDf     GROUP,PRE(df)                                                                ! the engine's SHIPPED alignment defaults, copied out of the object at startup so that picking a style can put them back
+cmtGap        LONG
+alignLimit    LONG
+alignSlack    LONG
+alignOutlier  LONG
+declOutlier   LONG
+cmtWrap       LONG
+cmtSplit      LONG
+cmtReach      LONG
+cmtInner      LONG
+cmtRun        LONG
+widthArg      LONG
+cmtFloor      BYTE
+cmtKeep       BYTE
+ignoreMarks   BYTE
+contBracket   BYTE
+cmtOpBar      BYTE
+cmtEndCount   BYTE
+cmtContNone   BYTE
+cmtBarCmt     BYTE
+          END
+setStyle   STRING(vr:maxName)                                                          ! the style those settings were last loaded for - a style CHANGE reloads them, a group toggle does not
+StyAl     GROUP,PRE(sa)                                                                ! what the style in force gives, taken by KeepStyleAlign - the Align settings that differ go on the batch line
+cmtGap        LONG
+alignLimit    LONG
+alignSlack    LONG
+alignOutlier  LONG
+declOutlier   LONG
+cmtWrap       LONG
+cmtSplit      LONG
+cmtReach      LONG
+cmtInner      LONG
+cmtRun        LONG
+widthArg      LONG
+cmtFloor      BYTE
+cmtKeep       BYTE
+ignoreMarks   BYTE
+contBracket   BYTE
+cmtOpBar      BYTE
+cmtEndCount   BYTE
+cmtContNone   BYTE
+cmtBarCmt     BYTE
+          END
+
 ! ---- changed-line colour ----
-chgColor   LONG                ! fill colour A for changed lines (user-choosable via COLORDIALOG;
-                               !   persisted as CHGCOLOR in VitStyle.ui.txt; default pale yellow)
-chgColor2  LONG                ! fill colour B: contiguous changed BLOCKS
-                               !   alternate A/B on the Before side and each changed After row
-                               !   INHERITS its source block's colour through the line map, so
-                               !   corresponding lhs/rhs regions share a colour at a glance.
-                               !   Persisted as CHGCOLOR2; default pale green.
-uiFn       StringTheory        ! VitStyle.ui.txt next to the exe (UI prefs - NOT the profile file,
-                               !   whose engine-side parser warns on unknown lines)
+chgColor   LONG                                                                        ! fill colour A for changed lines (user-choosable via COLORDIALOG; persisted as CHGCOLOR in VitStyle.ui.txt; default pale yellow)
+chgColor2  LONG                                                                        ! fill colour B: contiguous changed BLOCKS alternate A/B on the Before side and each changed After row INHERITS its source block's colour
+                                                                                       !   through the line map, so corresponding lhs/rhs regions share a colour at a glance. Persisted as CHGCOLOR2; default pale green.
+uiFn       StringTheory                                                                ! VitStyle.ui.txt next to the exe (UI prefs - NOT the profile file, whose engine-side parser warns on unknown lines)
 
 ! ---- workbench state ----
-userLoaded BYTE                ! VitStyle.rules.txt present + validated + appended to the live set
-wbPickTxt  STRING(70)          ! workbench droplist display
-draftVar   CSTRING(4096)       ! the draft rule text (TEXT control; one logical rule, | continuations ok)
-wbGrp      STRING(vr:maxName)  ! target GROUP (default my-rules)
-wbLintTxt  STRING(2500),AUTO   ! lint panel
-wbEditId   LONG                ! ruleId being edited in place (0 = new rule)
-wbDraftId  LONG                ! the draft's ruleId in the prospective file (userBase + line) - the fires filter
-wbOut      StringTheory        ! scratch-engine output buffer
-wbLog      StringTheory        ! scratch-engine change log
+userLoaded BYTE                                                                        ! VitStyle.rules.txt present + validated + appended to the live set
+profSaid   BYTE                                                                        ! the PROFILES SKIPPED box has been shown - once a session is enough
+profLoaded BYTE                                                                        ! VitStyle.profiles.txt is in the live set - the workbench's scratch set loads it only then
+wbPickTxt  STRING(70)                                                                  ! workbench droplist display
+draftVar   CSTRING(4096)                                                               ! the draft rule text (TEXT control; one logical rule, | continuations ok)
+wbGrp      STRING(vr:maxName)                                                          ! target GROUP (default my-rules)
+wbLintTxt  STRING(2500),AUTO                                                           ! lint panel
+wbEditId   LONG                                                                        ! ruleId being edited in place (0 = new rule)
+wbEditSrc  StringTheory                                                                !   and that rule's text as it was loaded - the disk line the save replaces has to still read as it
+wbEditGrp  STRING(vr:maxName)                                                          !   and the group it was in - a Group changed before Save MOVES the rule into the new one
+wbDraftId  LONG                                                                        ! the draft's ruleId in the prospective file (userBase + line) - the fires filter
+wbOut      StringTheory                                                                ! scratch-engine output buffer
+wbLog      StringTheory                                                                ! scratch-engine change log
 
-WbrQ      QUEUE,PRE(wr)        ! workbench droplist backing store
+WbrQ      QUEUE,PRE(wr)                                                                ! workbench droplist backing store
 shown       STRING(70)
-id          LONG               ! ruleId (vr:userBase-offset); 0 = (new rule)
+id          LONG                                                                       ! ruleId (vr:userBase-offset); 0 = (new rule)
 grpNm       STRING(vr:maxName)
           END
 
-WbBefQ    QUEUE,PRE(wb)        ! mini before pane
+WbBefQ    QUEUE,PRE(wb)                                                                ! mini before pane
 ln          LONG
 txt         STRING(255)
-txtFg       LONG               ! colour tuple - see PvBefQ
+txtFg       LONG                                                                       ! colour tuple - see PvBefQ
 txtBg       LONG
 txtSFg      LONG
 txtSBg      LONG
           END
 
-WbAftQ    QUEUE,PRE(wa)        ! mini after pane
+WbAftQ    QUEUE,PRE(wa)                                                                ! mini after pane
 ln          LONG
 txt         STRING(255)
-txtFg       LONG               ! colour tuple - see PvBefQ
+txtFg       LONG                                                                       ! colour tuple - see PvBefQ
 txtBg       LONG
 txtSFg      LONG
 txtSBg      LONG
-bln         LONG               ! source line (from the scratch engine line map; 0 = unmapped)
+bln         LONG                                                                       ! source line (from the scratch engine line map; 0 = unmapped)
           END
 
-WbChgQ    QUEUE,PRE(wc)        ! the DRAFT's fires only (wbDraftId range test)
-ln          LONG               ! source line
+WbChgQ    QUEUE,PRE(wc)                                                                ! the DRAFT's fires only (wbDraftId range test)
+ln          LONG                                                                       ! source line
 desc        STRING(255)
-aln         LONG               ! first after-pane row of that source line (click-to-jump)
+aln         LONG                                                                       ! first after-pane row of that source line (click-to-jump)
           END
 
 ! debugIt - the workbench debug switch. 0 (the shipped value) and NOTHING is written to
@@ -247,38 +310,42 @@ aln         LONG               ! first after-pane row of that source line (click
 ! single preview refresh, which is the sort of thing that is nobody's bug until it is.
 debugIt long
 
-! first WINDOW of the project: FORMAT picture widths, ALRT and the resize reflow are the risk spots
+! the main window. FORMAT picture widths, ALRT keys and the resize reflow are where the layout is decided.
 !    Left column = selection controls (fixed width); right column = live preview (grows on resize).
 !    RESIZE + MAX + opens maximized (0{PROP:Maximize} after open); ResizeControls reflows the LISTs.
 W WINDOW('VitStyle - rule selection & live preview'),AT(,,640,384),CENTER,GRAY,SYSTEM, |
-      MAX,Iconize,FONT('Segoe UI',9),RESIZE,IMM ! IMM IS WHAT MAKES A RESIZE ARRIVE.
+      MAX,Iconize,FONT('Segoe UI',9),RESIZE,IMM                                        ! IMM IS WHAT MAKES A RESIZE ARRIVE.
     PROMPT('Rules:'),AT(6,6),USE(?PROMPT1)
     STRING(@s120),AT(34,6,220,10),USE(rulesLbl)
     PROMPT('Style:'),AT(6,20),USE(?PROMPT2)
     LIST,AT(34,18,140,12),USE(styPickTxt),DROP(15),FROM(StyQ),FORMAT('156L(2)@s70@')
     BUTTON('&Apply'),AT(178,17,48,14),USE(?ApplyBtn)
-    LIST,AT(6,36,250,150),USE(?GrpList),VSCROLL,FROM(DispQ),FORMAT('24L(2)~St~@s' & |
+    LIST,AT(6,36,250,150),USE(?GrpList),VSCROLL,FROM(DispQ),FORMAT('24L(2)~St~@s' &    |
         '6@88L(2)~Group~@s50@66L(2)~Choice~@s50@42L(2)~Rules~@s20@'),ALRT(MouseLeft2)
-    BUTTON('&Toggle'),AT(6,190,42,14),USE(?ToggleBtn)
-    BUTTON('&Save profile...'),AT(52,190,64,14),USE(?SaveBtn)
-    BUTTON('&Workbench...'),AT(120,190,64,14),USE(?WbBtn)
-    BUTTON('&Close'),AT(210,190,46,14),USE(?CloseBtn)
+    BUTTON('&Toggle'),AT(6,190,40,14),USE(?ToggleBtn)
+    BUTTON('Ali&gn...'),AT(48,190,44,14),USE(?SettingsBtn)
+    BUTTON('&Save...'),AT(94,190,50,14),USE(?SaveBtn)
+    BUTTON('&Bench...'),AT(146,190,52,14),USE(?WbBtn)
+    BUTTON('&Close'),AT(200,190,56,14),USE(?CloseBtn)
     PROMPT('About the highlighted group:'),AT(6,210),USE(?PROMPT3)
     TEXT,AT(6,220,250,66),USE(docTxt),VSCROLL,READONLY
     PROMPT('Effective selection (the engine''s own table):'),AT(6,290),USE(?PROMPT4)
-    TEXT,AT(6,300,250,78),USE(effTxt),VSCROLL,READONLY
+    LIST,AT(6,300,250,78),USE(?EffList),VSCROLL,HSCROLL,FROM(EffQ),FORMAT('1020L(2)@s255@')
     ! ---- right column: live preview ----
     BUTTON('&Open file...'),AT(262,4,56,14),USE(?OpenBtn)
     BUTTON('&Demo'),AT(320,4,40,14),USE(?DemoBtn)
     BUTTON('&Paste...'),AT(362,4,44,14),USE(?PasteBtn)
-    STRING(@s96),AT(410,7,,10),FULL,USE(fidelity) ! @s96 = the buffer: @s80 clipped the 83-char longest form (#30)
+    STRING(@s96),AT(410,7,,10),FULL,USE(fidelity)                                      ! @s96 = the buffer: @s80 would clip the 83-character longest form
     PROMPT('Before'),AT(262,22),USE(?PROMPT5)
     PROMPT('After (live)'),AT(450,22),USE(?AfterHdr)
     ! changed lines: '> ' prefix + cell colour (the * modifier + 4-LONG tuple per column)
-    LIST,AT(262,32,184,252),USE(?BeforeList),VSCROLL,FROM(PvBefQ),FORMAT('36R(2)' & |
-        '~Line~@n5@600L(2)*~Source~@s255@')
-    LIST,AT(450,32,184,252),USE(?AfterList),VSCROLL,FROM(PvAftQ),FORMAT('36R(2)~' & |
-        'Line~@n5@600L(2)*~Transformed~@s255@')
+    ! A FIXED-WIDTH FONT, so code that lines up in the file lines up on screen. The text column scrolls on its own
+    !   (S) far enough to show all 255 characters - 4 units a character in Consolas 9 - where a line cut to fit
+    !   ends in '...'; ResizeControls fits the column to its pane so that scroll bar stays in view.
+    LIST,AT(262,32,184,252),USE(?BeforeList),VSCROLL,FROM(PvBefQ),FONT('Consolas',9),FORMAT('36R(2)' & |
+        '~Line~@n5@136L(2)*~Source~S(1040)@s255@')
+    LIST,AT(450,32,184,252),USE(?AfterList),VSCROLL,FROM(PvAftQ),FONT('Consolas',9),FORMAT('36R(2)~' & |
+        'Line~@n5@136L(2)*~Transformed~S(1040)@s255@')
     PROMPT('Changes (click a row to jump both panes):'),AT(262,290),USE(?ChangesHdr)
     ! Widths here and the Xpos offsets in ResizeControls MUST be kept in step: the resize
     ! sets Xpos only, never Width, so a button widened here and not re-offset there overlaps
@@ -288,7 +355,7 @@ W WINDOW('VitStyle - rule selection & live preview'),AT(,,640,384),CENTER,GRAY,S
     BUTTON('Sort: rule#'),AT(472,288,66,12),USE(?SortBtn)
     BUTTON('&<< Prev'),AT(542,288,44,12),USE(?PrevChg)
     BUTTON('&Next >'),AT(590,288,44,12),USE(?NextChg)
-    LIST,AT(262,300,372,78),USE(?ChangeList),VSCROLL,FROM(ChgQ),FORMAT('40R(2)~L' & |
+    LIST,AT(262,300,372,78),USE(?ChangeList),VSCROLL,FROM(ChgQ),FORMAT('40R(2)~L' &    |
         'ine~@n5@50R(2)~Rule~@n6@340L(2)~Change~@s255@'),ALRT(MouseLeft2)
   END
 
@@ -299,13 +366,79 @@ NameW WINDOW('Save profile'),AT(,,210,52),CENTER,MODAL,SYSTEM,GRAY,FONT('Segoe U
     BUTTON('&Cancel'),AT(154,32,45,14),USE(?CancelBtn)
   END
 
-! the rule workbench - second modal window with lists (a
-!    flagged risk area). FIXED size (no RESIZE = no reflow risk). One rule per visit
-!    (ratified). NameW/PasteW modal pattern: local accept loop, break on Save/Cancel.
+
+! the Alignment settings dialog (layer 3) - a modal panel that edits the engine's alignment
+! fields and refreshes the live preview; Save profile writes them as a SETTINGS line. Numbers
+! are spins; the six choices are rows of radio buttons. width is a code-split width
+! (40-400 here), and the Never split box beside it is --width=0.
+SetW WINDOW('Alignment settings'),AT(,,250,322),CENTER,MODAL,SYSTEM,GRAY,FONT('Segoe UI',9)
+    PROMPT('These set comment and declaration alignment for the preview. Save profile keeps them with the style.'),AT(8,6,234,18),USE(?stHdr)
+    PROMPT('Comment gap:'),AT(8,30),USE(?stL1)
+    SPIN(@n3),AT(150,28,52,11),USE(setGapV),RANGE(1,40)
+    PROMPT('Comment limit:'),AT(8,44),USE(?stL2)
+    SPIN(@n3),AT(150,42,52,11),USE(setLimitV),RANGE(0,400)
+    PROMPT('Comment slack:'),AT(8,58),USE(?stL3)
+    SPIN(@n3),AT(150,56,52,11),USE(setSlackV),RANGE(0,400)
+    PROMPT('Comment outlier:'),AT(8,72),USE(?stL4)
+    SPIN(@n3),AT(150,70,52,11),USE(setOutV),RANGE(0,400)
+    PROMPT('Declaration outlier:'),AT(8,86),USE(?stL5)
+    SPIN(@n3),AT(150,84,52,11),USE(setDeclV),RANGE(0,400)
+    PROMPT('Comment wrap:'),AT(8,100),USE(?stL6)
+    SPIN(@n4),AT(150,98,52,11),USE(setWrapV),RANGE(0,400)
+    PROMPT('Comment split:'),AT(8,114),USE(?stL7)
+    SPIN(@n4),AT(150,112,52,11),USE(setSplitV),RANGE(0,400)
+    PROMPT('Comment reach:'),AT(8,128),USE(?stL8)
+    SPIN(@n3),AT(150,126,52,11),USE(setReachV),RANGE(0,400)
+    PROMPT('Comment run:'),AT(8,142),USE(?stL9)
+    SPIN(@n3),AT(150,140,52,11),USE(setRunV),RANGE(0,400)
+    ! the check box starts at 70, where the choice rows' frames start, and ends clear of the spin
+    PROMPT('Code width:'),AT(8,156),USE(?stL10)
+    CHECK('Never split'),AT(70,155,74,10),USE(setNeverV)
+    SPIN(@n4),AT(150,154,52,11),USE(setWidthV),RANGE(40,400)
+    ! THE SIX CHOICE ROWS: one frame each, all the same size. A BOXED OPTION draws its top line about half a text
+    !   height below its top edge, so the radios sit 5 units down in an 18-unit frame, clear of the line.
+    PROMPT('Floor:'),AT(8,174),USE(?stL11)
+    OPTION,AT(70,168,172,18),USE(setFloorV),BOXED
+      RADIO('near'),AT(76,173,44,10),USE(?stFl1)
+      RADIO('commented'),AT(130,173,62,10),USE(?stFl2)
+      RADIO('all'),AT(196,173,30,10),USE(?stFl3)
+    END
+    PROMPT('Operator:'),AT(8,196),USE(?stL12)
+    OPTION,AT(70,190,172,18),USE(setOpV),BOXED
+      RADIO('code'),AT(76,195,44,10),USE(?stOp1)
+      RADIO('bar'),AT(130,195,40,10),USE(?stOp2)
+    END
+    PROMPT('End row:'),AT(8,218),USE(?stL13)
+    OPTION,AT(70,212,172,18),USE(setEndV),BOXED
+      RADIO('take'),AT(76,217,44,10),USE(?stEn1)
+      RADIO('count'),AT(130,217,50,10),USE(?stEn2)
+    END
+    PROMPT('Continuation:'),AT(8,240),USE(?stL14)
+    OPTION,AT(70,234,172,18),USE(setContV),BOXED
+      RADIO('indent'),AT(76,239,50,10),USE(?stCo1)
+      RADIO('none'),AT(130,239,44,10),USE(?stCo2)
+    END
+    PROMPT('Bar + comment:'),AT(8,262),USE(?stL15)
+    OPTION,AT(70,256,172,18),USE(setBarV),BOXED
+      RADIO('bar'),AT(76,261,36,10),USE(?stBa1)
+      RADIO('comment'),AT(130,261,64,10),USE(?stBa2)
+    END
+    PROMPT('Keep lined up:'),AT(8,284),USE(?stL16)
+    OPTION,AT(70,278,172,18),USE(setKeepV),BOXED
+      RADIO('aligned'),AT(76,283,56,10),USE(?stKe1)
+      RADIO('off'),AT(130,283,36,10),USE(?stKe2)
+    END
+    BUTTON('&OK'),AT(140,302,50,14),USE(?SetOk),DEFAULT
+    BUTTON('&Cancel'),AT(194,302,50,14),USE(?SetCancel)
+  END
+
+! the rule workbench - a second modal window with lists. FIXED size (no RESIZE, so
+!    no reflow). One rule per visit. NameW/PasteW modal pattern: local accept loop,
+!    break on Save/Cancel.
 WbW WINDOW('Rule workbench - user rules in VitStyle.rules.txt'),AT(,,480,326),CENTER,MODAL,SYSTEM,GRAY, |
       FONT('Segoe UI',9)
     PROMPT('Rule:'),AT(6,6),USE(?WbP1)
-    LIST,AT(30,4,300,12),USE(wbPickTxt),DROP(15),FROM(WbrQ),FORMAT('300L(2)@s70@') ! pick-to-edit wired on EVENT:NewSelection of a DROP - if it never fires, add an Edit button
+    LIST,AT(30,4,300,12),USE(wbPickTxt),DROP(15),FROM(WbrQ),FORMAT('300L(2)@s70@')     ! pick-to-edit: EVENT:NewSelection of the DROP loads the rule (WbLoadPick)
     PROMPT('Group:'),AT(340,6),USE(?WbP2)
     ENTRY(@s50),AT(366,4,108,12),USE(wbGrp)
     PROMPT('Rule text - pattern ==> replacement, then optional WHERE / NOTE(...) / SKIP / ONCE:'),AT(6,20),USE(?WbP3)
@@ -317,47 +450,50 @@ WbW WINDOW('Rule workbench - user rules in VitStyle.rules.txt'),AT(,,480,326),CE
     PROMPT('Lint (combined shipped + user + draft; zero errors required to save):'),AT(6,96),USE(?WbP4)
     TEXT,AT(6,106,468,40),USE(wbLintTxt),VSCROLL,READONLY
     PROMPT('Draft fires on the current preview source:'),AT(6,150),USE(?WbChgHdr)
-    LIST,AT(6,160,468,48),USE(?WbChgList),VSCROLL,FROM(WbChgQ),FORMAT('40R(2)~Lin' & |
-        'e~@n5@420L(2)~Change~@s255@'),ALRT(MouseLeft2)
+    LIST,AT(6,160,468,48),USE(?WbChgList),VSCROLL,FROM(WbChgQ),FORMAT('40R(2)~Lin' &   |
+        'e~@n5@420L(2)~Change~@s255@')
     PROMPT('Before'),AT(6,212),USE(?WbP5)
     PROMPT('After (draft applied on top of the current selection)'),AT(242,212),USE(?WbP6)
-    LIST,AT(6,222,232,98),USE(?WbBefList),VSCROLL,FROM(WbBefQ),FORMAT('36R(2)~Lin' & |
-        'e~@n5@600L(2)*~Source~@s255@')
-    LIST,AT(242,222,232,98),USE(?WbAftList),VSCROLL,FROM(WbAftQ),FORMAT('36R(2)~L' & |
-        'ine~@n5@600L(2)*~Transformed~@s255@')
+    ! the same font and scrolling text column as the main window's panes; 184 = 232 less 36 for Line and 12 for the scroll bar
+    LIST,AT(6,222,232,98),USE(?WbBefList),VSCROLL,FROM(WbBefQ),FONT('Consolas',9),FORMAT('36R(2)~Lin' & |
+        'e~@n5@184L(2)*~Source~S(1040)@s255@')
+    LIST,AT(242,222,232,98),USE(?WbAftList),VSCROLL,FROM(WbAftQ),FONT('Consolas',9),FORMAT('36R(2)~L' & |
+        'ine~@n5@184L(2)*~Transformed~S(1040)@s255@')
   END
 
-dbg StringTheory ! for trace
+dbg StringTheory                                                                       ! for trace
 
   CODE
   rulesFn.setValue(command('1'))
   rulesFn.trim()
   if ~rulesFn._DataEnd
-    ! was a SILENT fallback to 'draft-rules-v12.txt'. It stayed at v12 while the rule file
-    ! moved to v15, so a no-argument VitStyle previewed a two-version-old rule set without saying so -
-    ! and the preview then honestly disagreed with a v15 batch run. Name the file, every time.
+    ! the default rule file, and it is named on screen: a preview has to say which rule
+    ! set it ran, or it cannot be compared with a batch run.
     rulesFn.setValue('vitrules.txt')
     if ~exists(rulesFn.getValue())
       Message('VitStyle: no rule file given, and the default ' & clip(rulesFn.getValue()) & |
               ' is not in this directory.||Run:  VitStyle <<rulefile>', 'VitStyle', ICON:Exclamation)
-      halt(1) ! fatal path: a bare halt() exits 0 and scripts read SUCCESS (#14)
+      halt(1)                                                                  ! fatal path: a bare halt() exits 0 and scripts read SUCCESS
     end
-    Message('No rule file given - using ' & clip(rulesFn.getValue()) & '.'                & |
+    Message('No rule file given - using ' & clip(rulesFn.getValue()) & '.' &   |
             '||Run  VitStyle <<rulefile>  to choose a different one.', 'VitStyle', ICON:Asterisk)
   end
   profFn.setValue(ExeDir())
   profFn.append('VitStyle.profiles.txt')
-  userFn.setValue(ExeDir())                                    ! the user rulefile lives next to the exe,
-  userFn.append('VitStyle.rules.txt')                          !        like the profile file
-  uiFn.setValue(ExeDir())                                      ! UI prefs (changed-line colour)
+  userFn.setValue(ExeDir())                                                    ! the user rulefile lives next to the exe,
+  userFn.append('VitStyle.rules.txt')                                          !        like the profile file
+  uiFn.setValue(ExeDir())                                                      ! UI prefs (changed-line colour)
   uiFn.append('VitStyle.ui.txt')
   LoadUiPrefs()
 
   LoadEverything()
-  eng.Init(rl)                                                 ! preview engine shares the loaded rules + resolver
-  eng.progressFn = ''                                          ! no heartbeat file for the interactive preview
+  eng.Init(rl)                                                                 ! preview engine shares the loaded rules + resolver
+  eng.progressFn = ''                                                          ! no heartbeat file for the interactive preview
   engReady = 1
-  SetDemo()                                                    ! start with the built-in demo source
+  CaptureAlignDefaults()                                                       ! the engine is untouched here, so these ARE the shipped values
+  setStyle = rl.appliedStyle                                                   ! and the opening style's own alignment settings, so the
+  ApplyStyleSettings()                                                         !   first preview is already what a batch run would write
+  SetDemo()                                                                    ! start with the built-in demo source
 
   open(W)
   0{PROP:Text} = 'VitStyle ' & vr:version & ' - rule selection & live preview'
@@ -365,59 +501,56 @@ dbg StringTheory ! for trace
                                                                !   equate every report prints, so the two
                                                                !   cannot drift. Set here rather than in
                                                                !   the WINDOW literal for exactly that.
-  0{PROP:MinWidth}  = 440                                      ! A FLOOR THE RESIZE CANNOT BE ASKED TO COPE WITH.
-  0{PROP:MinHeight} = 260                                      !   The button row above the change list narrows as the
-                                                               !   window does, but only to 85% - past that the captions
-                                                               !   clip, which is what it was reported for. 580 is where
-                                                               !   85% still fits beside the 'Changes (click a row...)'
-                                                               !   prompt; 300 keeps the preview panes above their own
-                                                               !   40-unit floor with the change list and the row below.
-                                                               !   Set BEFORE the maximise so the first reflow already
-                                                               !   has them.
-  0{PROP:Maximize} = 1                                         ! open MAXIMIZED (PROP:Maximize on the window) - L request
-  ResizeControls()                                             ! reflow the preview lists to the maximized client size
-  post(EVENT:Sized)                                            ! one reflow from INSIDE the loop, so the
-                                                               !   opening layout is settled whatever order
-                                                               !   the maximise and the first paint happen
-                                                               !   in. Cheap, and it makes startup
-                                                               !   deterministic rather than order-dependent.
-  syncLock = 0 ; lastSync = 0 ; progBef = 1 ; progAft = 1      ! S4 sync baselines
+  0{PROP:MinWidth}  = 440                                                      ! A FLOOR THE RESIZE CANNOT BE ASKED TO COPE WITH.
+  0{PROP:MinHeight} = 260                                                      !   440 is what the SHORT button row needs. ResizeControls
+                                                                               !   works to rW = winW - 268, so 440 leaves 172 for a row
+                                                                               !   of 120 plus 12 of gaps, and it drops to the short
+                                                                               !   captions below rW 274 rather than clipping them.
+                                                                               !   260 keeps the preview panes above their own 40-unit
+                                                                               !   floor with the change list and the row below it.
+                                                                               !   Set BEFORE the maximise so the first reflow has them.
+  0{PROP:Maximize} = 1                                                         ! open MAXIMIZED (PROP:Maximize on the window) - the preview panes are what the window is for
+  ResizeControls()                                                             ! reflow the preview lists to the maximized client size
+  post(EVENT:Sized)                                                            ! one reflow from INSIDE the loop, so the opening layout is settled whatever order the maximise and the
+                                                                               !   first paint happen in. Cheap, and it makes startup deterministic rather than order-dependent.
+  syncLock = 0 ; lastSync = 0 ; progBef = 1 ; progAft = 1                      ! pane sync baselines
   BuildStyleList()
-  BuildDisplay()                                               ! ends in RefreshPreview via ApplyOverrides? no - call preview explicitly:
+  BuildDisplay()                                                               ! BuildDisplay does not refresh the preview itself, so:
   RefreshPreview()
   accept
     case accepted()
     of ?ApplyBtn
-      x = choice(?styPickTxt)                                  ! DROP selection read - if 0 here, wire EVENT:NewSelection on the list instead
+      x = choice(?styPickTxt)                                                  ! the DROP's current selection, 1-based; 0 = none
       if x
         get(StyQ, x)
         if ~errorcode()
           curStyle = sq:nm
-          free(OvrQ)                                           ! picking a style resets individual overrides (design 5)
+          free(OvrQ)                                                           ! picking a style resets individual overrides - a style IS the selection
+          setStyle = ''                                                        !   and its Align settings, even when it is the style already in force
           ApplyOverrides()
         end
       end
     of ?ToggleBtn
       ToggleCurrent()
-    of ?ChgColorBtn                                            ! pick fills A then B; persists in VitStyle.ui.txt
+    of ?ChgColorBtn                                                            ! pick fills A then B; persists in VitStyle.ui.txt
       if COLORDIALOG('Changed-line colour A', chgColor)
         if COLORDIALOG('Changed-line colour B (alternating blocks)', chgColor2) then.
         SaveUiPrefs()
-        RefreshPreview()                                       ! re-mark with the new colours
+        RefreshPreview()                                                       ! re-mark with the new colours
       end
     of ?SortBtn
-      sortMode = 1 - sortMode                                  ! toggle rule# <-> line#
+      sortMode = 1 - sortMode                                                  ! toggle rule# <-> line#
       SortChanges()
     of ?PrevChg
       if ~records(ChgQ) then cycle.
-      x = choice(?ChangeList)                                  ! 0 if the change list was never clicked
+      x = choice(?ChangeList)                                                  ! 0 if the change list was never clicked
       if x > 1 then x -= 1 else x = 1.
       select(?ChangeList, x)
       GotoChange()
     of ?NextChg
       if ~records(ChgQ) then cycle.
       x = choice(?ChangeList)
-      if x < records(ChgQ) then x += 1 else x = records(ChgQ). ! x=0 -> 1 (first)
+      if x < records(ChgQ) then x += 1 else x = records(ChgQ).                 ! x=0 -> 1 (first)
       select(?ChangeList, x)
       GotoChange()
     of ?OpenBtn
@@ -427,10 +560,12 @@ dbg StringTheory ! for trace
       RefreshPreview()
     of ?PasteBtn
       PasteSnippet()
+    of ?SettingsBtn
+      AlignSettings()
     of ?SaveBtn
       SaveProfile()
     of ?WbBtn
-      Workbench() ! modal - returns after Save/Cancel; Save already refreshed everything
+      Workbench()                                                              ! modal - returns after Save/Cancel; Save already refreshed everything
     of ?CloseBtn
       break
     end
@@ -448,10 +583,10 @@ dbg StringTheory ! for trace
         GotoChange()
       ! ---- pane->pane click sync (DEBOUNCE approach) ----
       ! The echo of our own programmatic select() lands within a few centiseconds, so a
-      ! CLOCK() debounce skips it (and any burst), breaking the ping-pong that the earlier
-      ! flag approaches could not. syncLock guards re-entrancy; SyncPanes must NOT test it.
+      ! CLOCK() debounce skips it (and any burst), which is what breaks the ping-pong.
+      ! syncLock guards re-entrancy; SyncPanes must NOT test it.
       ! The progBef/progAft baseline stops a same-row no-op from re-syncing.
-      elsif field() = ?BeforeList                                                              ! select a source line -> scroll After to its aligned line
+      elsif field() = ?BeforeList                                              ! select a source line -> scroll After to its aligned line
         if ~syncOn or syncLock or (clock() >= lastSync and clock() - lastSync < 5) then cycle. ! syncOn=0 -> pane sync OFF (usable, no loop). Flip syncOn to debug.
         syncLock = 1
         syncRow = choice(?BeforeList)
@@ -489,59 +624,17 @@ dbg StringTheory ! for trace
 
 ! ====================================================================================
 LoadEverything PROCEDURE()
-e  LONG,AUTO
-i  LONG,AUTO
+e     LONG,AUTO
+i     LONG,AUTO
+biBad StringTheory ! BUILTIN lines naming a builtin the engine does not have - the issues list carries them, this is not shown
   code
-  rl.LoadFile(rulesFn.getValue()) ! load errors surface via the issues list below
+  rl.LoadFile(rulesFn.getValue())                                                  ! load errors surface via the issues list below
 
-  ! ---- the user rulefile loads NON-FATALLY - validate the combined set on the
-  !      SCRATCH instance first; only a clean set is appended to the live rl. A broken
-  !      user file -> message + skipped for the session; the workbench still opens (its
-  !      lint/test rebuild wbRl from disk, so the user can fix and re-save from there).
-  userLoaded = 0
-  if exists(userFn.getValue())
-    wbRl.LoadFile(rulesFn.getValue())
-    wbRl.LoadUserRules(userFn.getValue())
-    wbRl.Lint()
-    if wbRl.ErrorCount()
-      scratch.setValue('VitStyle: ' & wbRl.ErrorCount() & ' error(s) with ' & clip(userFn.getValue()) & |
-                       ' loaded - USER RULES SKIPPED this session.|Fix them in the Workbench or an editor.')
-      loop i = 1 to records(wbRl.issues)
-        get(wbRl.issues, i)
-        if wbRl.issues.sev <> vr:sevError then cycle.
-        if wbRl.issues.lineNo >= vr:userBase                    ! workbench display = U<n>
-          scratch.append('|U' & (wbRl.issues.lineNo - vr:userBase) & ': ' & clip(wbRl.issues.msg))
-        else
-          scratch.append('|line ' & wbRl.issues.lineNo & ': ' & clip(wbRl.issues.msg))
-        end
-        if scratch._DataEnd > 700 then break.
-      end
-      message(scratch.getValue(), 'VitStyle', ICON:Exclamation) ! NON-fatal (the shipped-file halt below stays)
-    else
-      rl.LoadUserRules(userFn.getValue())                       ! clean -> append to the LIVE set (load order:
-      userLoaded = 1                                            !   shipped, then user, then the profile styles)
-    end
-  end
-
-  if exists(profFn.getValue())
-    e = rl.ErrorCount()                                         ! parse errors so far belong to the rules (+user) load
-    rl.LoadStyleFile(profFn.getValue())
-    if rl.ErrorCount() > e
-      ! profiles are machine-written convenience - a broken one must not brick
-      ! startup. Without this, a broken profile - an over-long member list, say -
-      ! fires the fatal halt below, whose message blames the RULE file: the user is
-      ! sent to fix the wrong one, and VitStyle refuses to start until the profiles
-      ! file is hand-edited. Report against the RIGHT file, then rebuild WITHOUT the
-      ! profile layer - the same non-fatal treatment the user rulefile gets above.
-      scratch.setValue('VitStyle: ' & rl.ErrorCount() - e & ' error(s) in ' & clip(profFn.getValue()) & |
-                       ' (your saved profiles) - PROFILES SKIPPED this session.'                      & |
-                       '|Fix or delete that file; until then the style list shows shipped styles only.')
-      message(scratch.getValue(), 'VitStyle', ICON:Exclamation)
-      rl.LoadFile(rulesFn.getValue()) ! full rebuild, no profile layer
-      if userLoaded then rl.LoadUserRules(userFn.getValue()).
-    end
-  end
+  ! ---- THE SHIPPED RULE FILE IS CHECKED FIRST, AND ON ITS OWN. An error in it is fatal.
+  !      Checked before the user file and the profiles are added, every error found here
+  !      is the shipped file's - and every error the combined set shows below is not.
   rl.Lint()
+  eng.CheckBuiltinNames(rl, biBad)                                                 ! a misspelt BUILTIN in it is fatal like every other error in it
   e = rl.ErrorCount()
   if e
     scratch.setValue('VitStyle: ' & e & ' error(s) in ' & clip(rulesFn.getValue()) & ' - fix the rule file first.')
@@ -552,9 +645,69 @@ i  LONG,AUTO
       if scratch._DataEnd > 700 then break.
     end
     message(scratch.getValue(), 'VitStyle', ICON:Exclamation)
-    halt(1)                                    ! fatal path: a bare halt() exits 0 and scripts read SUCCESS (#14)
+    halt(1)                                                                        ! fatal path: a bare halt() exits 0 and scripts read SUCCESS
   end
-  if rl.lastUsed and rl.FindStyle(rl.lastUsed) ! reopen where the user left off (5c)
+
+  ! ---- the user rulefile loads NON-FATALLY - validate the combined set on the
+  !      SCRATCH instance first; only a clean set is appended to the live rl. A broken
+  !      user file -> message + skipped for the session; the workbench still opens (its
+  !      lint/test rebuild wbRl from disk, so the user can fix and re-save from there).
+  !      The shipped file passed on its own above, so EVERY error the combined set has
+  !      is the user file's: a line that does not parse, a lint error (a metavar its
+  !      pattern lacks, a rule that is the exact inverse of a shipped one) or a misspelt
+  !      BUILTIN. An error that carries no user-file line is listed by its text alone.
+  userLoaded = 0
+  if exists(userFn.getValue())
+    wbRl.LoadFile(rulesFn.getValue())
+    wbRl.LoadUserRules(userFn.getValue())
+    wbRl.Lint()
+    eng.CheckBuiltinNames(wbRl, biBad)                                             ! a misspelt BUILTIN is an error in the user file, not a silent skip
+    e = wbRl.ErrorCount()
+    if e
+      scratch.setValue('VitStyle: ' & wbRl.ErrorCount() & ' error(s) with ' & clip(userFn.getValue()) & |
+                       ' loaded - USER RULES SKIPPED this session.|Fix them in the Workbench or an editor.')
+      loop i = 1 to records(wbRl.issues)
+        get(wbRl.issues, i)
+        if wbRl.issues.sev <> vr:sevError then cycle.
+        if wbRl.issues.lineNo >= vr:userBase                                       ! workbench display = U<n>
+          scratch.append('|U' & (wbRl.issues.lineNo - vr:userBase) & ': ')
+        else
+          scratch.append('|')
+        end
+        scratch.append(clip(wbRl.issues.msg))
+        if scratch._DataEnd > 700 then break.
+      end
+      message(scratch.getValue(), 'VitStyle', ICON:Exclamation)                    ! NON-fatal: only a shipped-file error halts
+    else
+      rl.LoadUserRules(userFn.getValue())                                          ! clean -> append to the LIVE set (load order:
+      userLoaded = 1                                                               !   shipped, then user, then the profile styles)
+    end
+  end
+
+  profLoaded = 0
+  if exists(profFn.getValue())
+    e = rl.ErrorCount()                                                            ! parse errors so far belong to the rules (+user) load
+    rl.LoadStyleFile(profFn.getValue())
+    if rl.ErrorCount() > e
+      ! profiles are machine-written convenience - a broken one must not brick
+      ! startup, and its errors are not the rule file's. Report against the RIGHT
+      ! file, then rebuild WITHOUT the profile layer - the same non-fatal treatment
+      ! the user rulefile gets above - so no half-read profile is ever offered.
+      scratch.setValue('VitStyle: ' & rl.ErrorCount() - e & ' error(s) in ' & clip(profFn.getValue()) & |
+                       ' (your saved profiles) - PROFILES SKIPPED this session.'                      & |
+                       '|Fix or delete that file; until then the style list shows shipped styles only.')
+      ! Said once a session: a workbench Save reloads this file, and the box has been seen already.
+      if ~profSaid
+        message(scratch.getValue(), 'VitStyle', ICON:Exclamation)
+        profSaid = 1
+      end
+      rl.LoadFile(rulesFn.getValue())                                              ! full rebuild, no profile layer
+      if userLoaded then rl.LoadUserRules(userFn.getValue()).
+    else
+      profLoaded = 1
+    end
+  end
+  if rl.lastUsed and rl.FindStyle(rl.lastUsed)                                     ! open on the profile saved last (the LASTUSED marker)
     curStyle = rl.lastUsed
   end
   rl.Resolve(curStyle, '', '')
@@ -566,76 +719,96 @@ i  LONG,AUTO
 RefreshProfiles PROCEDURE()
 i  LONG,AUTO
   code
-  loop i = records(rl.styles) to 1 by -1 ! drop old profile rows (plain STRING fields - nothing to dispose)
-    get(rl.styles, i)
-    if rl.styles.isProfile then delete(rl.styles).
+  loop i = records(rl.styles) to 1 by -1 ! drop old profile rows. The row OWNS its member
+    get(rl.styles, i)                    !   list, so the object goes FIRST - deleting the
+    if rl.styles.isProfile               !   row drops the only pointer there is to it, and
+      dispose(rl.styles.members)         !   every save comes back through here.
+      delete(rl.styles)                  ! dispose of a NULL is a no-op, so no guard is needed
+    end
   end
+  profLoaded = 0
   if exists(profFn.getValue())
     rl.LoadStyleFile(profFn.getValue())
+    profLoaded = 1
   end
 
 ! ====================================================================================
 ! Comment block immediately preceding each GROUP line -> DocsQ. Blank lines and
 ! rule lines reset the accumulator, so only the directly-attached block counts.
+! BOTH FILES ARE HARVESTED. The user rule file's groups sit in rl.groups beside the
+! shipped ones and are offered in the same list, so a group described in the user file
+! has to find its description here too - otherwise the panel tells the reader there is
+! no description while the block is sitting in the file they wrote it in.
 ! ------------------------------------------------------------------------------------
 HarvestDocs PROCEDURE()
+  code
+  free(DocsQ)
+  HarvestDocsFile(rulesFn.getValue())
+  if userLoaded then HarvestDocsFile(userFn.getValue()).
+
+! ====================================================================================
+! One rule file's blocks, appended to DocsQ. A line is read as the rule loader reads it,
+! a tab as a blank, so a GROUP line with a tab after the keyword finds its block too.
+! ------------------------------------------------------------------------------------
+HarvestDocsFile PROCEDURE(STRING pFn)
 i    LONG,AUTO
 j    LONG,AUTO
 p    LONG,AUTO
 line StringTheory
 body StringTheory ! the note text, indent intact
 acc  StringTheory
-up   StringTheory
+! #Removed as not used: up   StringTheory
 nm   StringTheory
+cut  StringTheory ! the line that ends a description cut to fit
   code
-  free(DocsQ)
-  if not raw.LoadFile(rulesFn.getValue()) then return.
+  if not raw.LoadFile(pFn) then return.
   raw.LineEndings(st:unix)
   raw.split('<10>')
   loop i = 1 to raw.records()
     line.setValue(raw.getLine(i))
+    line.replaceByte(9, 32)
     line.trim()
     if ~line._DataEnd
       acc.free()
       cycle
     end
     if line.valuePtr[1] = '!'
-      line.setValue(line.valuePtr[2 : line._DataEnd])   ! strip the bang; keep the text
-      body.setValue(line)                               ! KEEP THE INDENT OF AN EXAMPLE.
-      if body._DataEnd and body.valuePtr[1] = ' '       !   The line arrives already trimmed at
-        body.setValue(body.valuePtr[2 : body._DataEnd]) ! both ends, so only ONE leading space
-      end                                               !   is dropped - the space that separates
-                                                        !   the bang from the text. Whatever is
-                                                        !   left was put there on purpose, and
-                                                        !   for a note whose example is a BLOCK
-                                                        !   the indent IS the example: trimming
-                                                        !   it showed the user if x / y = 1 / end
-                                                        !   flush left, which is the one thing
-                                                        !   the note was drawing.
-      line.trim()                                       ! the ruler test wants it flush
+      line.removeFromPosition(1, 1)                 ! strip the bang; keep the text
+      body.setValue(line)                           ! KEEP THE INDENT OF AN EXAMPLE.
+      if body._DataEnd and body.valuePtr[1] = ' '   !   The line arrives already trimmed at
+        body.removeFromPosition(1, 1)               ! both ends, so only ONE leading space
+      end                                           !   is dropped - the space that separates the bang from the text. Whatever is left was put there on purpose, and for a note whose example is a
+                                                    !   BLOCK the indent IS the example: trimming it showed the user if x / y = 1 / end flush left, which is the one thing the note was drawing.
+      line.trim()                                   ! the ruler test wants it flush
       if line._DataEnd and (line.valuePtr[1] = '-' or line.valuePtr[1] = '=')
-        j = 1                                           ! A RULER IS ALL DASHES, not merely
-        loop while j <= line._DataEnd                   !   STARTING with one. Testing the first
-          if line.valuePtr[j] <> '-' and |              !   byte alone ate every example line in
-             line.valuePtr[j] <> '=' then break.        !   the file - `--group=analysis` and the
-          j += 1                                        !   like - so notes that introduced a
-        end                                             !   switch showed the user a dangling
-        if j > line._DataEnd then cycle.                !   colon and no switch.
+        j = 1                                       ! A RULER IS ALL DASHES, not merely
+        loop while j <= line._DataEnd               !   STARTING with one. Testing the first
+          if line.valuePtr[j] <> '-' and            |              !   byte alone ate every example line in
+             line.valuePtr[j] <> '=' then break.    !   the file - `--group=analysis` and the
+          j += 1                                    !   like - so notes that introduced a
+        end                                         !   switch showed the user a dangling
+        if j > line._DataEnd then cycle.            !   colon and no switch.
       end
       if acc._DataEnd then acc.append('<13,10>').
       acc.append(body)
-      if acc._DataEnd > 1900 then acc.setLength(1900).
       cycle
     end
-    up.setValue(line)
-    up.upper()
-    if up._DataEnd > 6 and up.valuePtr[1 : 6] = 'GROUP '
+    if line._DataEnd > 6 and upper(line.valuePtr[1 : 6]) = 'GROUP '
       nm.setValue(line.valuePtr[7 : line._DataEnd])
-      p = nm.findByte(44)                               ! <comma>
+      p = nm.findByte(33)                           ! a trailing comment is no part of the name  ! <bang>
+      if p then nm.setLength(p - 1).
+      p = nm.findByte(44)                           ! <comma>
       if p then nm.setLength(p - 1).
       nm.trim()
       clear(DocsQ)
       dq:name = nm.getValue()
+      ! A DESCRIPTION LONGER THAN THE PANEL HOLDS SAYS SO. Cut without a word, it stops
+      ! mid-sentence and reads as complete; the rest is still in the rule file.
+      if acc._DataEnd > size(dq:txt)
+        cut.setValue('<13,10>... (the rest is in the rule file, above GROUP ' & clip(dq:name) & ')')
+        acc.setLength(size(dq:txt) - cut._DataEnd)
+        acc.append(cut)
+      end
       dq:txt  = acc.getValue()
       add(DocsQ)
     end
@@ -643,8 +816,13 @@ nm   StringTheory
   end
 
 ! ====================================================================================
+! The Style list. A ROW IS OFFERED ONLY WHEN PICKING IT GETS IT. A profile named like a
+! shipped style hides that style - FindStyle takes the last match, and profiles load last -
+! so the shipped row is left out, and the profile's row says that it hides one.
+! ------------------------------------------------------------------------------------
 BuildStyleList PROCEDURE()
 i  LONG,AUTO
+hd BYTE,AUTO
   code
   free(StyQ)
   clear(StyQ)
@@ -653,8 +831,16 @@ i  LONG,AUTO
   add(StyQ)
   loop i = 1 to records(rl.styles) ! shipped first, then profiles (load order gives that)
     get(rl.styles, i)
+    hd = 0
+    if rl.styles.isProfile
+      hd = ShippedStyleNamed(rl.styles.name)
+    elsif rl.FindStyle(rl.styles.name) <> i
+      cycle
+    end
+    get(rl.styles, i)
     clear(StyQ)
     sq:shown = clip(rl.styles.name) & choose(rl.styles.isProfile = 1, '  (profile)', '')
+    if hd then sq:shown = clip(rl.styles.name) & '  (profile, hides shipped)'.
     sq:nm    = rl.styles.name
     add(StyQ)
     if upper(rl.styles.name) = upper(curStyle)
@@ -682,6 +868,9 @@ sv   LONG,AUTO
     end
     pq:name   = rl.groups.name
     pq:choice = rl.groups.choiceName
+    if rl.groups.isUser = 1
+      pq:choice = choose(~rl.groups.choiceName, '(user)', clip(rl.groups.choiceName) & ' (user)')
+    end
     pq:info   = '' & (rl.groups.handCount + rl.groups.autoCount)
     pq:grpRow = g
     add(DispQ)
@@ -699,7 +888,19 @@ sv   LONG,AUTO
   add(DispQ)
   selSt.free()
   rl.SelectionTable(selSt)
-  effTxt = selSt.getValue()
+  ! ONE ROW PER LINE OF THE ENGINE'S TABLE. This panel is the one thing in the window meant
+  ! to be beyond doubt, so it holds the table whole: a queue has no length to run out of,
+  ! however many groups there are, and a user's own groups are listed last. A line longer
+  ! than a row holds ends in '...', so a cut line is never taken for the whole of it.
+  free(EffQ)
+  if selSt._DataEnd >= 2 and selSt.valuePtr[selSt._DataEnd - 1 : selSt._DataEnd] = '<13,10>' then selSt.setLength(selSt._DataEnd - 2). ! the ending goes first: split() keeps the empty piece after it
+  selSt.split('<13,10>')
+  loop g = 1 to selSt.records()
+    clear(EffQ)
+    eq:txt = selSt.getLine(g)
+    if len(clip(selSt.getLine(g))) > size(eq:txt) then eq:txt[size(eq:txt) - 2 : size(eq:txt)] = '...'. ! cut for display: say so
+    add(EffQ)
+  end
   if sv then select(?GrpList, sv). ! keep the highlight through a rebuild
   display()
   ShowDoc()
@@ -709,10 +910,18 @@ ApplyOverrides PROCEDURE()
 grps  StringTheory
 nogr  StringTheory
   code
-  OverrideLists(grps, nogr)        ! shared with the workbench test (same selection = honesty)
+  OverrideLists(grps, nogr) ! shared with the workbench test (same selection = honesty)
   rl.Resolve(curStyle, grps.getValue(), nogr.getValue())
+  ! A STYLE CHANGE CARRIES ITS ALIGNMENT SETTINGS WITH IT; A GROUP TOGGLE DOES NOT. Resolve
+  ! is what decides which style is in force - the rule file's own default when the user has
+  ! picked none - so the test belongs after it. Toggling a group inside the same style leaves
+  ! whatever the Align dialog holds exactly where it is.
+  if upper(rl.appliedStyle) <> upper(setStyle)
+    setStyle = rl.appliedStyle
+    ApplyStyleSettings()
+  end
   BuildDisplay()
-  RefreshPreview()                 ! selection changed -> re-run the live preview (same resolver, honesty invariant)
+  RefreshPreview()          ! selection changed -> re-run the live preview (same resolver, honesty invariant)
 
 ! ====================================================================================
 ! OvrQ -> comma lists for Resolve. Factored from ApplyOverrides so the workbench
@@ -722,7 +931,7 @@ nogr  StringTheory
 OverrideLists PROCEDURE(StringTheory pGrps, StringTheory pNogr)
 i    LONG,AUTO
   code
-  loop i = 1 to records(OvrQ)      ! row order = click order; Resolve applies picks then unpicks
+  loop i = 1 to records(OvrQ) ! row order = click order; Resolve applies picks then unpicks
     get(OvrQ, i)
     get(rl.groups, oq:grpRow)
     if errorcode() then cycle.
@@ -845,6 +1054,7 @@ mems   StringTheory
 ! ====================================================================================
 SaveProfile PROCEDURE()
 mems  StringTheory
+sBody StringTheory ! layer 3: the alignment settings written on the SETTINGS line
   code
   profNm = ''
   nameOk = 0
@@ -856,6 +1066,17 @@ mems  StringTheory
         message('Profile names start with a letter and use letters/digits/_/:/- only.', 'VitStyle', ICON:Exclamation)
         select(?profNm)
         cycle
+      end
+      ! A SHIPPED STYLE'S NAME IS ASKED ABOUT FIRST. A profile of that name hides the shipped
+      ! style, here and in a batch run given this profiles file - allowed on purpose, so it is
+      ! the user's call, but one made knowingly. No keeps the box open for another name.
+      if ShippedStyleNamed(profNm)
+        if message('A shipped style is called ' & clip(profNm) & '. A profile of that name hides it' & |
+                   ' - here, and in any batch run given this profiles file.'                         & |
+                   '||Save the profile under this name anyway?', 'VitStyle', ICON:Question, BUTTON:Yes + BUTTON:No, BUTTON:No) = BUTTON:No
+          select(?profNm)
+          cycle
+        end
       end
       nameOk = 1
       break
@@ -871,23 +1092,35 @@ mems  StringTheory
     message('Nothing to save: the whole file is at its defaults with no groups.', 'VitStyle', ICON:Asterisk)
     return
   end
-  if mems._DataEnd > size(rl.styles.members)
-    ! a STYLE line longer than the engine's member buffer is a LOAD-time error,
-    ! so writing it would poison the profiles file for the next launch. Refuse here,
-    ! where the user can still do something about it.
-    message('This selection spells out to ' & mems._DataEnd & ' characters of group names - more than' & |
-            ' the ' & size(rl.styles.members) & ' a STYLE line can hold, so it cannot be saved as a'   & |
-            ' profile.||Turn some groups off, or shorten group names in the rule file.',                 |
-            'VitStyle', ICON:Exclamation)
-    return
-  end
-  if ~WriteProfileLine(profNm, mems.getValue()) then return. ! the failure box has already shown -
-                                                             !   do not reload, reselect and then claim success
+  sBody.free()                                                                 ! layer 3: emit only the alignment settings that DIFFER from the tool's defaults - the word-valued ones included
+  if eng.cmtGap       <> df:cmtGap       then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtgap=' & eng.cmtGap). ! ONE list of defaults: what the engine
+  if eng.alignLimit   <> df:alignLimit   then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtlimit=' & eng.alignLimit). !   started with, captured by
+  if eng.alignSlack   <> df:alignSlack   then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtslack=' & eng.alignSlack). !   CaptureAlignDefaults - a literal
+  if eng.alignOutlier <> df:alignOutlier then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtoutlier=' & eng.alignOutlier). ! here would be a second list,
+  if eng.declOutlier  <> df:declOutlier  then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'decloutlier=' & eng.declOutlier). ! and the day a default moves a
+  if eng.cmtWrap      <> df:cmtWrap      then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtwrap=' & eng.cmtWrap). !   setting a user set back to the
+  if eng.cmtSplit     <> df:cmtSplit     then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtsplit=' & eng.cmtSplit). !   OLD default would be lost
+  if eng.cmtReach     <> df:cmtReach     then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtreach=' & eng.cmtReach).
+  if eng.cmtInner     <> df:cmtInner     then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtinner=' & eng.cmtInner).
+  if eng.cmtRun       <> df:cmtRun       then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtrun=' & eng.cmtRun).
+  if eng.widthArg     <> df:widthArg     then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'width=' & choose(eng.widthArg < 0, 0, eng.widthArg)).
+  if eng.cmtFloor     <> df:cmtFloor     then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtfloor=' & choose(eng.cmtFloor = 0, 'near', choose(eng.cmtFloor = 1, 'commented', 'all'))).
+  if eng.cmtKeep      <> df:cmtKeep      then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtkeep=' & choose(eng.cmtKeep = 0, 'off', 'aligned')).
+  if eng.ignoreMarks  <> df:ignoreMarks  then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'ignoremarks=' & choose(eng.ignoreMarks = 0, 'off', 'on')).
+  if eng.contBracket  <> df:contBracket  then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'contindent=' & choose(eng.contBracket = 0, 'indent', 'bracket')).
+  if eng.cmtOpBar     <> df:cmtOpBar     then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtop=' & choose(eng.cmtOpBar = 0, 'code', 'bar')).
+  if eng.cmtEndCount  <> df:cmtEndCount  then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtend=' & choose(eng.cmtEndCount = 0, 'take', 'count')).
+  if eng.cmtContNone  <> df:cmtContNone  then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtcont=' & choose(eng.cmtContNone = 0, 'indent', 'none')).
+  if eng.cmtBarCmt    <> df:cmtBarCmt    then sBody.append(choose(~sBody._DataEnd, '', ' ') & 'cmtbar=' & choose(eng.cmtBarCmt = 0, 'bar', 'comment')).
+  ! no length check: the engine's member list is a StringTheory with no length to
+  ! exceed, so a selection can never be too long to write to the profiles file.
+  if ~WriteProfileLine(profNm, mems.getValue(), sBody.getValue()) then return. ! the failure box has already shown - do not reload, reselect and then claim success
   RefreshProfiles()
-  rl.Lint()                                                  ! re-validate the new profile against the groups
+  rl.Lint()                                                                    ! re-validate the new profile against the groups
   curStyle = profNm
-  free(OvrQ)                                                 ! the profile now IS the selection
+  free(OvrQ)                                                                   ! the profile now IS the selection
   ApplyOverrides()
+  KeepStyleAlign()
   BuildStyleList()
   message('Saved profile ' & clip(profNm) & ' to|' & clip(profFn.getValue())                                           & |
           '||Batch use:|VitTransform <<rules> <<src> <<out> --stylefile=VitStyle.profiles.txt --style=' & clip(profNm) & |
@@ -895,20 +1128,288 @@ mems  StringTheory
           'VitStyle', ICON:Asterisk)
 
 ! ====================================================================================
+! ShippedStyleNamed - 1 when a shipped STYLE answers to pName as FindStyle reads names: no
+! case, and optimise / optimize / optimized all meaning optimised. FindStyle is asked for
+! both names, so its own reading is the only one there is: two names that find the same
+! row are the same name. FindStyle moves the styles buffer, so a caller re-gets its row.
+! ------------------------------------------------------------------------------------
+ShippedStyleNamed PROCEDURE(STRING pName)
+i   LONG,AUTO
+f   LONG,AUTO
+nm  STRING(vr:maxName),AUTO
+  code
+  f = rl.FindStyle(pName)
+  if ~f then return 0.
+  loop i = 1 to records(rl.styles)
+    get(rl.styles, i)
+    if rl.styles.isProfile then cycle.
+    nm = rl.styles.name
+    if rl.FindStyle(nm) = f then return 1.
+  end
+  return 0
+
+! ====================================================================================
+! AlignSettings (layer 3) - the modal Alignment settings panel. Prefill the controls from
+! the engine's current alignment fields, let the user edit, and on OK write them back and
+! refresh the live preview. Save profile then records them as a SETTINGS line. The enum
+! radios are 1-based; the engine fields are 0-based, so +1 on the way in, -1 on the way out.
+! ------------------------------------------------------------------------------------
+AlignSettings PROCEDURE()
+  code
+  setGapV   = eng.cmtGap
+  setLimitV = eng.alignLimit
+  setSlackV = eng.alignSlack
+  setOutV   = eng.alignOutlier
+  setDeclV  = eng.declOutlier
+  setWrapV  = eng.cmtWrap
+  setSplitV = eng.cmtSplit
+  setReachV = eng.cmtReach
+  setRunV   = eng.cmtRun
+  setWidthV = choose(eng.widthArg < 40, 240, eng.widthArg)                  ! the spin edits a real split width; never split (--width=0) is the box beside it. 240 is the ENGINE's own default for a width never given
+  setWidthP = setWidthV
+  setNeverV = choose(eng.widthArg < 0)
+  setNeverP = setNeverV
+  setFloorV = eng.cmtFloor    + 1
+  setOpV    = eng.cmtOpBar     + 1
+  setEndV   = eng.cmtEndCount  + 1
+  setContV  = eng.cmtContNone  + 1
+  setBarV   = eng.cmtBarCmt    + 1
+  setKeepV  = choose(~eng.cmtKeep, 2, 1)
+  open(SetW)
+  if setNeverV then disable(?setWidthV).
+  accept
+    case accepted()
+    of ?SetOk
+      ! ONE CHOICE WITH TWO ANSWERS. Comment wrap and Comment split both set the width a
+      ! trailing comment is cut at, and a run given both keeps one of them and drops the
+      ! other. The command line refuses the pair outright, so a profile written here must
+      ! not be able to ask for something no run can honour.
+      if setWrapV and setSplitV
+        message('Comment wrap and Comment split cannot both be set.'                         & |
+                '||Both cut a trailing comment at a width. Comment wrap also joins the rows' & |
+                ' that fit back together again; Comment split only cuts.'                    & |
+                '||Set one of the two to 0.', 'VitStyle', ICON:Exclamation)
+        select(?setWrapV)
+        cycle
+      end
+      eng.cmtGap       = setGapV
+      eng.alignLimit   = setLimitV
+      eng.alignSlack   = setSlackV
+      eng.alignOutlier = setOutV
+      eng.declOutlier  = setDeclV
+      eng.cmtWrap      = setWrapV
+      eng.cmtSplit     = setSplitV
+      eng.cmtReach     = setReachV
+      eng.cmtRun       = setRunV
+      eng.cmtFloor     = setFloorV  - 1
+      eng.cmtOpBar     = setOpV     - 1
+      eng.cmtEndCount  = setEndV    - 1
+      eng.cmtContNone  = setContV   - 1
+      eng.cmtBarCmt    = setBarV    - 1
+      eng.cmtKeep      = choose(setKeepV = 1)
+      ! THE SPIN CANNOT SAY not-given (widthArg 0, the per-file scan) OR never-split
+      ! (widthArg -1): its range is 40 to 400. So write the width back only when it was
+      ! actually moved, or opening this dialog to change the comment gap pins every later
+      ! run - and every profile saved from here on - to the number the box happened to show.
+      ! NEVER SPLIT IS THE CHECK BOX. Ticked, it is never split. Unticked after it opened
+      ! ticked, the spin's number is the width - 240 included, though the spin showed it.
+      if setNeverV
+        eng.widthArg = -1
+      elsif setNeverP or setWidthV <> setWidthP
+        eng.widthArg = setWidthV
+      end
+      break
+    of ?SetCancel
+      break
+    of ?setNeverV
+      if setNeverV then disable(?setWidthV) else enable(?setWidthV).
+    end
+    if event() = EVENT:CloseWindow then break.
+  end
+  close(SetW)
+  RefreshPreview()
+
+! ====================================================================================
+! CaptureAlignDefaults - the engine's own alignment defaults, taken from the object before
+! anything has had a chance to change them. Picking a style puts these back and then applies
+! that style's SETTINGS, so a style is a whole answer rather than a layer over whatever was
+! last typed into the Align dialog. The values are COPIED from the engine rather than
+! written out again here, so there is only ever one list of them to keep right.
+! ------------------------------------------------------------------------------------
+CaptureAlignDefaults PROCEDURE()
+  code
+  df:cmtGap       = eng.cmtGap       ; df:alignLimit  = eng.alignLimit  ; df:alignSlack   = eng.alignSlack
+  df:alignOutlier = eng.alignOutlier ; df:declOutlier = eng.declOutlier ; df:cmtWrap      = eng.cmtWrap
+  df:cmtSplit     = eng.cmtSplit     ; df:cmtReach    = eng.cmtReach    ; df:cmtInner     = eng.cmtInner
+  df:cmtRun       = eng.cmtRun       ; df:widthArg    = eng.widthArg    ; df:cmtFloor     = eng.cmtFloor
+  df:cmtKeep      = eng.cmtKeep      ; df:contBracket = eng.contBracket ; df:cmtOpBar     = eng.cmtOpBar
+  df:ignoreMarks  = eng.ignoreMarks
+  df:cmtEndCount  = eng.cmtEndCount  ; df:cmtContNone = eng.cmtContNone ; df:cmtBarCmt    = eng.cmtBarCmt
+
+! ====================================================================================
+! AlignToScratch - the live engine's alignment settings, copied onto the workbench's scratch
+! engine. Test runs the draft there, and its After pane must be laid out as the main preview
+! is: under the style's SETTINGS line and whatever the Align dialog holds. A scratch engine
+! left alone keeps the shipped defaults. The same eighteen fields CaptureAlignDefaults takes.
+! ------------------------------------------------------------------------------------
+AlignToScratch PROCEDURE()
+  code
+  wbEng.cmtGap       = eng.cmtGap       ; wbEng.alignLimit  = eng.alignLimit  ; wbEng.alignSlack   = eng.alignSlack
+  wbEng.alignOutlier = eng.alignOutlier ; wbEng.declOutlier = eng.declOutlier ; wbEng.cmtWrap      = eng.cmtWrap
+  wbEng.cmtSplit     = eng.cmtSplit     ; wbEng.cmtReach    = eng.cmtReach    ; wbEng.cmtInner     = eng.cmtInner
+  wbEng.cmtRun       = eng.cmtRun       ; wbEng.widthArg    = eng.widthArg    ; wbEng.cmtFloor     = eng.cmtFloor
+  wbEng.cmtKeep      = eng.cmtKeep      ; wbEng.contBracket = eng.contBracket ; wbEng.cmtOpBar     = eng.cmtOpBar
+  wbEng.ignoreMarks  = eng.ignoreMarks
+  wbEng.cmtEndCount  = eng.cmtEndCount  ; wbEng.cmtContNone = eng.cmtContNone ; wbEng.cmtBarCmt    = eng.cmtBarCmt
+
+! ====================================================================================
+! KeepStyleAlign - the alignment settings the style in force gives, kept in StyAl. Taken
+! as ApplyStyleSettings finishes, and again when a profile is saved (the profile then gives
+! exactly what is in force). AlignSwitches compares against it.
+! ------------------------------------------------------------------------------------
+KeepStyleAlign PROCEDURE()
+  code
+  sa:cmtGap       = eng.cmtGap       ; sa:alignLimit  = eng.alignLimit  ; sa:alignSlack   = eng.alignSlack
+  sa:alignOutlier = eng.alignOutlier ; sa:declOutlier = eng.declOutlier ; sa:cmtWrap      = eng.cmtWrap
+  sa:cmtSplit     = eng.cmtSplit     ; sa:cmtReach    = eng.cmtReach    ; sa:cmtInner     = eng.cmtInner
+  sa:cmtRun       = eng.cmtRun       ; sa:widthArg    = eng.widthArg    ; sa:cmtFloor     = eng.cmtFloor
+  sa:cmtKeep      = eng.cmtKeep      ; sa:contBracket = eng.contBracket ; sa:cmtOpBar     = eng.cmtOpBar
+  sa:ignoreMarks  = eng.ignoreMarks
+  sa:cmtEndCount  = eng.cmtEndCount  ; sa:cmtContNone = eng.cmtContNone ; sa:cmtBarCmt    = eng.cmtBarCmt
+
+! ====================================================================================
+! AlignSwitches - the command-line switches for every alignment setting in force that the
+! style itself does not give (StyAl), so a batch line printed beside the preview lays the
+! file out as the preview does. A switch beats the profile's value for its own key, and
+! either comment width settles the cmtwrap/cmtsplit pair, so one of the two is enough.
+! A WIDTH CANNOT BE PUT BACK TO "NOT GIVEN" on the command line. Such a value is not written as
+! a switch the run would refuse; it goes to pNo, for the message. --cmtlimit=, --cmtslack= and both
+! outlier switches do take 0. A gap of 0 never gets here: the Align box starts at 1, and a profile's
+! cmtgap=0 is refused as --cmtgap=0 is.
+! ------------------------------------------------------------------------------------
+AlignSwitches PROCEDURE(StringTheory pOut, StringTheory pNo)
+  code
+  if eng.cmtGap <> sa:cmtGap then pOut.append(' --cmtgap=' & eng.cmtGap).
+  if eng.alignLimit <> sa:alignLimit then pOut.append(' --cmtlimit=' & eng.alignLimit).
+  if eng.alignSlack <> sa:alignSlack then pOut.append(' --cmtslack=' & eng.alignSlack).
+  if eng.alignOutlier <> sa:alignOutlier then pOut.append(' --cmtoutlier=' & eng.alignOutlier).
+  if eng.declOutlier <> sa:declOutlier then pOut.append(' --decloutlier=' & eng.declOutlier).
+  if eng.cmtWrap <> sa:cmtWrap or eng.cmtSplit <> sa:cmtSplit
+    if eng.cmtSplit then pOut.append(' --cmtsplit=' & eng.cmtSplit) else pOut.append(' --cmtwrap=' & eng.cmtWrap).
+  end
+  if eng.cmtReach <> sa:cmtReach then pOut.append(' --cmtreach=' & eng.cmtReach).
+  if eng.cmtInner <> sa:cmtInner then pOut.append(' --cmtinner=' & eng.cmtInner).
+  if eng.cmtRun <> sa:cmtRun then pOut.append(' --cmtrun=' & eng.cmtRun).
+  if eng.widthArg <> sa:widthArg
+    if eng.widthArg then pOut.append(' --width=' & choose(eng.widthArg < 0, 0, eng.widthArg)) else pNo.append(' width (not given)').
+  end
+  if eng.cmtFloor <> sa:cmtFloor then pOut.append(' --cmtfloor=' & choose(eng.cmtFloor = 0, 'near', choose(eng.cmtFloor = 1, 'commented', 'all'))).
+  if eng.cmtKeep <> sa:cmtKeep then pOut.append(' --cmtkeep=' & choose(eng.cmtKeep = 0, 'off', 'aligned')).
+  if eng.ignoreMarks and ~sa:ignoreMarks then pOut.append(' --ignoremarks').
+  if eng.contBracket <> sa:contBracket then pOut.append(' --contindent=' & choose(eng.contBracket = 0, 'indent', 'bracket')).
+  if eng.cmtOpBar <> sa:cmtOpBar then pOut.append(' --cmtop=' & choose(eng.cmtOpBar = 0, 'code', 'bar')).
+  if eng.cmtEndCount <> sa:cmtEndCount then pOut.append(' --cmtend=' & choose(eng.cmtEndCount = 0, 'take', 'count')).
+  if eng.cmtContNone <> sa:cmtContNone then pOut.append(' --cmtcont=' & choose(eng.cmtContNone = 0, 'indent', 'none')).
+  if eng.cmtBarCmt <> sa:cmtBarCmt then pOut.append(' --cmtbar=' & choose(eng.cmtBarCmt = 0, 'bar', 'comment')).
+
+! ====================================================================================
+! ApplyStyleSettings - the ALIGNMENT half of the style in force. A profile carries its
+! alignment settings on a SETTINGS line and the command-line program applies them before it
+! transforms anything; this window has to do the same, or the After pane shows one file
+! while the batch command printed beside it writes another - and a preview that matches a
+! batch run is what this window is for.
+!
+! The defaults go back FIRST. Without that a style saying nothing about the comment gap
+! would keep the gap the style before it asked for, and Save profile would then write that
+! borrowed gap onto it as though the user had chosen it.
+!
+! A VALUE THE ENGINE REFUSES (cmtfloor=wide, width=30), or cmtwrap and cmtsplit given
+! together, keeps its default here, and the box names it. A batch run under the same
+! profile stops on it instead (ruled 17 Sep 2026), so the box says that too - and that
+! Save profile writes what is shown, which leaves the refused value out.
+!
+! What the style gives is kept (KeepStyleAlign) on both ways out, so the batch line shown
+! after a Workbench save can name each Align setting changed since.
+! ------------------------------------------------------------------------------------
+ApplyStyleSettings PROCEDURE()
+body  StringTheory
+bad   StringTheory    ! the settings this style could not apply, one per line
+keyS  STRING(40),AUTO
+valS  STRING(64),AUTO
+errS  STRING(200)
+eqp   LONG,AUTO
+i     LONG,AUTO
+  code
+  eng.cmtGap       = df:cmtGap       ; eng.alignLimit  = df:alignLimit  ; eng.alignSlack   = df:alignSlack
+  eng.alignOutlier = df:alignOutlier ; eng.declOutlier = df:declOutlier ; eng.cmtWrap      = df:cmtWrap
+  eng.cmtSplit     = df:cmtSplit     ; eng.cmtReach    = df:cmtReach    ; eng.cmtInner     = df:cmtInner
+  eng.cmtRun       = df:cmtRun       ; eng.widthArg    = df:widthArg    ; eng.cmtFloor     = df:cmtFloor
+  eng.cmtKeep      = df:cmtKeep      ; eng.contBracket = df:contBracket ; eng.cmtOpBar     = df:cmtOpBar
+  eng.ignoreMarks  = df:ignoreMarks
+  eng.cmtEndCount  = df:cmtEndCount  ; eng.cmtContNone = df:cmtContNone ; eng.cmtBarCmt    = df:cmtBarCmt
+  body.setValue(rl.SettingsFor(rl.appliedStyle))
+  if ~body._DataEnd then KeepStyleAlign() ; return.
+  body.split(' ')
+  loop i = 1 to body.records()
+    body.setValueFromLine(i)
+    if ~body._DataEnd then cycle.
+    eqp = body.findByte(61)
+    if eqp < 2 then cycle.
+    ! A KEY WITH NOTHING AFTER ITS = . The value slice below would run backwards, which is
+    ! illegal, and the setting WAS asked for - so say so rather than drop it in silence.
+    if eqp >= body._DataEnd
+      bad.append(choose(~bad._DataEnd, '', '|') & clip(body.getValue()) & ': no value given')
+      cycle
+    end
+    keyS = body.valuePtr[1 : eqp - 1]
+    valS = body.valuePtr[eqp + 1 : body._DataEnd]
+    if ~eng.ApplyCmtSetting(keyS, valS, errS)
+      bad.append(choose(~bad._DataEnd, '', '|') & clip(errS))
+    end
+  end
+  ! BOTH COMMENT WIDTHS AT ONCE IS NOT A SETTING. The Align dialog refuses the pair and a
+  ! batch run stops on it, so a profile that sets both has neither applied here.
+  if eng.cmtWrap and eng.cmtSplit
+    eng.cmtWrap  = df:cmtWrap
+    eng.cmtSplit = df:cmtSplit
+    bad.append(choose(~bad._DataEnd, '', '|') & 'cmtwrap and cmtsplit cannot both be set')
+  end
+  if bad._DataEnd
+    message('Profile ' & clip(rl.appliedStyle) & ' - these alignment settings were not applied:||' & |
+            bad.getValue() & '||Everything else in it is in force here. A batch run under this'    & |
+            ' profile stops until each of them is corrected on its SETTINGS line, and'             & |
+            ' Save... saves what is shown here, without them.', 'VitStyle', ICON:Exclamation)
+  end
+  KeepStyleAlign()
+
+! ====================================================================================
 ! Read-modify-write the profile file: replace this profile's STYLE line if it
 ! exists, keep everything else, refresh the LASTUSED marker at the end.
 ! (Hand-written continuation lines inside profFn are not reassembled - the file
-! is normally machine-written, one STYLE per line.)
+! is normally machine-written, one STYLE per line.) A line is tested as the profile
+! loader reads it, a tab as a blank, so a hand-edited STYLE line with a tab after its
+! keyword is still found and replaced, not kept beside the new one as a duplicate.
 ! ------------------------------------------------------------------------------------
-WriteProfileLine PROCEDURE(STRING pName, STRING pMembers)
+WriteProfileLine PROCEDURE(STRING pName, STRING pMembers, <STRING pSettings>)
 i     LONG,AUTO
 line  StringTheory
 up    StringTheory
 outSt StringTheory
 have  StringTheory
 nmU   STRING(vr:maxName),AUTO
+wU    STRING(vr:maxName),AUTO ! LineName: the name a saved line starts with, folded
+wP    LONG,AUTO
   code
   nmU = upper(pName)
+  wU = nmU ; do FoldW ; nmU = wU                                                    ! optimised, optimized, optimise and optimize are one name
+  ! A FILE SKIPPED AT STARTUP STILL HOLDS ITS ERROR. Writing this profile into it would copy the broken line too, and
+  ! the batch line printed for the new profile would name a file the batch run refuses.
+  if ~profLoaded and exists(profFn.getValue())
+    message(clip(profFn.getValue()) & ' was skipped when VitStyle started, because it has an error.' & |
+            '||Fix or delete that file and start VitStyle again; then save this profile.'            & |
+            '||Nothing has been saved.', 'VitStyle', ICON:Exclamation)
+    return 0
+  end
   ! A FILE THAT IS THERE BUT CANNOT BE READ MUST NOT BE OVERWRITTEN. What goes out below is
   ! what came in, plus this profile - so a read that failed leaves nothing to carry over, and
   ! the save would replace every profile already stored with just this one. Whether the file
@@ -916,44 +1417,70 @@ nmU   STRING(vr:maxName),AUTO
   ! licenses a write. A file that is genuinely absent is the fresh-header case below, which is
   ! correct. A file held open by another program, or on a path that has gone away, is not.
   if exists(profFn.getValue())
-    if ~have.LoadFile(profFn.getValue())
+    if ~have.LoadFile(profFn.getValue()) and have.winErrorCode                      ! 0 bytes reads as false with no Windows error: empty, not unreadable
       message('Could not read ' & clip(profFn.getValue()) & '||' & have.LastError           & |
               '||Nothing has been saved. Saving now would replace the profiles already in ' & |
               'that file with just this one.', 'VitStyle', ICON:Exclamation)
       return 0
     end
     have.LineEndings(st:unix)
+    ! The file ends in a line ending, and split() keeps the EMPTY piece that follows it -
+    ! re-emitting that piece is what grew both of these files by a line on every save.
+    if have._DataEnd
+      if have.valuePtr[have._DataEnd] = '<10>' then have.setLength(have._DataEnd - 1).
+    end
     have.split('<10>')
     loop i = 1 to have.records()
       line.setValue(have.getLine(i))
       up.setValue(line)
+      up.replaceByte(9, 32)
       up.trim()
       up.upper()
-      if up._DataEnd > 9 and up.valuePtr[1 : 9] = 'LASTUSED ' then cycle. ! rewritten below
+      if up._DataEnd > 9 and up.valuePtr[1 : 9] = 'LASTUSED ' then cycle.           ! rewritten below
+      if up._DataEnd > 9 and up.valuePtr[1 : 9] = 'SETTINGS '                       ! this profile's old SETTINGS line, replaced below
+        up.removeFromPosition(1, 9)
+        up.trim()
+        do LineName
+        if wU = nmU then cycle.
+      end
       if up._DataEnd > 6 and up.valuePtr[1 : 6] = 'STYLE '
-        up.setValue(up.valuePtr[7 : up._DataEnd])
+        up.removeFromPosition(1, 6)
         up.trim()
         ! this profile already saved? whole-word match (a saved MINE must not
-        ! swallow MINE2): the char after the name must be a space or '='
-        if up._DataEnd > len(clip(nmU)) and up.valuePtr[1 : len(clip(nmU))] = nmU
-          if up.valuePtr[len(clip(nmU)) + 1] = ' ' or up.valuePtr[len(clip(nmU)) + 1] = '='
-            cycle                                                         ! replaced below
-          end
-        end
+        ! swallow MINE2): the name ends at a space or '='
+        do LineName
+        if wU = nmU then cycle.                                                     ! replaced below
       end
       outSt.append(line.getValue() & '<13,10>')
     end
   else
-    outSt.append('! VitStyle.profiles.txt - saved profiles (STYLE lines) + LASTUSED marker.<13,10>')
+    outSt.append('! VitStyle.profiles.txt - saved profiles (STYLE and SETTINGS lines) + LASTUSED marker.<13,10>')
     outSt.append('! Written by VitStyle; safe to hand-edit. Names only, never line numbers.<13,10>')
   end
   outSt.append('STYLE ' & clip(pName) & ' = ' & clip(pMembers) & '<13,10>')
+  if ~omitted(pSettings) and pSettings then outSt.append('SETTINGS ' & clip(pName) & ' ' & clip(pSettings) & '<13,10>'). ! layer 3: alignment settings
   outSt.append('LASTUSED ' & clip(pName) & '<13,10>')
   if not outSt.SaveFile(profFn.getValue())
     message('Could not save ' & clip(profFn.getValue()) & '||' & outSt.LastError, 'VitStyle', ICON:Exclamation)
-    return 0 ! callers must not proceed as if saved
+    return 0                                                                        ! callers must not proceed as if saved
   end
   return 1
+
+! the profile name up begins with, to the first space or '=', upper and folded
+LineName ROUTINE
+  wU = ''
+  loop wP = 1 to up._DataEnd
+    if up.valuePtr[wP] = ' ' or up.valuePtr[wP] = '=' then break.
+  end
+  if wP > 1 then wU = up.valuePtr[1 : wP - 1].
+  do FoldW
+
+! the four spellings of the shipped style read as one, as FindStyle reads them
+FoldW ROUTINE
+  case wU
+  of 'OPTIMIZE' orof 'OPTIMIZED' orof 'OPTIMISE'
+    wU = 'OPTIMISED'
+  end
 
 ! ====================================================================================
 ExeDir PROCEDURE()
@@ -990,67 +1517,69 @@ RefreshPreview PROCEDURE()
     return
   end
   logBuf.free()      ! TransformText APPENDS to the log (like TransformFile) - reset per preview run
-  prevChg = eng.TransformText(srcBuf, outBuf, logBuf)
+  eng.TransformText(srcBuf, outBuf, logBuf)
   BuildPreviewLists(srcBuf, outBuf, logBuf)
-  ?AfterHdr{PROP:Text} = 'After (live) - ' & prevChg & ' change(s)'
+  ! the header counts the rows of the Changes list, layout rows included (BuildPreviewLists)
+  ?AfterHdr{PROP:Text} = 'After (live) - ' & records(ChgQ) & ' change(s)'
   display(?fidelity) ! fidelity variable was set by the caller (SetDemo/LoadSourceFile/PasteSnippet)
 
 ! ====================================================================================
 ! Split before/after into per-line queues; align the panes line-by-line (aln/bln);
 ! mark changed lines on BOTH panes by comparing each line with its ALIGNED counterpart.
-! The change list is descriptive (rule + line + summary), from the rule log.
+! The change list is descriptive (rule + line + summary), from the rule log, plus a layout row
+! for each changed line the log says nothing about.
 ! ------------------------------------------------------------------------------------
 BuildPreviewLists PROCEDURE(StringTheory pSrc, StringTheory pOut, StringTheory pLog)
 befS    StringTheory
 aftS    StringTheory
 logS    StringTheory
 line    StringTheory
-line2   StringTheory
+! #Removed as not used: line2   StringTheory
 i       LONG,AUTO
 j       LONG,AUTO
 lnNo    LONG,AUTO
 ruleNo  LONG,AUTO
-chgRow  LONG,AUTO                                             ! 1 = this log line describes a CHANGE, 0 = a note about one
-hdrW    LONG,AUTO                                             ! how many words the header actually used - only those are stripped
-dw      LONG,AUTO                                             ! header-strip loop
-mi      LONG,AUTO                                             ! alignment: before index
-mj      LONG,AUTO                                             ! alignment: after index
+chgRow  LONG,AUTO ! 1 = this log line describes a CHANGE, 0 = a note about one
+hdrW    LONG,AUTO ! how many words the header actually used - only those are stripped
+dw      LONG,AUTO ! header-strip loop
+mi      LONG,AUTO ! alignment: before index
+mj      LONG,AUTO ! alignment: after index
 mk      LONG,AUTO
 found   LONG,AUTO
 nB      LONG,AUTO
 nA      LONG,AUTO
-tot     LONG,AUTO                                             ! anchor search: total distance di+dj
+tot     LONG,AUTO ! anchor search: total distance di+dj
 di      LONG,AUTO
 dj      LONG,AUTO
-adi     LONG,AUTO                                             ! chosen anchor offsets
+adi     LONG,AUTO ! chosen anchor offsets
 adj     LONG,AUTO
-mk2     LONG,AUTO                                             ! block map: candidate offset in the opposite block
-pk      LONG,AUTO                                             ! block map: previous pick (monotone floor)
-pt      LONG,AUTO                                             ! block map: proportional slot
-b2      LONG,AUTO                                             ! block map: best candidate so far
-bl2     LONG,AUTO                                             ! block map: best common-prefix length so far
-bd      LONG,AUTO                                             ! block map: best distance-to-slot so far
-cp      LONG,AUTO                                             ! block map: this candidate's common-prefix length
-d2      LONG,AUTO                                             ! block map: this candidate's distance to the slot
-lp      LONG,AUTO                                             ! block map: char loop
-minL    LONG,AUTO                                             ! block map: shorter of the two stripped lines
-tot2    LONG,AUTO                                             ! anchor search: adaptive range for this divergence
-farOff  LONG,AUTO                                             ! anchor search: 1 = full-range scan missed, stop paying for far scans until an anchor resets it
-mapOk   LONG,AUTO                                             ! engine map: 1 = aln/bln came from eng.tk.lineMap (walk skipped)
-s2      LONG,AUTO                                             ! engine map: source line for the After row in hand
-lastA2  LONG,AUTO                                             ! engine map: carry for combined-away source lines
-ind     LONG,AUTO                                             ! unit scan: leading-space count of the raw line
-baseI   LONG,AUTO                                             ! unit scan: block base indent (first non-blank line)
-isCont  LONG,AUTO                                             ! unit scan: 1 = this line continues the open unit
-ub      LONG,AUTO                                             ! unit map: current unit index while assigning
-zeb     LONG,AUTO                                             ! zebra: 0 = colour A block, 1 = colour B block
-lastChg LONG,AUTO                                             ! zebra: last changed row seen (contiguity test)
-col     LONG,AUTO                                             ! zebra: this After row's inherited colour
-pcol    LONG,AUTO                                             ! zebra: previous changed After row's colour (insert carry)
-UBQ    QUEUE                                                  ! unit starts, BEFORE side of the current block (0-based offsets)
+mk2     LONG,AUTO ! block map: candidate offset in the opposite block
+pk      LONG,AUTO ! block map: previous pick (monotone floor)
+pt      LONG,AUTO ! block map: proportional slot
+b2      LONG,AUTO ! block map: best candidate so far
+bl2     LONG,AUTO ! block map: best common-prefix length so far
+bd      LONG,AUTO ! block map: best distance-to-slot so far
+cp      LONG,AUTO ! block map: this candidate's common-prefix length
+d2      LONG,AUTO ! block map: this candidate's distance to the slot
+lp      LONG,AUTO ! block map: char loop
+minL    LONG,AUTO ! block map: shorter of the two stripped lines
+tot2    LONG,AUTO ! anchor search: adaptive range for this divergence
+farOff  LONG,AUTO ! anchor search: 1 = full-range scan missed, stop paying for far scans until an anchor resets it
+mapOk   LONG,AUTO ! engine map: 1 = aln/bln came from eng.tk.lineMap (walk skipped)
+s2      LONG,AUTO ! engine map: source line for the After row in hand
+lastA2  LONG,AUTO ! engine map: carry for combined-away source lines
+ind     LONG,AUTO ! unit scan: leading-space count of the raw line
+baseI   LONG,AUTO ! unit scan: block base indent (first non-blank line)
+isCont  LONG,AUTO ! unit scan: 1 = this line continues the open unit
+ub      LONG,AUTO ! unit map: current unit index while assigning
+zeb     LONG,AUTO ! zebra: 0 = colour A block, 1 = colour B block
+lastChg LONG,AUTO ! zebra: last changed row seen (contiguity test)
+col     LONG,AUTO ! zebra: this After row's inherited colour
+pcol    LONG,AUTO ! zebra: previous changed After row's colour (insert carry)
+UBQ    QUEUE      ! unit starts, BEFORE side of the current block (0-based offsets)
 ofs      LONG
        END
-UAQ    QUEUE                                                  ! unit starts, AFTER side
+UAQ    QUEUE      ! unit starts, AFTER side
 ofs      LONG
        END
   code
@@ -1060,7 +1589,7 @@ ofs      LONG
 
   ! change list + changed-line set from the log ('rule N line L: before ==> after')
   logS.setValue(pLog)
-  if debugIt then logS.SaveFile('logFile.txt').               ! debug dump of the raw engine log - see debugIt
+  if debugIt then logS.SaveFile('logFile.txt').                      ! debug dump of the raw engine log - see debugIt
   logS.LineEndings(st:unix)
   logS.split('<10>',,,,st:clip,st:left)
   loop i = 1 to logS.records()
@@ -1093,12 +1622,12 @@ ofs      LONG
     chgRow = 1
     if lower(line.getline(1)) <> 'rule'
       ruleNo = 0
-      if lower(line.getLine(1)) <> 'builtin' then chgRow = 0. ! header, WARNING, ERROR, file summary
+      if lower(line.getLine(1)) <> 'builtin' then chgRow = 0.        ! header, WARNING, ERROR, file summary
       line.SetValueFromLine(2)
-      if line.EndsWith(':')                  then chgRow = 0. ! BUILTIN <Name>: <prose about the file>
+      if line.EndsWith(':')                  then chgRow = 0.        ! BUILTIN <Name>: <prose about the file>
       line.SetValueFromLine(3)
-      if line.StartsWith('(')                then chgRow = 0. ! BUILTIN <Name> (<style>): <summary>
-      if upper(line.getValue()) = 'WHY'      then chgRow = 0. ! BUILTIN AutoCheck WHY...  - a diagnostic
+      if line.StartsWith('(')                then chgRow = 0.        ! BUILTIN <Name> (<style>): <summary>
+      if upper(line.getValue()) = 'WHY'      then chgRow = 0.        ! BUILTIN AutoCheck WHY...  - a diagnostic
     else
       ruleNo = line.getLine(2)
     end
@@ -1108,7 +1637,7 @@ ofs      LONG
       line.setValueFromLine(4)
       if line.EndsWith('#') then line.AdjustLength(-1).
       lnNo = line.getValue()
-      hdrW = 4                                                ! `rule n line m:` / `BUILTIN Name line m:`
+      hdrW = 4                                                       ! `rule n line m:` / `BUILTIN Name line m:`
     else
       lnNo = 0
     end
@@ -1131,7 +1660,7 @@ ofs      LONG
       line.deleteLine(dw)
     end
     line.join(' ')
-    cq:desc = line.getValue()                                 ! text after the ':', or the whole line
+    cq:desc = line.getValue()                                        ! text after the ':', or the whole line
     add(ChgQ)
   end
 
@@ -1139,14 +1668,16 @@ ofs      LONG
     clear(PvBefQ)
     bq:ln = i
     bq:txt = '  ' & befS.getLine(i)
-    bq:txtFg = COLOR:None ; bq:txtBg = COLOR:None             ! clear() leaves 0 = BLACK - the tuple must be
-    bq:txtSFg = COLOR:None ; bq:txtSBg = COLOR:None           !      explicitly no-override on every unchanged row
+    if len(clip(befS.getLine(i))) > size(bq:txt) - 2 then bq:txt[size(bq:txt) - 2 : size(bq:txt)] = '...'. ! cut for display: say so
+    bq:txtFg = COLOR:None ; bq:txtBg = COLOR:None                    ! clear() leaves 0 = BLACK - the tuple must be
+    bq:txtSFg = COLOR:None ; bq:txtSBg = COLOR:None                  !      explicitly no-override on every unchanged row
     add(PvBefQ)
   end
   loop i = 1 to aftS.records()
     clear(PvAftQ)
     aq:ln = i
     aq:txt = '  ' & aftS.getLine(i)
+    if len(clip(aftS.getLine(i))) > size(aq:txt) - 2 then aq:txt[size(aq:txt) - 2 : size(aq:txt)] = '...'. ! cut for display: say so
     aq:txtFg = COLOR:None ; aq:txtBg = COLOR:None
     aq:txtSFg = COLOR:None ; aq:txtSBg = COLOR:None
     add(PvAftQ)
@@ -1322,10 +1853,10 @@ ofs      LONG
           UAQ.ofs = mk ; add(UAQ)
         end
       end
-      if records(UBQ) and records(UBQ) = records(UAQ)         ! same unit count -> pair unit k<->k
+      if records(UBQ) and records(UBQ) = records(UAQ)                ! same unit count -> pair unit k<->k
         ub = 1
-        loop mk = 0 to adi - 1                                ! every before line -> FIRST line of its paired after unit
-          loop while ub < records(UBQ)                        ! advance to the unit containing offset mk
+        loop mk = 0 to adi - 1                                       ! every before line -> FIRST line of its paired after unit
+          loop while ub < records(UBQ)                               ! advance to the unit containing offset mk
             get(UBQ, ub + 1)
             if UBQ.ofs > mk then break.
             ub += 1
@@ -1334,7 +1865,7 @@ ofs      LONG
           get(PvBefQ, mi + mk) ; bq:aln = mj + UAQ.ofs ; put(PvBefQ)
         end
         ub = 1
-        loop mk = 0 to adj - 1                                ! every after line -> FIRST line of its paired before unit
+        loop mk = 0 to adj - 1                                       ! every after line -> FIRST line of its paired before unit
           loop while ub < records(UAQ)
             get(UAQ, ub + 1)
             if UAQ.ofs > mk then break.
@@ -1344,63 +1875,63 @@ ofs      LONG
           get(PvAftQ, mj + mk) ; aq:bln = mi + UBQ.ofs ; put(PvAftQ)
         end
         mi += adi ; mj += adj
-        cycle                                                 ! block done - next region
+        cycle                                                        ! block done - next region
       end
       ! unit counts differ -> fall back to prefix-snap with proportional tie-break
-      pk = 0                                                  ! -- before block -> after block --
+      pk = 0                                                         ! -- before block -> after block --
       loop mk = 0 to adi - 1
         line.setValue(befS.getLine(mi + mk))
-        line.removeByte(32) ; line.lower()                    ! space-stripped, case-folded
-        pt = int(mk * adj / adi)                              ! INT is load-bearing: Clarion ROUNDS on LONG assignment,
-        if pt < pk then pt = pk.                              ! and rounding up would push a combine's 2nd source line
-        b2 = pk ; bl2 = -1 ; bd = 99999                       ! past the combined line (adi > 0 here, divide is safe)
+        line.removeByte(32) ; line.lower()                           ! space-stripped, case-folded
+        pt = int(mk * adj / adi)                                     ! a LONG assignment TRUNCATES toward zero, and so does
+        if pt < pk then pt = pk.                                     ! int(); rounding UP would push a combine's 2nd source
+        b2 = pk ; bl2 = -1 ; bd = 99999                              ! line past the combined line (adi > 0, divide is safe)
         loop mk2 = pk to adj - 1
-          line2.setValue(aftS.getLine(mj + mk2))
-          line2.removeByte(32) ; line2.lower()
-          minL = choose(line._DataEnd < line2._DataEnd, line._DataEnd, line2._DataEnd)
+          aftS.setValueFromLine(mj + mk2)
+          aftS.removeByte(32) ; aftS.lower()
+          minL = choose(line._DataEnd < aftS._DataEnd, line._DataEnd, aftS._DataEnd)
           cp = 0
-          loop lp = 1 to minL                                 ! common-prefix length of the stripped lines
-            if line.valuePtr[lp] <> line2.valuePtr[lp] then break.
+          loop lp = 1 to minL                                        ! common-prefix length of the stripped lines
+            if line.valuePtr[lp] <> aftS.valuePtr[lp] then break.
             cp = lp
           end
-          if cp < 4 then cp = 0.                              ! a prefix under 4 stripped chars ('if', 's=', 'st.') is
-          d2 = abs(mk2 - pt)                                  ! NOISE - it must not beat the proportional slot
-          if cp > bl2 or (cp = bl2 and d2 < bd)               ! longest prefix wins; ties -> nearest the slot
+          if cp < 4 then cp = 0.                                     ! a prefix under 4 stripped chars ('if', 's=', 'st.') is
+          d2 = abs(mk2 - pt)                                         ! NOISE - it must not beat the proportional slot
+          if cp > bl2 or (cp = bl2 and d2 < bd)                      ! longest prefix wins; ties -> nearest the slot
             b2 = mk2 ; bl2 = cp ; bd = d2
           end
         end
-        get(PvBefQ, mi + mk) ; bq:aln = mj + b2 ; put(PvBefQ) ! adj = 0 (pure delete): scan is empty, b2 = 0 -> mj
+        get(PvBefQ, mi + mk) ; bq:aln = mj + b2 ; put(PvBefQ)        ! adj = 0 (pure delete): scan is empty, b2 = 0 -> mj
         pk = b2
       end
-      pk = 0                                                  ! -- after block -> before block (same rule) --
+      pk = 0                                                         ! -- after block -> before block (same rule) --
       loop mk = 0 to adj - 1
         line.setValue(aftS.getLine(mj + mk))
         line.removeByte(32) ; line.lower()
-        pt = int(mk * adi / adj)                              ! adj > 0 whenever this loop body runs
+        pt = int(mk * adi / adj)                                     ! adj > 0 whenever this loop body runs
         if pt < pk then pt = pk.
         b2 = pk ; bl2 = -1 ; bd = 99999
         loop mk2 = pk to adi - 1
-          line2.setValue(befS.getLine(mi + mk2))
-          line2.removeByte(32) ; line2.lower()
-          minL = choose(line._DataEnd < line2._DataEnd, line._DataEnd, line2._DataEnd)
+          befS.setValueFromLine(mi + mk2)
+          befS.removeByte(32) ; befS.lower()
+          minL = choose(line._DataEnd < befS._DataEnd, line._DataEnd, befS._DataEnd)
           cp = 0
           loop lp = 1 to minL
-            if line.valuePtr[lp] <> line2.valuePtr[lp] then break.
+            if line.valuePtr[lp] <> befS.valuePtr[lp] then break.
             cp = lp
           end
-          if cp < 4 then cp = 0.                              ! same noise floor as the before->after pass
+          if cp < 4 then cp = 0.                                     ! same noise floor as the before->after pass
           d2 = abs(mk2 - pt)
           if cp > bl2 or (cp = bl2 and d2 < bd)
             b2 = mk2 ; bl2 = cp ; bd = d2
           end
         end
-        get(PvAftQ, mj + mk) ; aq:bln = mi + b2 ; put(PvAftQ) ! adi = 0 (pure insert): b2 = 0 -> mi = next anchor's line
+        get(PvAftQ, mj + mk) ; aq:bln = mi + b2 ; put(PvAftQ)        ! adi = 0 (pure insert): b2 = 0 -> mi = next anchor's line
         pk = b2
       end
     end
     mi += adi ; mj += adj
   end
-  end                                                         ! if ~mapOk (fallback walk)
+  end                                                                ! if ~mapOk (fallback walk)
 
 ! mark changed lines on BOTH panes: a line is changed if it differs from its ALIGNED
 ! counterpart. Compare the pristine split lines (befS/aftS), not the queue txt - a
@@ -1436,28 +1967,28 @@ ofs      LONG
 ! carry/insert rows whose bln points at an UNCHANGED row group by that pointer too
 ! (same bln as the previous changed row = same colour, else alternate from it).
 ! Selected variants = DarkenColor of the fill (changed-under-cursor stays distinct).
-  lastChg = -1                               ! the previous changed row's aln POINTER (not its row no)
-  zeb = 1                                    ! first pointer toggles to 0 = colour A
+  lastChg = -1                                                       ! the previous changed row's aln POINTER (not its row no)
+  zeb = 1                                                            ! first pointer toggles to 0 = colour A
   loop i = 1 to records(PvBefQ)
     get(PvBefQ, i)
     if bq:txt[1] <> '>' then cycle.
-    if bq:aln <> lastChg then zeb = 1 - zeb. ! same target line = same transformation = same colour
+    if bq:aln <> lastChg then zeb = 1 - zeb.                         ! same target line = same transformation = same colour
     lastChg = bq:aln
     bq:txtBg  = choose(zeb = 0, chgColor, chgColor2)
     bq:txtSBg = DarkenColor(bq:txtBg)
     put(PvBefQ)
   end
   pcol = 0
-  lastChg = -1                               ! the previous changed After row's bln POINTER
+  lastChg = -1                                                       ! the previous changed After row's bln POINTER
   loop i = 1 to records(PvAftQ)
     get(PvAftQ, i)
     if aq:txt[1] <> '>' then cycle.
     col = 0
     if aq:bln >= 1 and aq:bln <= records(PvBefQ)
-      get(PvBefQ, aq:bln)                    ! separate queue buffer - aq: fields keep row i
+      get(PvBefQ, aq:bln)                                            ! separate queue buffer - aq: fields keep row i
       if bq:txt[1] = '>' then col = bq:txtBg.
     end
-    if ~col                                  ! carry/insert rows: group purely by the source pointer
+    if ~col                                                          ! carry/insert rows: group purely by the source pointer
       if aq:bln = lastChg and pcol
         col = pcol
       elsif pcol
@@ -1473,23 +2004,53 @@ ofs      LONG
     lastChg = aq:bln
   end
 
-  if debugIt                   ! the two panes as CSV, for eyeballing the pairing
-    dbg.SerializeQueue(PvBefQ) ! see debugIt at the top of this file
+  if debugIt                                                         ! the two panes as CSV, for eyeballing the pairing
+    dbg.SerializeQueue(PvBefQ)                                       ! see debugIt at the top of this file
     dbg.SaveFile('PvBefQ.csv')
     dbg.SerializeQueue(PvAftQ)
     dbg.SaveFile('PvAftQ.csv')
   end
 
 
-! NO line-number remapping needed any more. The engine now emits every change-
-! log line number in SOURCE coordinates (VitRewrite/builtins log via tk.MapLine /
-! LogLineOf against the live line map), so cq:ln arrived correct when the log was
-! parsed above. The old remap ('BUILTIN rows = After-pane index' + text-match +
-! butterfly search) guessed from fire-time coordinates and put RemoveDoubledBrackets
-! rows on the wrong line - deleted with the guessing.
+! LAYOUT ROWS. Lining up comments, declaration types and CASE labels, wrapping and splitting
+! comments, splitting a wide line and trimming trailing spaces each change lines and write
+! nothing to the log, so the Changes list had no row for them while the header counted them.
+! Each run of changed Before lines that no logged change falls inside gets one `layout` row
+! per line. A whole run is left alone when ANY change in it is logged: a rule rewriting several
+! lines logs only one of them, and its other lines must not be called layout.
+  i = 1
+  loop while i <= records(PvBefQ)
+    get(PvBefQ, i)
+    if bq:txt[1] <> '>' then i += 1 ; cycle.
+    j = i                                                            ! the run of changed lines is i to j
+    loop while j < records(PvBefQ)
+      get(PvBefQ, j + 1)
+      if bq:txt[1] <> '>' then break.
+      j += 1
+    end
+    found = 0
+    loop mk = 1 to records(ChgQ)
+      get(ChgQ, mk)
+      if cq:ln >= i and cq:ln <= j then found = 1 ; break.
+    end
+    if ~found
+      loop mk = i to j
+        clear(ChgQ)
+        cq:ln   = mk
+        cq:rule = 0
+        cq:desc = 'layout: ' & left(befS.getLine(mk))
+        add(ChgQ)
+      end
+    end
+    i = j + 1
+  end
 
-  SortChanges()      ! honour the current sort mode
-  if records(PvBefQ) ! give each pane a valid selection + baseline after a rebuild
+! No line-number remapping here: the engine emits every change-log line number in
+! SOURCE coordinates (VitRewrite and the builtins log through tk.MapLine / LogLineOf
+! against the live line map), so cq:ln arrived correct when the log was parsed above.
+
+  SortChanges()                                                      ! honour the current sort mode
+  if records(PvBefQ)                                                 ! give each pane a valid selection + baseline after a rebuild
     ?BeforeList{PROP:Selected} = 1 ; progBef = 1
   end
   if records(PvAftQ)
@@ -1539,9 +2100,9 @@ chH     LONG(78)
 chY     LONG,AUTO
 listH   LONG,AUTO
 halfW   LONG,AUTO
-lcExtra LONG,AUTO                          ! height the left column gained
-lcY     LONG,AUTO                          ! running Y down that column
-bw1     LONG,AUTO                          ! button widths, scaled
+lcExtra LONG,AUTO ! height the left column gained
+lcY     LONG,AUTO ! running Y down that column
+bw1     LONG,AUTO ! button widths, scaled
 bw2     LONG,AUTO
 bw3     LONG,AUTO
 bw4     LONG,AUTO
@@ -1550,7 +2111,7 @@ effH    LONG,AUTO
   code
   winW = 0{PROP:Width}
   winH = 0{PROP:Height}
-  if winW < 300 or winH < 200 then return. ! too small to reflow sensibly
+  if winW < 300 or winH < 200 then return.    ! too small to reflow sensibly
   rX = 262
   rW = winW - rX - 6
   if rW < 120 then return.
@@ -1567,9 +2128,12 @@ effH    LONG,AUTO
   ! before pane
   ?BeforeList{PROP:Xpos} = rX ; ?BeforeList{PROP:Ypos} = topY
   ?BeforeList{PROP:Width} = halfW ; ?BeforeList{PROP:Height} = listH
+  ?BeforeList{PROPLIST:Width, 2} = halfW - 48 ! the text column inside the pane: 36 for Line, 12 for the
+                                              !   vertical scroll bar - so its own scroll bar shows whole
   ! after pane
   ?AfterList{PROP:Xpos} = rX + halfW + 6 ; ?AfterList{PROP:Ypos} = topY
   ?AfterList{PROP:Width} = halfW ; ?AfterList{PROP:Height} = listH
+  ?AfterList{PROPLIST:Width, 2} = halfW - 48
   ?AfterHdr{PROP:Xpos} = rX + halfW + 6
   ! change list
   ?ChangesHdr{PROP:Ypos} = chY - 15
@@ -1635,7 +2199,7 @@ effH    LONG,AUTO
   effH = 78 + lcExtra - lcExtra / 2
   ?GrpList{PROP:Height} = grpH
   lcY = 36 + grpH + 4
-  ?ToggleBtn{PROP:Ypos} = lcY ; ?SaveBtn{PROP:Ypos} = lcY
+  ?ToggleBtn{PROP:Ypos} = lcY ; ?SettingsBtn{PROP:Ypos} = lcY ; ?SaveBtn{PROP:Ypos} = lcY
   ?WbBtn{PROP:Ypos}     = lcY ; ?CloseBtn{PROP:Ypos} = lcY
   lcY += 20
   ?PROMPT3{PROP:Ypos} = lcY
@@ -1644,22 +2208,32 @@ effH    LONG,AUTO
   lcY += 66 + 4
   ?PROMPT4{PROP:Ypos} = lcY
   lcY += 10
-  ?effTxt{PROP:Ypos} = lcY ; ?effTxt{PROP:Height} = effH
-  ! left column stays FIXED (its buttons + doc/effective panels sit below the group
-  ! list at fixed offsets; growing the group list would overlap them).
+  ?EffList{PROP:Ypos} = lcY ; ?EffList{PROP:Height} = effH
 
 ! ====================================================================================
 LoadSourceFile PROCEDURE(<string pFn>)
 fn   CSTRING(261)
+nm   CSTRING(56),AUTO
+n    LONG,AUTO
 st   StringTheory
   code
   if omitted(pFn) or ~pFn
-    if ~FILEDIALOG('Open a Clarion source for preview', fn, |
+    if ~FILEDIALOG('Open a Clarion source for preview', fn,                        |
          'Clarion source|*.clw;*.inc|All files|*.*', FILE:KeepDir + FILE:LongName)
-      return                                                            ! cancelled
+      return                                                                       ! cancelled
     end
   else
     fn = pFn
+  end
+  ! A TEMPLATE EXPORT IS NOT PREVIEWED. A batch run reads a .txa with the export's own handling -
+  ! the procedure it belongs to, its embeds, what may be removed there - and the preview runs plain
+  ! Clarion source, so its After pane would not be what a batch run writes for that file.
+  if upper(st.ExtensionOnly(clip(fn))) = 'TXA'
+    message('A template export (.txa) is not previewed here.'                                 & |
+            '||The preview runs plain Clarion source, and a batch run reads a .txa with'      & |
+            ' the export''s own handling, so the After pane would not show what VitTransform' & |
+            ' writes for it.||See the result with a batch run:|VitTransform <<rules> ' & clip(fn) & ' out', 'VitStyle', ICON:Exclamation)
+    return
   end
 
   if ~st.LoadFile(fn)
@@ -1667,7 +2241,15 @@ st   StringTheory
     return
   end
   srcBuf._StealValue(st)
-  fidelity = 'file: ' & clip(sub(fn, 1, 55)) & '  (in-file types only)' ! full-header fidelity (--root) is a follow-up
+  ! THE BADGE KEEPS THE END OF A LONG PATH, behind three dots: the file name is the part
+  ! that says what is being previewed. 55 characters of it at most, as the buffer allows.
+  n = len(clip(fn))
+  if n > 55
+    nm = '...' & fn[n - 51 : n]
+  else
+    nm = clip(fn)
+  end
+  fidelity = 'file: ' & nm & '  (in-file types only)'                              ! the preview runs without include expansion
   RefreshPreview()
 
 ! ====================================================================================
@@ -1754,16 +2336,16 @@ SyncPanes PROCEDURE(BYTE pWhich)
 r  LONG,AUTO
   code
 
-  if pWhich = 1          ! before -> after
+  if pWhich = 1             ! before -> after
     r = choice(?BeforeList)
     if r
       get(PvBefQ, r)
       if ~errorcode() and bq:aln and bq:aln <= records(PvAftQ)
-        progAft = bq:aln ! record what we set After to, so its echo is recognised
+        progAft = bq:aln    ! record what we set After to, so its echo is recognised
         ?AfterList{prop:selected} = bq:aln
       end
     end
-  else                   ! after -> before
+  else                      ! after -> before
     r = choice(?AfterList)
     if r
       get(PvAftQ, r)
@@ -1785,7 +2367,7 @@ r      LONG,AUTO
 saved  BYTE
   code
   WbBuildRuleList()
-  if ~wbGrp then wbGrp = 'my-rules'. ! default target group; sticky across visits
+  if ~wbGrp then wbGrp = 'my-rules'.      ! default target group; sticky across visits
   wbEditId  = 0
   wbPickTxt = '(new rule)'
   wbLintTxt = ''
@@ -1805,7 +2387,7 @@ saved  BYTE
     case event()
     of EVENT:NewSelection
       if field() = ?wbPickTxt
-        WbLoadPick()                      ! DROP NewSelection - if it never fires, add an Edit button next to the drop
+        WbLoadPick()                      ! DROP NewSelection - load the picked rule
       elsif field() = ?WbChgList          ! fire row -> jump both mini panes
         r = choice(?WbChgList)
         if r
@@ -1821,8 +2403,7 @@ saved  BYTE
     end
   end
   close(WbW)
-  if saved then WbAfterSave(). ! refresh the MAIN window only after the modal child
-                               !   is gone (field equates resolve per current window)
+  if saved then WbAfterSave().            ! refresh the MAIN window only after the modal child is gone (field equates resolve per current window)
 
 ! ====================================================================================
 ! existing user rules -> the droplist. Filter: real rules only (no builtins, no
@@ -1839,8 +2420,8 @@ g  LONG,AUTO
   add(WbrQ)
   loop i = 1 to records(rl.rules)
     get(rl.rules, i)
-    if rl.rules.kind <> vr:kindRule or |
-       rl.rules.revOf               or |
+    if rl.rules.kind <> vr:kindRule or                                              |
+       rl.rules.revOf               or                                              |
        rl.rules.ruleId < vr:userBase or rl.rules.ruleId >= vr:revBase + vr:userBase
       cycle
     end
@@ -1852,7 +2433,7 @@ g  LONG,AUTO
       if ~errorcode() then wr:grpNm = rl.groups.name.
     end
     if not (rl.rules.srcText &= NULL)
-      wr:shown = 'U' & (rl.rules.ruleId - vr:userBase) & '  [' & clip(wr:grpNm) & ']  ' & sub(rl.rules.srcText, 1, 40)
+      wr:shown = 'U' & (rl.rules.ruleId - vr:userBase) & '  ' & clip(sub(rl.rules.srcText, 1, 40)) & '   [' & clip(wr:grpNm) & ']'
     else
       wr:shown = 'U' & (rl.rules.ruleId - vr:userBase) & '  [' & clip(wr:grpNm) & ']'
     end
@@ -1862,7 +2443,8 @@ g  LONG,AUTO
 ! ====================================================================================
 ! droplist pick. (new rule) keeps the current text (copy-as-new comes free);
 ! an existing rule loads its CLEANED logical text (comments/continuations folded -
-! the v01 edit granularity) + its group, and save REPLACES it in place.
+! the v01 edit granularity) + its group, and save REPLACES it in place - or, when
+! the Group was changed, moves it into that group.
 ! ------------------------------------------------------------------------------------
 WbLoadPick PROCEDURE()
 r  LONG,AUTO
@@ -1874,6 +2456,7 @@ i  LONG,AUTO
   if errorcode() then return.
   if ~wr:id
     wbEditId = 0
+    wbEditSrc.free()
     display()
     return
   end
@@ -1882,6 +2465,9 @@ i  LONG,AUTO
     if rl.rules.ruleId = wr:id and rl.rules.kind = vr:kindRule and ~rl.rules.revOf
       wbEditId = wr:id
       wbGrp    = wr:grpNm
+      wbEditGrp = wr:grpNm
+      wbEditSrc.free()
+      if not (rl.rules.srcText &= NULL) then wbEditSrc.setValue(rl.rules.srcText).
       if not (rl.rules.srcText &= NULL)
         if len(clip(rl.rules.srcText)) > size(draftVar) - 1
           ! the editor buffer is finite and the assignment below TRUNCATES
@@ -1909,26 +2495,33 @@ i  LONG,AUTO
 ! build the PROSPECTIVE VitStyle.rules.txt text: the disk file with the draft
 ! REPLACED in place (editing - the old rule's whole logical span incl | continuation
 ! lines is consumed) or APPENDED inside its GROUP block (before the block's end),
-! creating the block (and the file header) when absent. pDraftLn returns the 1-based
+! creating the block (and the file header) when absent. An edited rule whose Group was
+! changed is not replaced: its old span is dropped and the draft is appended in the
+! new group's block. pDraftLn returns the 1-based
 ! OUTPUT line of the draft's first content line - the rule's ruleId in the prospective
 ! file is vr:userBase + pDraftLn (the fires filter and the U-number shown in the panel).
+! Every line it tests is read as the rule loader reads it, a tab as a blank: a GROUP line
+! with a tab after the keyword has to be found, or a second block of that name is written
+! and the file is then refused for it. The lines are written back as they were.
 ! ------------------------------------------------------------------------------------
 WbComposeUser PROCEDURE(StringTheory pOut, *LONG pDraftLn)
 have    StringTheory
 line    StringTheory
 up      StringTheory
 draft   StringTheory
-dl      StringTheory                                       ! EmitDraft scratch (routines share procedure scope)
+dl      StringTheory            ! EmitDraft scratch (routines share procedure scope)
 i       LONG,AUTO
 pos     LONG,AUTO
-dx      LONG,AUTO                                          ! EmitDraft scratch
-dp      LONG,AUTO                                          ! EmitDraft scratch
+dx      LONG,AUTO               ! EmitDraft scratch
+dp      LONG,AUTO               ! EmitDraft scratch
 outLn   LONG
 tgtLn   LONG
-spanEnd LONG,AUTO
+spanEnd LONG                    ! no AUTO: may be read before it is set
 grpLn   LONG
 endLn   LONG,AUTO
+endEg   BYTE,AUTO               ! the block is closed by its own ENDGROUP, not by the next GROUP or STYLE
 grpU    STRING(vr:maxName),AUTO
+lineOk  BYTE                    ! WbLineOk's answer: the disk line in hand still reads as the rule being edited
   code
   pOut.free()
   pDraftLn = 0
@@ -1937,6 +2530,11 @@ grpU    STRING(vr:maxName),AUTO
   draft.split('<10>')
   if exists(userFn.getValue()) and have.LoadFile(userFn.getValue())
     have.LineEndings(st:unix)
+    ! The file ends in a line ending, and split() keeps the EMPTY piece that follows it -
+    ! re-emitting that piece is what grew both of these files by a line on every save.
+    if have._DataEnd
+      if have.valuePtr[have._DataEnd] = '<10>' then have.setLength(have._DataEnd - 1).
+    end
     have.split('<10>')
   end
 
@@ -1945,9 +2543,31 @@ grpU    STRING(vr:maxName),AUTO
     if tgtLn < 1 or tgtLn > have.records() then tgtLn = 0. ! disk changed underneath - fall through to append
   end
   if tgtLn
+    ! THE LINE IS CHECKED, NOT ONLY ITS NUMBER. The rule's id is the line it had when the file
+    ! was loaded, and the file is "safe to hand-edit" - two comment lines added above the rule
+    ! in an editor move every rule down, and the number alone would cut a different rule out
+    ! and leave the edited one standing. The disk line has to read as the loaded rule; when
+    ! it does not, the rule is looked for by its text, and found once it is replaced where it
+    ! now is. Found twice or not at all, the draft is appended, which the file can survive.
+    line.setValue(have.getLine(tgtLn))
+    do WbLineOk
+    if ~lineOk
+      tgtLn = 0
+      loop i = 1 to have.records()
+        line.setValue(have.getLine(i))
+        do WbLineOk
+        if lineOk
+          if tgtLn then tgtLn = 0 ; break.
+          tgtLn = i
+        end
+      end
+    end
+  end
+  if tgtLn
     spanEnd = tgtLn                                        ! whole logical span: follow | continuations
     loop while spanEnd < have.records()
       line.setValue(have.getLine(spanEnd))
+      line.replaceByte(9, 32)
       pos = rl.PosOutsideQuotes(line, '!')
       if pos then line.setLength(pos - 1).
       line.trim()
@@ -1957,9 +2577,20 @@ grpU    STRING(vr:maxName),AUTO
         break
       end
     end
+    ! A GROUP CHANGED BEFORE SAVE MOVES THE RULE: its old lines go, and the draft takes the
+    ! append path into the group now named - the group Test switches on and the batch line
+    ! names. Written over its old lines, it would stay in the group it was in.
+    if upper(wbGrp) <> upper(wbEditGrp)
+      loop i = spanEnd to tgtLn by -1
+        have.deleteLine(i)
+      end
+      tgtLn = 0
+    end
+  end
+  if tgtLn
     loop i = 1 to have.records()
       if i = tgtLn then do EmitDraft.
-      if i >= tgtLn and i <= spanEnd then cycle. ! the old spelling goes
+      if i >= tgtLn and i <= spanEnd then cycle.           ! the old spelling goes
       outLn += 1
       pOut.append(have.getLine(i) & '<13,10>')
     end
@@ -1970,14 +2601,15 @@ grpU    STRING(vr:maxName),AUTO
   grpU = upper(wbGrp)
   loop i = 1 to have.records()
     line.setValue(have.getLine(i))
+    line.replaceByte(9, 32)
     pos = rl.PosOutsideQuotes(line, '!')
     if pos then line.setLength(pos - 1).
     line.trim()
     up.setValue(line)
     up.upper()
     if up._DataEnd > 6 and up.valuePtr[1 : 6] = 'GROUP '
-      up.setValue(up.valuePtr[7 : up._DataEnd])
-      pos = up.findByte(44)                      ! name ends at the first attribute comma <comma>
+      up.removeFromPosition(1, 6)
+      pos = up.findByte(44)                                ! name ends at the first attribute comma <comma>
       if pos then up.setLength(pos - 1).
       up.trim()
       if choose(up._DataEnd < 1, '', up.valuePtr[1 : up._DataEnd]) = grpU
@@ -1987,27 +2619,37 @@ grpU    STRING(vr:maxName),AUTO
     end
   end
   if grpLn
-    endLn = 0                                    ! block ends at ENDGROUP / next GROUP / STYLE / EOF
+    endLn = 0 ; endEg = 0                                  ! block ends at ENDGROUP / next GROUP / STYLE / EOF
     loop i = grpLn + 1 to have.records()
       line.setValue(have.getLine(i))
+      line.replaceByte(9, 32)
       pos = rl.PosOutsideQuotes(line, '!')
       if pos then line.setLength(pos - 1).
       line.trim()
       up.setValue(line)
       up.upper()
       if up._DataEnd = 8 and up.valuePtr[1 : 8] = 'ENDGROUP'
-        endLn = i ; break
+        endLn = i ; endEg = 1 ; break
       elsif up._DataEnd > 6 and (up.valuePtr[1 : 6] = 'GROUP ' or up.valuePtr[1 : 6] = 'STYLE ')
         endLn = i ; break
       end
     end
     if ~endLn then endLn = have.records() + 1.
+    if endLn <= have.records() and ~endEg                  ! closed by the next GROUP or STYLE: the blank and comment
+      loop while endLn - 1 > grpLn                         !   lines above it are that block's own description - the
+        line.setValue(have.getLine(endLn - 1))             !   draft goes after this block's last rule instead
+        line.replaceByte(9, 32)
+        line.trim()
+        if line._DataEnd and line.valuePtr[1] <> '!' then break.
+        endLn -= 1
+      end
+    end
     loop i = 1 to have.records()
       if i = endLn then do EmitDraft.
       outLn += 1
       pOut.append(have.getLine(i) & '<13,10>')
     end
-    if endLn > have.records() then do EmitDraft. ! block ran to EOF
+    if endLn > have.records() then do EmitDraft.           ! block ran to EOF
     return
   end
   ! group absent: keep the whole file (or seed the header), append a new block
@@ -2025,13 +2667,28 @@ grpU    STRING(vr:maxName),AUTO
     pOut.append('!   VitTransform <<rules> <<src> <<out> --userrules=VitStyle.rules.txt --group=<<group><13,10>')
   end
   outLn += 1
-  pOut.append('<13,10>') ! one blank line before the new block
+  pOut.append('<13,10>')                                   ! one blank line before the new block
   outLn += 1
   pOut.append('GROUP ' & clip(wbGrp) & '<13,10>')
   do EmitDraft
   outLn += 1
   pOut.append('ENDGROUP<13,10>')
   return
+
+! ---- does disk line `line` read as the first line of the rule being edited? The rule loader
+!      strips the comment, turns tabs to blanks, trims, and joins a continued rule's lines with
+!      one blank after dropping the bar - so the first physical line, read the same way, is the
+!      start of the loaded text. ----
+WbLineOk routine
+  lineOk = 0
+  line.replaceByte(9, 32)
+  pos = rl.PosOutsideQuotes(line, '!')
+  if pos then line.setLength(pos - 1).
+  line.trim()
+  if line._DataEnd and line.valuePtr[line._DataEnd] = '|' then line.setLength(line._DataEnd - 1) ; line.trim().
+  if ~line._DataEnd then exit.
+  if wbEditSrc._DataEnd < line._DataEnd then exit.
+  if wbEditSrc.valuePtr[1 : line._DataEnd] = line.valuePtr[1 : line._DataEnd] then lineOk = 1.
 
 ! ---- emit the draft lines; pDraftLn = output line of the first CONTENT line ----
 EmitDraft routine
@@ -2040,6 +2697,7 @@ EmitDraft routine
     pOut.append(draft.getLine(dx) & '<13,10>')
     if ~pDraftLn
       dl.setValue(draft.getLine(dx))
+      dl.replaceByte(9, 32)
       dp = rl.PosOutsideQuotes(dl, '!')
       if dp then dl.setLength(dp - 1).
       dl.trim()
@@ -2051,32 +2709,38 @@ EmitDraft routine
 ! lint the prospective combined set (shipped + prospective user file + profile
 ! styles) on the SCRATCH wbRl. Fills the panel with U-numbers, sets wbDraftId,
 ! clears stale test results. Returns the SEV:Error count, which is the save gate.
+! The set is judged as the reload after Save judges it - Lint and the BUILTIN names -
+! so a rule that saves here is not then skipped by that reload.
 ! ------------------------------------------------------------------------------------
 WbLint PROCEDURE(BYTE pShowOk)
 prosp  StringTheory
 d      StringTheory
-up     StringTheory
+pf     StringTheory ! what the profiles file's own load said - shown apart, never counted
+bi     StringTheory ! CheckBuiltinNames' list; the issues list carries the same errors
 i      LONG,AUTO
 e      LONG,AUTO
 ln     LONG
+pf0    LONG,AUTO
+room   LONG,AUTO
   code
   wbLintTxt = ''
-  free(WbChgQ) ; free(WbBefQ) ; free(WbAftQ) ! stale test panes would show an older draft
+  free(WbChgQ) ; free(WbBefQ) ; free(WbAftQ)                      ! stale test panes would show an older draft
   display(?WbChgList) ; display(?WbBefList) ; display(?WbAftList)
+  ?WbChgHdr{PROP:Text} = 'Draft fires on the current preview source:'
   wbDraftId = 0
   d.setValue(draftVar)
+  d.replaceByte(9, 32)
   d.trim()
   if ~d._DataEnd
     wbLintTxt = 'nothing to lint - the rule text is empty.'
     display(?wbLintTxt)
     return 1
   end
-  up.setValue(d)
-  up.upper()
-  if (up._DataEnd > 6 and up.valuePtr[1 : 6] = 'GROUP ')    or (up._DataEnd >= 8 and up.valuePtr[1 : 8] = 'ENDGROUP')  |
-  or (up._DataEnd > 6 and up.valuePtr[1 : 6] = 'STYLE ')    or (up._DataEnd > 9  and up.valuePtr[1 : 9] = 'LASTUSED ') |
-  or (up._DataEnd > 8 and up.valuePtr[1 : 8] = 'BUILTIN ')
-    wbLintTxt = 'enter only the RULE text - the workbench writes the GROUP block for you (and STYLE/LASTUSED/BUILTIN lines do not belong in a user rulefile).'
+  d.upper()
+  if (d._DataEnd > 6 and d.valuePtr[1 : 6] = 'GROUP ')    or (d._DataEnd >= 8 and d.valuePtr[1 : 8] = 'ENDGROUP')  |
+  or (d._DataEnd > 6 and d.valuePtr[1 : 6] = 'STYLE ')    or (d._DataEnd > 9  and d.valuePtr[1 : 9] = 'LASTUSED ') |
+  or (d._DataEnd > 8 and d.valuePtr[1 : 8] = 'BUILTIN ')
+    wbLintTxt = 'enter only the RULE text - the workbench writes the GROUP block for you. STYLE and LASTUSED lines belong in the profile file; a BUILTIN line goes in your rule file directly, not through this box.'
     display(?wbLintTxt)
     return 1
   end
@@ -2089,11 +2753,33 @@ ln     LONG
   wbDraftId = vr:userBase + ln
   wbRl.LoadFile(rulesFn.getValue())
   wbRl.LoadUserText(prosp)
-  if exists(profFn.getValue())
-    wbRl.LoadStyleFile(profFn.getValue()) ! so Resolve(curStyle) works in WbTest
-  end
   wbRl.Lint()
+  eng.CheckBuiltinNames(wbRl, bi)
   e = wbRl.ErrorCount()
+  ! THE PROFILES FILE IS NOT PART OF THIS SAVE. It is loaded only when the main window's set
+  ! holds it, so Test resolves the style the main preview runs; a file skipped at startup
+  ! stays out. It is loaded after the lint, so no check of a profile is counted here, and
+  ! what its own load says is shown under its name and then taken out of the list: it
+  ! neither blocks a Save nor asks for a confirm, and is never shown as a line of the rule file.
+  pf0 = records(wbRl.issues)
+  if profLoaded and exists(profFn.getValue())
+    wbRl.LoadStyleFile(profFn.getValue())                         ! so Resolve(curStyle) works in WbTest
+  end
+  if records(wbRl.issues) > pf0
+    pf.setValue('<13,10>VitStyle.profiles.txt - not part of this save, and not counted above:<13,10>')
+  end
+  loop i = pf0 + 1 to records(wbRl.issues)
+    get(wbRl.issues, i)
+    if pf._DataEnd > 400 then pf.append('...<13,10>') ; break.
+    pf.append(choose(wbRl.issues.sev = vr:sevError, 'ERROR ', 'warn  '))
+    pf.append('line ' & wbRl.issues.lineNo & ': ')
+    pf.append(clip(wbRl.issues.msg) & '<13,10>')
+  end
+  loop i = records(wbRl.issues) to pf0 + 1 by -1
+    get(wbRl.issues, i)
+    delete(wbRl.issues)
+  end
+  room = size(wbLintTxt) - vr:maxMsg - 60 - pf._DataEnd
   scratch.free()
   if ~records(wbRl.issues)
     scratch.setValue('lint clean - no errors, no warnings.')
@@ -2101,18 +2787,27 @@ ln     LONG
     if ~e and pShowOk
       scratch.setValue('no errors; ' & wbRl.WarnCount() & ' warning(s):<13,10>')
     end
+    ! STOP BEFORE THE ROW, NOT AFTER IT. A row carries a message of up to vr:maxMsg
+    ! characters and wbLintTxt is a fixed STRING, so a length tested after the append
+    ! leaves scratch past the end of the panel, and the store then cuts the last and
+    ! longest error message in half without a word about it. The profiles file's
+    ! lines, added at the end, have their room kept.
     loop i = 1 to records(wbRl.issues)
       get(wbRl.issues, i)
+      if scratch._DataEnd > room
+        scratch.append('... more - fix these and lint again.<13,10>')
+        break
+      end
       scratch.append(choose(wbRl.issues.sev = vr:sevError, 'ERROR ', 'warn  '))
-      if wbRl.issues.lineNo >= vr:userBase ! the workbench shows U<n>
+      if wbRl.issues.lineNo >= vr:userBase                        ! the workbench shows U<n>
         scratch.append('U' & (wbRl.issues.lineNo - vr:userBase))
       else
         scratch.append('line ' & wbRl.issues.lineNo)
       end
       scratch.append(': ' & clip(wbRl.issues.msg) & '<13,10>')
-      if scratch._DataEnd > 2300 then break.
     end
   end
+  scratch.append(pf)
   wbLintTxt = scratch.getValue()
   display(?wbLintTxt)
   return e
@@ -2120,8 +2815,9 @@ ln     LONG
 ! ====================================================================================
 ! run the draft against the CURRENT preview source through the scratch engine.
 ! Selection = the LIVE selection (same style + overrides via OverrideLists) PLUS the
-! draft's group (user groups are opt-in - the test must see the draft fire). The
-! fires list keeps ONLY wbDraftId rows; both mini panes mark its lines with '>'.
+! draft's group (user groups are opt-in - the test must see the draft fire), under the
+! LIVE alignment settings (AlignToScratch), so its After pane is laid out as the main
+! one is. The fires list keeps ONLY wbDraftId rows; both mini panes mark its lines with '>'.
 ! ------------------------------------------------------------------------------------
 WbTest PROCEDURE()
 grps    StringTheory
@@ -2133,7 +2829,6 @@ line    StringTheory
 i       LONG,AUTO
 j       LONG,AUTO
 chg     LONG,AUTO
-ruleNo  LONG,AUTO
 nA      LONG,AUTO
 zeb     LONG,AUTO ! zebra (see BuildPreviewLists)
 lastChg LONG,AUTO
@@ -2149,6 +2844,13 @@ pcol    LONG,AUTO
     return
   end
   OverrideLists(grps, nogr)
+  if nogr._DataEnd                                                                   ! the draft's group is picked below, and an unpick
+    nogr.split(',')                                                                  !   of it in the main window - which Resolve applies
+    loop i = nogr.records() to 1 by -1                                               !   after the picks - would undo it; Save drops it
+      if upper(nogr.getLine(i)) = upper(wbGrp) then nogr.deleteLine(i).              !   too (WbAfterSave), so Test runs what Save shows
+    end
+    nogr.join(',')
+  end
   if grps._DataEnd then grps.append(',').
   grps.append(clip(wbGrp))
   wbRl.Resolve(curStyle, grps.getValue(), nogr.getValue())
@@ -2158,6 +2860,7 @@ pcol    LONG,AUTO
   end
   wbEng.Init(wbRl)
   wbEng.progressFn = ''
+  AlignToScratch()
   wbLog.free()
   chg = wbEng.TransformText(srcBuf, wbOut, wbLog)
   free(WbBefQ) ; free(WbAftQ) ; free(WbChgQ)
@@ -2167,7 +2870,8 @@ pcol    LONG,AUTO
     clear(WbBefQ)
     wb:ln  = i
     wb:txt = '  ' & befS.getLine(i)
-    wb:txtFg = COLOR:None ; wb:txtBg = COLOR:None ! colour tuple - see BuildPreviewLists
+    if len(clip(befS.getLine(i))) > size(wb:txt) - 2 then wb:txt[size(wb:txt) - 2 : size(wb:txt)] = '...'. ! cut for display: say so
+    wb:txtFg = COLOR:None ; wb:txtBg = COLOR:None                                    ! colour tuple - see BuildPreviewLists
     wb:txtSFg = COLOR:None ; wb:txtSBg = COLOR:None
     add(WbBefQ)
   end
@@ -2176,23 +2880,24 @@ pcol    LONG,AUTO
     clear(WbAftQ)
     wa:ln  = i
     wa:txt = '  ' & aftS.getLine(i)
+    if len(clip(aftS.getLine(i))) > size(wa:txt) - 2 then wa:txt[size(wa:txt) - 2 : size(wa:txt)] = '...'. ! cut for display: say so
     wa:txtFg = COLOR:None ; wa:txtBg = COLOR:None
     wa:txtSFg = COLOR:None ; wa:txtSBg = COLOR:None
     add(WbAftQ)
   end
-  if records(wbEng.tk.lineMap) = nA  ! the engine line map: after row -> source line
+  if records(wbEng.tk.lineMap) = nA                                                  ! the engine line map: after row -> source line
     j = 1
     loop i = 1 to nA
       get(wbEng.tk.lineMap, i)
       get(WbAftQ, i)
       wa:bln = wbEng.tk.lineMap.srcLn
-      if wa:bln < j then wa:bln = j. ! monotone clamp, as the main pane does
+      if wa:bln < j then wa:bln = j.                                                 ! monotone clamp, as the main pane does
       if wa:bln > records(WbBefQ) then wa:bln = records(WbBefQ).
       j = wa:bln
       put(WbAftQ)
     end
   end
-  logS.setValue(wbLog)               ! 'rule N line L: before ==> after' - SOURCE coords
+  logS.setValue(wbLog)                                                               ! 'rule N line L: before ==> after' - SOURCE coords
   logS.LineEndings(st:unix)
   logS.split('<10>',,,,st:clip,st:left)
   loop i = 1 to logS.records()
@@ -2200,8 +2905,7 @@ pcol    LONG,AUTO
     line.split(' ')
     line.RemoveLines()
     if lower(line.getLine(1)) <> 'rule' then cycle.
-    ruleNo = line.getLine(2)
-    if ruleNo <> wbDraftId or |   ! the draft's fires ONLY (one rule per visit = one id)
+    if line.getLine(2) <> wbDraftId or                                               |   ! the draft's fires ONLY (one rule per visit = one id)
        line.getLine(3) <> 'line'
       cycle
     end
@@ -2216,7 +2920,7 @@ pcol    LONG,AUTO
     line.deleteLine(1)
     line.join(' ')
     wc:desc = line.getValue()
-    wc:aln = 0 ! first after row of that source line (click-to-jump)
+    wc:aln = 0                                                                       ! first after row of that source line (click-to-jump)
     loop j = 1 to records(WbAftQ)
       get(WbAftQ, j)
       if wa:bln = wc:ln then wc:aln = j ; break.
@@ -2230,7 +2934,7 @@ pcol    LONG,AUTO
       put(WbBefQ)
     end
   end
-  loop i = 1 to records(WbAftQ) ! mark after rows born from a fired source line
+  loop i = 1 to records(WbAftQ)                                                      ! mark after rows born from a fired source line
     get(WbAftQ, i)
     if ~wa:bln then cycle.
     loop j = 1 to records(WbChgQ)
@@ -2242,17 +2946,17 @@ pcol    LONG,AUTO
       end
     end
   end
-  lastChg = -1                            ! zebra pass, pointer-keyed like BuildPreviewLists:
-  zeb = 1                                 ! Before rows group by their fire's target row (wc:aln),
-  loop i = 1 to records(WbBefQ)           ! After inherits via bln
+  lastChg = -1                                                                       ! zebra pass, pointer-keyed like BuildPreviewLists:
+  zeb = 1                                                                            ! Before rows group by their fire's target row (wc:aln),
+  loop i = 1 to records(WbBefQ)                                                      ! After inherits via bln
     get(WbBefQ, i)
     if wb:txt[1] <> '>' then cycle.
-    col = 0                               ! this row's target pointer = its fire's aln
+    col = 0                                                                          ! this row's target pointer = its fire's aln
     loop j = 1 to records(WbChgQ)
       get(WbChgQ, j)
       if wc:ln = i then col = wc:aln ; break.
     end
-    if col <> lastChg then zeb = 1 - zeb. ! pointer change = new transformation = alternate
+    if col <> lastChg then zeb = 1 - zeb.                                            ! pointer change = new transformation = alternate
     lastChg = col
     wb:txtBg  = choose(zeb = 0, chgColor, chgColor2)
     wb:txtSBg = DarkenColor(wb:txtBg)
@@ -2268,7 +2972,7 @@ pcol    LONG,AUTO
       get(WbBefQ, wa:bln)
       if wb:txt[1] = '>' then col = wb:txtBg.
     end
-    if ~col ! carry/insert rows: group purely by the source pointer
+    if ~col                                                                          ! carry/insert rows: group purely by the source pointer
       if wa:bln = lastChg and pcol
         col = pcol
       elsif pcol
@@ -2288,6 +2992,34 @@ pcol    LONG,AUTO
   display(?WbChgList) ; display(?WbBefList) ; display(?WbAftList)
 
 ! ====================================================================================
+! Is the draft a rule its group already holds, word for word? Reads the scratch set WbLint has just
+! loaded from the file as it would be saved: the draft is rule wbDraftId there, and every rule's text
+! is cleaned the same way, so two spellings of one rule compare equal. An edit in place replaces the
+! rule it edits, so that rule is not there to match itself.
+! ------------------------------------------------------------------------------------
+WbIsCopy PROCEDURE()
+txt  StringTheory ! the draft's text, cleaned as the rule set cleans every rule
+grp  LONG         ! and its group
+i    LONG,AUTO
+  code
+  loop i = 1 to records(wbRl.rules)
+    get(wbRl.rules, i)
+    if wbRl.rules.ruleId = wbDraftId and wbRl.rules.kind = vr:kindRule and not (wbRl.rules.srcText &= NULL)
+      txt.setValue(wbRl.rules.srcText)
+      grp = wbRl.rules.groupId
+      break
+    end
+  end
+  if ~txt._DataEnd then return 0.
+  loop i = 1 to records(wbRl.rules)
+    get(wbRl.rules, i)
+    if wbRl.rules.ruleId = wbDraftId or wbRl.rules.ruleId < vr:userBase or wbRl.rules.kind <> vr:kindRule then cycle.
+    if wbRl.rules.revOf or wbRl.rules.groupId <> grp or (wbRl.rules.srcText &= NULL) then cycle.
+    if wbRl.rules.srcText = txt.getValue() then return 1.
+  end
+  return 0
+
+! ====================================================================================
 ! the save GATE + write only. zero SEV:Error on the prospective combined set;
 ! warnings -> confirm. NO main-window refresh here - WbW is still open and Clarion
 ! field equates resolve against the CURRENT window; the refresh is WbAfterSave, run
@@ -2297,7 +3029,7 @@ WbSave PROCEDURE()
 prosp  StringTheory
 chk    StringTheory ! proves the file on disk can be READ before anything is written over it
 e      LONG,AUTO
-nWarn  LONG,AUTO    ! NB not 'w' - labels are caseless and W is the main WINDOW label (the global-r lesson, mirrored)
+nWarn  LONG,AUTO    ! NB not 'w' - labels are caseless and W is the main WINDOW label
 ln     LONG
   code
   ! A FILE THAT IS THERE BUT CANNOT BE READ MUST NOT BE OVERWRITTEN. The compose below starts
@@ -2307,7 +3039,7 @@ ln     LONG
   ! one licenses a write. A file held open by another program, or on a path that has gone
   ! away, exists and cannot be read.
   if exists(userFn.getValue())
-    if ~chk.LoadFile(userFn.getValue())
+    if ~chk.LoadFile(userFn.getValue()) and chk.winErrorCode                       ! 0 bytes: empty, not unreadable
       message('Could not read ' & clip(userFn.getValue()) & '||' & chk.LastError             & |
               '||Nothing has been saved. Saving now would replace the whole file with just ' & |
               'this rule, because the rules already in it could not be read.',                 |
@@ -2320,13 +3052,20 @@ ln     LONG
     message('The combined set has ' & e & ' lint error(s) - a rule only saves clean (see the panel).', 'VitStyle', ICON:Exclamation)
     return 0
   end
+  ! A RULE ITS GROUP ALREADY HOLDS IS NOT SAVED AGAIN. The workbench keeps the last rule in the box
+  ! so a new one can start from it, and a second Save with nothing changed would put the same rule
+  ! into the group twice - a copy that never fires, because the first has changed the code already.
+  if WbIsCopy()
+    message('Group ' & clip(wbGrp) & ' already holds this rule, word for word.||Nothing has been saved. Change the text to save it as a new rule.', 'VitStyle', ICON:Exclamation)
+    return 0
+  end
   nWarn = wbRl.WarnCount()
   if nWarn
     if message('Lint shows ' & nWarn & ' warning(s) - see the panel.|Save anyway?', 'VitStyle', ICON:Question, BUTTON:Yes + BUTTON:No, BUTTON:Yes) = BUTTON:No
       return 0
     end
   end
-  WbComposeUser(prosp, ln) ! recompose - WbLint's copy was consumed by the load
+  WbComposeUser(prosp, ln)                                                         ! recompose - WbLint's copy was consumed by the load
   if not prosp.SaveFile(userFn.getValue())
     message('Could not save ' & clip(userFn.getValue()) & '||' & prosp.LastError, 'VitStyle', ICON:Exclamation)
     return 0
@@ -2337,21 +3076,33 @@ ln     LONG
 ! post-save refresh - runs AFTER close(WbW), main window is current again. The
 ! FULL normal reload (no incremental patching of live queues), force the saved
 ! group ON for the session, the profile offer, then the standard refresh chain.
+! The batch line it shows carries every group override in force - the ones made
+! before the save as well as the saved group - since the preview runs with all of them,
+! and a switch for each Align setting changed from what the style gives (AlignSwitches).
+! It names the profiles file whenever the preview's style needs it: a style picked while
+! the file is loaded, and under (file defaults) a profile that takes the default style's
+! name, or SETTINGS the file gives that style. It is left off when the file is not loaded,
+! as a batch run stops on a --stylefile= it cannot read.
 ! ------------------------------------------------------------------------------------
 WbAfterSave PROCEDURE()
 mem   StringTheory
+grps  StringTheory
+nogr  StringTheory
+sw    StringTheory
+swNo  StringTheory
 g     LONG,AUTO
 i     LONG,AUTO
 s     LONG,AUTO
 svSty STRING(vr:maxName),AUTO
+pf    BYTE
   code
-  svSty = curStyle                                                              ! LoadEverything re-applies the FILE's LASTUSED marker
-  LoadEverything()                                                              !   (right at startup, wrong here) - saving a workbench rule
-  if svSty and rl.FindStyle(svSty)                                              !   silently reverted the SESSION's style choice, and the
-    curStyle = svSty                                                            !   retained overrides were then re-applied on the wrong base.
-  end                                                                           !   ApplyOverrides below re-resolves with the restored style.
-  g = rl.FindGroup(wbGrp)                                                       ! force the saved group ON for this session (the group is
-  if g                                                                          !   opt-in, but the author wants to SEE the rule live)
+  svSty = curStyle                                                                      ! LoadEverything re-applies the FILE's LASTUSED marker
+  LoadEverything()                                                                      !   (right at startup, wrong here), so the SESSION's style
+  if ~svSty or rl.FindStyle(svSty)                                                      !   goes back - (file defaults), a blank, included. Left on
+    curStyle = svSty                                                                    !   LASTUSED, the overrides would be re-applied on its base.
+  end                                                                                   !   ApplyOverrides below re-resolves with the restored style.
+  g = rl.FindGroup(wbGrp)                                                               ! force the saved group ON for this session (the group is
+  if g                                                                                  !   opt-in, but the author wants to SEE the rule live)
     loop i = 1 to records(OvrQ)
       get(OvrQ, i)
       if oq:grpRow = g then delete(OvrQ) ; break.
@@ -2361,35 +3112,50 @@ svSty STRING(vr:maxName),AUTO
     oq:mode   = 1
     add(OvrQ)
   end
-  if curStyle                                                                   ! offer the group to the ACTIVE profile's STYLE line
+  if curStyle                                                                           ! offer the group to the ACTIVE profile's STYLE line
     s = rl.FindStyle(curStyle)
     if s
       get(rl.styles, s)
-      mem.setValue(' ' & upper(clip(rl.styles.members)) & ' ')                  ! whole-word membership test - the old
-      mem.replaceByte(44, 32)                                                   !   substring instring() found group `st` inside replace all <comma> with <space>
-      if rl.styles.isProfile and ~mem.findChars(' ' & upper(clip(wbGrp)) & ' ') ! member `strings` and silently
-                                                                                ! suppressed the offer
+      mem.setValue(' ' & upper(clip(rl.styles.members.getValue())) & ' ')               ! whole-word membership test - the old
+      mem.replaceByte(44, 32)                                                           !   substring instring() found group `st` inside  ! replace all <comma> with <space>
+      if rl.styles.isProfile and ~mem.findChars(' ' & upper(clip(wbGrp)) & ' ')         ! member `strings` and silently
+                                                                                        ! suppressed the offer
         if message('Add group ' & clip(wbGrp) & ' to the active profile ' & clip(curStyle) & '?', 'VitStyle', ICON:Question, BUTTON:Yes + BUTTON:No, BUTTON:Yes) = BUTTON:Yes
-          mem.setValue(clip(rl.styles.members) & ', ' & clip(wbGrp))
-          if WriteProfileLine(rl.styles.name, mem.getValue())                   ! a failed write must not refresh-and-relint
-            RefreshProfiles()                                                   !   as if it happened
+          if WriteProfileLine(rl.styles.name, clip(rl.styles.members.getValue()) & ', ' & clip(wbGrp), rl.styles.settings) ! a failed write must not refresh-and-relint; the SETTINGS body goes back in or the writer drops it
+            RefreshProfiles()                                                           !   as if it happened
             rl.Lint()
           end
         end
       end
     end
   end
-  ApplyOverrides()                                                              ! Resolve + BuildDisplay + RefreshPreview
+  ApplyOverrides()                                                                      ! Resolve + BuildDisplay + RefreshPreview
   BuildStyleList()
+  OverrideLists(grps, nogr)                                                             ! every override in force, the saved group among them
+  AlignSwitches(sw, swNo)                                                               ! and every Align setting the style does not give
+  if curStyle
+    pf = profLoaded
+  elsif rl.appliedStyle
+    s = rl.FindStyle(rl.appliedStyle)
+    if s
+      get(rl.styles, s)
+      if rl.styles.isProfile or rl.styles.settings then pf = 1.
+    end
+  end
   message('Saved to ' & clip(userFn.getValue())                                                      & |
           '||Batch reproduction:|VitTransform <<rules> <<src> <<out> --userrules=VitStyle.rules.txt' & |
-          choose(curStyle <> '', ' --stylefile=VitStyle.profiles.txt --style=' & clip(curStyle), '') & |
-          ' --group=' & clip(wbGrp), 'VitStyle', ICON:Asterisk)
+          choose(~pf, '', ' --stylefile=VitStyle.profiles.txt')                                      & |
+          choose(curStyle <> '', ' --style=' & clip(curStyle), '')                                   & |
+          choose(~grps._DataEnd, '', ' --group=' & grps.getValue())                                  & |
+          choose(~nogr._DataEnd, '', ' --nogroup=' & nogr.getValue()) & sw.getValue()                & |
+          choose(~swNo._DataEnd, '', '||Not in that line, as the command line cannot give'           & |
+          ' them:' & swNo.getValue() & '|Save... a profile to keep them.'), 'VitStyle', ICON:Asterisk)
 
 ! ====================================================================================
 ! colour: UI prefs live in their OWN file (VitStyle.ui.txt) - the profile file's
 ! engine-side parser (VitRules.LoadStyleFile) warns on unknown lines, so CHGCOLOR
-! cannot ride there without an engine change. Format: one 'CHGCOLOR <n>' line.
+! cannot ride there without an engine change. Format: a 'CHGCOLOR <n>' line and a
+! 'CHGCOLOR2 <n>' line, one colour each.
 ! ------------------------------------------------------------------------------------
 LoadUiPrefs PROCEDURE()
 st  StringTheory
@@ -2411,7 +3177,7 @@ st  StringTheory
   st.setValue('! VitStyle.ui.txt - UI preferences (machine-written by VitStyle).<13,10>' & |
               'CHGCOLOR ' & chgColor & '<13,10>'                                         & |
               'CHGCOLOR2 ' & chgColor2 & '<13,10>')
-  st.SaveFile(uiFn.getValue()) ! best-effort: a failure only loses persistence
+  st.SaveFile(uiFn.getValue())                      ! best-effort: a failure only loses persistence
 
 ! ------------------------------------------------------------------------------------
 ! colour: digit-walk the number after pKey in the (already UPPERED) prefs text.
@@ -2430,7 +3196,7 @@ c   STRING(1),AUTO
   loop while p <= pSt._DataEnd
     c = pSt.valuePtr[p]
     if c < '0' or c > '9' then break.
-    v = v * 10 + val(c) - 48
+    v = v * 10 + c
     p += 1
   end
   return v
@@ -2441,12 +3207,6 @@ c   STRING(1),AUTO
 ! un-starred Line column still shows the normal selection bar (= the selection cue).
 ! ------------------------------------------------------------------------------------
 DarkenColor PROCEDURE(LONG pC)
-cr  LONG,AUTO
-cg  LONG,AUTO
-cb  LONG,AUTO
   code
   if pC < 0 then return pC. ! COLOR:None and friends pass through
-  cr = band(pC, 0FFh) * 4 / 5
-  cg = band(bshift(pC, -8), 0FFh) * 4 / 5
-  cb = band(bshift(pC, -16), 0FFh) * 4 / 5
-  return cr + bshift(cg, 8) + bshift(cb, 16)
+  return band(pC, 0FFh) * 4 / 5 + bshift(band(bshift(pC, -8), 0FFh) * 4 / 5, 8) + bshift(band(bshift(pC, -16), 0FFh) * 4 / 5, 16)

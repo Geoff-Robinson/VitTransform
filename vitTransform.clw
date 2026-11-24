@@ -15,7 +15,7 @@
 ! exit code (ERRORLEVEL): 0 = clean run. 1 = anything a calling script must see - a refused
 !   switch or rule file, rule-file lint errors, a save that failed, golden-test failures.
 !   HALT() with NO argument exits 0 (LRM: "If omitted, the default is zero"), so every
-!   failure path names the 1 explicitly - Say-then-return read as SUCCESS to every .bat.
+!   failure path names the 1 explicitly; a refusal that exits 0 is SUCCESS to a .bat.
 !
 ! switches (a switch NAME is read in any case; the value after an '=' is taken as typed):
 !           --dry-run  --verbose  --timing  --loose  --in-place  --only=<name-or-id>  --skip=<name-or-id>  --passes=<n>
@@ -232,7 +232,7 @@ onlyHits   LONG                                             ! how many rules ans
 skipHits   LONG                                             !   refused, because picking the first would be a guess
 onlyLines  StringTheory                                     ! their line numbers, to name the alternatives in the
 skipLines  StringTheory                                     !   refusal rather than leave the user hunting
-extraPos   StringTheory                                     ! a 4th positional, if any - now always half of an unquoted pathlit
+extraPos   StringTheory                                     ! a 4th positional, if any - half of an unquoted path with a space
 badGrp     StringTheory                                     ! --group=/--nogroup= names the rule file does not declare
 grpList    StringTheory                                     ! the list CheckGroupNames is walking
 knownGrp   StringTheory                                     ! every group the rule file DOES declare, for the refusal message
@@ -242,7 +242,6 @@ redArg     StringTheory                                     ! --red= value
 defArg     StringTheory                                     ! --define= compile-time flags (repeats append); seeds the preprocessor under --thorough
 setBody    StringTheory                                     ! the applied style's profile SETTINGS body
 cmdLineU   StringTheory                                     ! the command line, upper-cased, for the command-line-wins test
-kvSt       StringTheory                                     ! one key=value token from a SETTINGS line
 setApplied StringTheory                                     ! the profile settings that took effect (for the report)
 setNotes   StringTheory                                     ! and what the profile loop has to SAY - an item set aside. NOT outSt: that is freed before the report is written
 setBad     StringTheory                                     ! the profile SETTINGS values the engine refused - they stop the run
@@ -273,15 +272,15 @@ wantSumm   BYTE                                             ! --summary shows th
                                                             !   straight through unattended - every number in that box is in the report file anyway
 batchMode  BYTE                                             ! --batch - never open a modal box; the autonomous watcher has nobody to click it
 wantDump   BYTE                                             ! --dumptokens writes the EXPANDED token stream to disk with its level marks in column 1, and reports every '+' that never
-                                                            !   gets a '-'. VitTokenize.DumpTokens existed already, but its call sites were both commented out, so nothing could
-                                                            !   reach it. This is how you find an unbalanced `exptk level census` instead of guessing at it from keyword counts.
+                                                            !   gets a '-'. This is how you find an unbalanced `exptk level census` instead of guessing at it
+                                                            !   from keyword counts.
 dumpIx     LONG,AUTO                                        !   (the census tells you a level is lost; this tells you WHICH token lost it)
 dumpMt     LONG,AUTO
 dumpLn     LONG,AUTO
 dumpTx     STRING(128)
 dumpNm     StringTheory                                     ! the dump is named after the SOURCE, so diagnosing three files in a row does not leave only the last one on disk
-dumpSrc    StringTheory                                     ! the file the dump actually describes. With a WILDCARD sourcespec, exptk holds the LAST matched file's stream - naming the dump after the
-                                                            !   spec built `*.clw.tokens.txt`, an illegal Windows name, and the save failed in silence while the report claimed the dump was on disk
+dumpSrc    StringTheory                                     ! the file the dump actually describes. With a WILDCARD sourcespec, exptk holds the LAST matched file's stream, so the dump is named after
+                                                            !   that file: a name built from the spec, such as `*.clw.tokens.txt`, is illegal on Windows and could not be saved
 dumpBad    LONG
 thorough   BYTE                                             ! --thorough = include expansion with registry-discovered %ROOT%
 noThorough BYTE                                             ! --nothorough - the explicit no. Beats a rule file's THOROUGH directive AND an explicit --root=, because it is the escape hatch
@@ -324,11 +323,11 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
   CODE
   ! ---- --batch is read FIRST, in a pass of its own, BEFORE anything can refuse ----
   ! It decides whether a refusal may open a modal box at all, and it is habitually written
-  ! LAST. Reading it in argument order meant every refusal raised WHILE parsing opened a box
+  ! LAST. Read in argument order, every refusal raised WHILE parsing would open a box
   ! on exactly the kind of run that exists because nobody is there to click it: a bad
   ! --only=/--passes=/--width= value (NumArg halts on the spot), an unknown switch, or a 4th
-  ! positional - and those last two BREAK the loop, so a --batch after them was never read at
-  ! all. MEASURED: `VitTransform rules.txt probe\With Space\sp.clw out --batch`.
+  ! positional - and those last two BREAK the loop, so a --batch after them would never be
+  ! read at all. MEASURED: `VitTransform rules.txt probe\With Space\sp.clw out --batch`.
   param.setValue(command())
   param.removeByte(34)                                                                   ! a quoted "--batch" is still --batch, and  ! remove all <double quote>
   param.replaceByte(9,32)                                                                !   a tab still separates arguments  ! replace all <tab> with <space>
@@ -750,7 +749,6 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
     setBody.split(' ')
     loop setX = 1 to setBody.records()
       setBody.setValueFromLine(setX)
-! #Removed as unnecessary:       kvSt.trim()
       if ~setBody._DataEnd then cycle.
       setEq = setBody.findByte(61)                                                       ! '='
       if setEq < 2 or setEq >= setBody._DataEnd                                          ! a key with no value slices BACKWARDS
@@ -765,13 +763,22 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
         cycle
       end
       case upper(setKeyS)
-      of 'CMTWRAP' orof 'CMTSPLIT'
+      of 'CMTWRAP'     orof 'CMTSPLIT'
         ! --cmtwrap= and --cmtsplit= are ONE choice with two answers, so an answer on the
         ! command line settles it. The profile does not then get to supply the other one and
         ! leave both in force: the command line wins here as it does for a key it names.
         if cmdLineU.findChars('--CMTWRAP=') or cmdLineU.findChars('--CMTSPLIT=')
           setNotes.append('[profile ' & clip(rl.appliedStyle) & ' SETTINGS: ' & lower(clip(setKeyS)) & |
                        ' set aside - the command line answers the same question with --cmtwrap= or --cmtsplit=]<13,10>')
+          cycle
+        end
+      of 'IGNOREMARKS'
+        ! --ignoremarks takes no value, so the --key= test above does not see it. Given on the command
+        ! line as a whole switch - a space, a tab, a quote or the end of the line after it - it wins too.
+        if cmdLineU.findChars('--IGNOREMARKS ') or cmdLineU.findChars('--IGNOREMARKS<9>') or |
+           cmdLineU.findChars('--IGNOREMARKS"') or cmdLineU.endsWith('--IGNOREMARKS')
+          setNotes.append('[profile ' & clip(rl.appliedStyle) & ' SETTINGS: ' & lower(clip(setKeyS)) & |
+                       ' set aside - the command line gives --ignoremarks]<13,10>')
           cycle
         end
       end
@@ -793,10 +800,10 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
       halt(1)
     end
   end
-  ! ---- an unknown --group=/--nogroup= NAME was a WARNING and the run went
-  !      ahead without it. A warning only reaches the report, so what you saw was a run that
-  !      finished cleanly and quietly did not do the thing you asked for. This is exactly the
-  !      case fixed for an unrecognised SWITCH, and the argument is the same: a name we
+  ! ---- an unknown --group=/--nogroup= NAME is REFUSED rather than warned about
+  !      and run past. A warning only reaches the report, so what you would see is a run that
+  !      finished cleanly and quietly did not do the thing you asked for. It is the same rule
+  !      as for an unrecognised SWITCH, and the argument is the same: a name we
   !      do not know means we do not know what was wanted.
   !      The shape to guard against: a caller asks for
   !          --group=cosmetic-keywordcase-lower
@@ -834,7 +841,7 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
   !      An id is the rule's LINE NUMBER in the rule file, so it moves whenever lines are added
   !      above it - and a moved id is the dangerous case, because it still matches SOMETHING and
   !      the wrong rule is then selected in silence. Names are optional and most rules have none,
-  !      so ids stay supported; what is fixed here is the SILENCE. Whatever was asked for, the
+  !      so ids stay supported; what is guarded here is the SILENCE. Whatever was asked for, the
   !      run says which rule it resolved to, so a stale id is caught by eye on the first run.
   if onlyArg._DataEnd or skipArg._DataEnd
     okOnly = choose(onlyArg._DataEnd = 0)                                                ! not asked for = nothing to check
@@ -849,8 +856,8 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
       if errorcode() then break.
       ! keyed on "was it asked for", NOT on "have we found it" - stopping at the
       ! first match would leave onlyHits stuck at 1 and the ambiguity check below
-      ! could never fire, which is precisely what it did until a probe asserted the
-      ! exit code it was supposed to produce
+      ! could never fire - two rules answering one name would then run the first in
+      ! silence instead of being refused
       if onlyArg._DataEnd
         hit = 0
         if onlyByName
@@ -1030,8 +1037,8 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
             '|      VitTransform ' & clip(fn.getValue()) & ' ' & clip(srcSpec.getValue()) & ' --in-place')
     halt(1)
   end
-  ! --in-place AND an <outdir> name two different destinations. The copies went to the
-  ! directory and the switch was passed over in silence - no .bak, which is what the switch
+  ! --in-place AND an <outdir> name two different destinations. With both, the copies would
+  ! go to the directory, the switch silently dropped - no .bak, which is what the switch
   ! promises. One choice with two answers is refused, as --cmtwrap= with --cmtsplit= is.
   if eng.inPlace and len(clip(eng.outDir)) and ~eng.dryRun
     Say('VitTransform: --in-place and an <<outdir> cannot both be given.'                                      & |
@@ -1176,9 +1183,9 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
                  '  version=' & clip(redVerTx)                             &             |
                  '  config=' & choose(~cfgArg._DataEnd, 'Release', clip(cfgArg.getValue())) & ']<13,10>')
   elsif redArg._DataEnd or cfgArg._DataEnd or defArg._DataEnd
-    ! the three switches feed include expansion and nothing else. Given without it they did
-    ! nothing, and the report did not say so - a run asked to read its OMIT/COMPILE regions
-    ! with --define= and no --thorough left every typed rule blind, with exit 0 and no word.
+    ! the three switches feed include expansion and nothing else; given without it they do
+    ! nothing - and the report says so, because a run asked to read its OMIT/COMPILE regions
+    ! with --define= and no --thorough would run every typed rule blind, with exit 0.
     outSt.append('[' & choose(~redArg._DataEnd, '', '--red= ') & choose(~cfgArg._DataEnd, '', '--config= ')    & |
                  choose(~defArg._DataEnd, '', '--define= ') & 'given, but include expansion is OFF, so it was' & |
                  ' not used - it needs --thorough, --root=<<dir>, or a THOROUGH line in the rule file]<13,10>')
@@ -1188,9 +1195,9 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
                  '  rules=' & uRules & '  errors=' & rl.userErrors & ']<13,10>')         !     added - part of the repeatability header
   end
   rl.SelectionTable(outSt)                                                               ! every report carries its resolved selection
-  if setApplied._DataEnd then outSt.append('[selection] alignment from profile ' & clip(rl.appliedStyle) & ': ' & setApplied.getValue() & '<13,10>'). ! which SETTINGS too
+  if setApplied._DataEnd then outSt.append('[selection] alignment from profile ' & clip(rl.appliedStyle) & ': ' & setApplied.getValue() & '<13,10>'). ! SETTINGS in effect
   if eng.ignoreMarks then outSt.append('[selection] marks: IGNORED - the base64, encoding and gzip marks of a StringTheory are not guarded (--ignoremarks or SETTINGS ignoremarks=on)<13,10>'). ! every report says so
-  if setNotes._DataEnd then outSt.append(setNotes).                                      ! and which the profile loop set aside or refused - kept apart from outSt, which was freed abovek effect
+  if setNotes._DataEnd then outSt.append(setNotes).                                      ! and those the profile loop set aside or refused - kept apart from outSt, which is freed above
   if srcSpec.containsA('*?')                                                             ! '?' '*'
     DIRECTORY(FilesQ, srcSpec.getValue(), ff_:NORMAL)
     sort(FilesQ, +FQ:Name)
@@ -1326,11 +1333,11 @@ vtValueSw2 EQUATE(' dispatch= group= kwcapitalise= kwcapitalize= kwlower= kwtitl
       if dumpBad > 20 then outSt.append('  (' & dumpBad & ' in all - first 20 shown)<13,10>').
       outSt.append('--dumptokens: ' & dumpBad & ' unmatched open(s)<13,10>')
 
-      ! ---- (c) UNMATCHED CLOSES - the mirror of (b), and the half that was missing.
-      !      (b) visits only '+' tokens, so a '-' that closes nothing was never examined:
-      !      vitWordStore.clw reported 0 and 0 while its census read +139 -145, six MORE
-      !      closes than opens. Every open could find a close, so every open matched; the
-      !      six orphans were all on the '-' side and nothing ever looked there.
+      ! ---- (c) UNMATCHED CLOSES - the mirror of (b), and the other half of the check.
+      !      (b) visits only '+' tokens, so it never looks at a '-' that closes nothing:
+      !      in a file with six MORE closes than opens, every open finds
+      !      a close, so every open matches, and the six orphans are all on the '-' side,
+      !      where only this pass looks.
       !      MatchLevel already walks both ways (of 45 -> search backwards for '+'), so this
       !      is the same call from the other end, not a new mechanism.
       !      An END that closes nothing is a compile error in real Clarion, so a hit here is
@@ -1568,7 +1575,7 @@ n    long,auto
     halt(1)
   end
   if n > 9
-    Say('VitTransform: ' & clip(pWhich) & ' value is too long: ' & clip(pTxt)) ! >9 digits silently overflowed the LONG
+    Say('VitTransform: ' & clip(pWhich) & ' value is too long: ' & clip(pTxt)) ! >9 digits would overflow the LONG
     halt(1)
   end
   loop i = 1 to n
@@ -1580,7 +1587,7 @@ n    long,auto
     end
   end
   if v = 0 and ~pZeroOk
-    Say('VitTransform: ' & clip(pWhich) & ' must be 1 or more')                ! --passes=0 was a silent no-op run.
+    Say('VitTransform: ' & clip(pWhich) & ' must be 1 or more')                ! --passes=0 would change nothing.
                                                                                ! --width=0 is a REAL setting (never split),
                                                                                ! so it passes pZeroOk=1 and reaches its own handling.
     halt(1)
@@ -1618,9 +1625,9 @@ n      long,auto
 !      %ROOT%. (32-bit process, so GETREG is WOW64-redirected to SOFTWARE\WOW6432Node -
 !      exactly where the 32-bit Clarion installer writes.)
 !   2. FILESYSTEM - <drive>:\Clarion* directory probe on C/D/E/F + the current drive.
-!      Needed in the real world: a Clarion tree COPIED from a backup (e.g. after a PC
-!      swap) runs fine but never registered, so the registry knows nothing (a real
-!      machine - the case that motivated this fallback).
+!      Needed because a Clarion tree COPIED from a backup (e.g. after a PC
+!      swap) runs fine but was never registered, so the registry knows nothing
+!      about it.
 ! A candidate only counts if it really is a Clarion root: %ROOT%\libsrc\win\equates.clw
 ! exists (or the pre-C8 %ROOT%\libsrc\equates.clw) - that is precisely what --thorough
 ! include expansion needs. Exactly one candidate -> used silently; several -> the user

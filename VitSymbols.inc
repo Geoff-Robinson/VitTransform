@@ -68,6 +68,11 @@ unseen                  BYTE                                                    
 
 ! the MAP prototypes of the file by name: a name with two is an overload, and a summary of
 ! the one body here must not be credited to a call that may bind the other (VitEngine).
+ProtoMemoQType        QUEUE,TYPE
+key                     STRING(2 * vs:maxName + 4)
+tok                     LONG
+                      END
+
 MapProtoQType         QUEUE,TYPE
 nameU                   STRING(vs:maxName)
 n                       LONG
@@ -95,6 +100,8 @@ dimHeld                 BYTE                                                    
                                                                                       !   inside a DIM'd structure, whose subscript is the structure's
 linked                  BYTE                                                          ! 1 = declared EXTERNAL, DLL or EXPORT, or a field of a structure that is: another module
                                                                                       !   holds it or reaches it, so it is never the main code's own (FindOwn)
+blkTok                  LONG                                                          ! the token of the COMPILE or OMIT keyword of the innermost block the declaration is in, 0 = none
+blkEnd                  LONG                                                          !   and the first token after that block (MarkBlocks)
                       END
 
 ! NAMES A SCOPE DECLARES THAT ARE NOT FILED AS SYMBOLS: the label of a structure written as a
@@ -107,6 +114,8 @@ nameU                   STRING(vs:maxName)
 scopeId                 LONG
 typeU                   STRING(vs:maxName)                                            ! a structure's own label - the type registry's name for it - or vs:unknownType
 declTok                 LONG                                                          ! the label's token: a structure's DIM is read from its opener line
+blkTok                  LONG                                                          ! the block the declaration is in, as for a symbol
+blkEnd                  LONG                                                          !   and the first token after it
                       END
 
 ! NAMES DECLARED IN THE INCLUDE-EXPANDED STREAM outside every structure, with the type each is declared
@@ -205,12 +214,15 @@ vs:scalarTypes        EQUATE(' BYTE SHORT USHORT LONG ULONG INT64 UINT64 REAL SR
 
 VitSymbols          CLASS,TYPE,MODULE('VitSymbols.clw'),LINK('VitSymbols.clw',STRINGTheoryLinkMode),DLL(STRINGTheoryDLLMode)
 tk                     &VitTokenize
+pmQ                    &ProtoMemoQType
+pmStamp                STRING(80)
 scopes                 &ScopeQType
 mapProtos              &MapProtoQType                                                 ! MAP prototypes by name (owned)
 mapIncl                BYTE                                                           ! a MAP or MODULE of this file INCLUDEs a file, which may prototype a name again (Build); read only when incRead is 0
 incProtos              &IncProtoQType                                                 ! the MAP prototypes of the include-expanded stream (owned)
 incRead                BYTE                                                           ! incProtos was read for this file: the includes were read, so they answer instead of mapIncl
 incMiss                BYTE                                                           ! a MAP or MODULE in the expanded stream holds an include that could not be read
+isMember               BYTE                                                           ! not a PROGRAM file (a MEMBER or a fragment): it may call procedures a MAP it cannot see declares (Build)
 incDecl                &IncDeclQType                                                  ! names the include-expanded stream declares outside any structure (owned)
 syms                   &SymQType
 hidden                 &HideQType                                                     ! names declared but not filed as symbols (owned)
@@ -231,6 +243,7 @@ regSorted              BYTE                                                     
 regRaw                 BYTE                                                           ! WHICH PASS is running: BuildTypeRegistry sets it from pScoped and the three Add methods stamp it onto every
                                                                                       !   row they add. It is how the raw rows are told from the expanded ones when the raw ones have to go.
 dirty                  BYTE                                                           ! token stream edited since the last Build - rebuild before the next CONSUMER reads (EnsureFresh)
+visMode                BYTE                                                           ! the next Visible call only: 1 = a question of type alone, 2 = read past the blocks (Visible)
 tBuild                 LONG                                                           ! --timing: clock ticks spent in Build this file, and how many calls
 nBuild                 LONG
 traceReg               BYTE                                                           ! build a BuildTypeRegistry decision trace into regTrace (engine sets = verbose)
@@ -260,10 +273,13 @@ MethodReturnClass      Procedure(STRING pOwnerU, STRING pNameU, *BYTE pIsRef, LO
                                                                                                                                 !   pArgCount selects the OVERLOAD (-1 = caller does not know, consider all rows)
 MethodIsVirtual        Procedure(STRING pOwnerU, STRING pNameU),LONG,virtual          ! -1 = NO prototype visible, 0 = visible and not virtual, 1 = VIRTUAL anywhere in the parentU chain
 MethodProtoTok         Procedure(STRING pOwnerU, STRING pNameU),LONG,virtual          ! the ONE prototype's first token; 0 if none or overloaded (VIRTUAL is answered)
+MethodProtoTokWork     Procedure(STRING pOwnerU, STRING pNameU),LONG,virtual
 MethodProtoCount       Procedure(STRING pOwnerU, STRING pNameU),LONG,virtual          ! prototypes of the method seen from the class, parents included: 2+ = an overload
 AddMapProto            Procedure(STRING pNameU, STRING pRetU, LONG pTok),virtual      ! one MAP / MODULE prototype of that name, from the scan
 MapProtoAt             Procedure(LONG pIx),LONG,virtual                               ! the line's first token is a MAP / MODULE prototype, any column, keyword or not
 MapProtoTok            Procedure(STRING pNameU),LONG,virtual                          ! the ONE prototype's first token; 0 if none or overloaded
+MapProtoTokWork        Procedure(STRING pNameU),LONG,virtual
+PmCheck                Procedure(),virtual
 MapProtoCount          Procedure(STRING pNameU),LONG,virtual                          ! MAP prototypes of that name: 2+ = an overload
 ReadIncProtos          Procedure(),virtual                                            ! file incProtos from the include-expanded stream (Build, once per file)
 IncProtoCount          Procedure(STRING pNameU),LONG,virtual                          ! prototypes of that name in incProtos; at one, its row is in the buffer
@@ -298,6 +314,9 @@ FindHidden             Procedure(STRING pNameU, LONG pScopeId),LONG,virtual     
 SymRunLen              Procedure(LONG pRow),LONG,virtual                              ! rows sharing that row's scope and name: 2+ = declared twice in one scope
 SymRunAgrees           Procedure(LONG pRow),LONG,virtual                              ! 1 = every row of that run says the same type, reference and LIKE
 HiddenRunAgrees        Procedure(LONG pRow),LONG,virtual                              ! the same for a hidden row's run
+SymRunCovers           Procedure(LONG pRow, LONG pTok),LONG,virtual                   ! the row of that run in no block, or in one that holds pTok; 0 = none, -1 = none of 2+
+HiddenRunCovers        Procedure(LONG pRow, LONG pTok),LONG,virtual                   ! the same for a hidden row's run
+MarkBlocks             Procedure(),virtual                                            ! mark each row declared inside a COMPILE or conditional OMIT block (Build)
 AddHidden              Procedure(STRING pNm, LONG pSc, STRING pTy, LONG pTok),virtual ! file a name a scope declares that syms does not hold
 TokText                Procedure(LONG pIx),STRING,virtual
 TokIsEOL               Procedure(LONG pIx),LONG,virtual

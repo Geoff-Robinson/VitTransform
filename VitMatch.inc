@@ -75,7 +75,7 @@ ruleRow                 LONG
 ! Anchor-count cache (perf). Without it PickAnchor re-scans the whole token
 ! stream (CountTok, O(tokens)) for every pattern literal of
 ! every rule every pass - fine for goldens, but O(rules x literals x tokens x
-! passes) on a corpus. Instead: collect the distinct pattern literals ONCE
+! passes) over many files. Instead: collect the distinct pattern literals ONCE
 ! (BuildAnchorLits, sorted for binary search), then refresh their occurrence
 ! counts with ONE pass over the tokens whenever the stream changes
 ! (freqDirty). CountTok becomes an O(log distinctLiterals) lookup. keyText is
@@ -95,7 +95,7 @@ pos                     LONG                                                    
 
 PatchSpanQType        QUEUE,TYPE                                                      ! one row per applied match of a firing rule: the span it replaced, in the
 a                       LONG                                                          !   token positions of BEFORE the rule fired, and how many tokens stand
-b                       LONG                                                          !   there now (14 Sep 2026 - the postings are PATCHED from these, not rebuilt)
+b                       LONG                                                          !   there now (the postings are PATCHED from these, not rebuilt)
 n                       LONG
                       END
 
@@ -139,7 +139,7 @@ nRefresh               LONG
 spanQ                  &PatchSpanQType                                                ! the spans a firing rule replaced since the last refresh (owned; NotePatch)
 patchable              BYTE                                                           ! the postings can be PATCHED from spanQ - 0 after a re-lex or a built-in edit, which have no spans
 spanVer                LONG                                                           ! the stream version every span now in spanQ was measured against - spans of two versions cannot be patched together
-postCheck              BYTE                                                           ! --postcheck: after every patch, rebuild the old way and compare
+postCheck              BYTE                                                           ! --postcheck: after every patch, rebuild in full and compare
 postPatched            LONG                                                           !   patches made this file, and
 postMiss               LONG                                                           !   how many the check found wrong (the rebuild is then kept)
 tPatch                 LONG                                                           ! --timing: clock ticks in PatchPostings, and how many
@@ -197,7 +197,7 @@ BuildAnchorLits        Procedure(),virtual                                      
 RefreshFreq            Procedure(),virtual                                            ! recount anchorLits over the current token stream (one pass)
 RefreshInto            Procedure(AnchorLitQType pLits, AnchorPostQType pPost),virtual ! the same walk into the queues given - RefreshFreq's body, and --postcheck's reference
 NotePatch              Procedure(LONG pA, LONG pB, LONG pN),virtual                   ! a firing rule replaced tokens pA..pB (positions before it fired) with pN tokens
-PatchPostings          Procedure(),virtual                                            ! bring anchorLits/anchorPost up to date from spanQ - shift, drop, re-post the new spans (14 Sep 2026)
+PatchPostings          Procedure(),virtual                                            ! bring anchorLits/anchorPost up to date from spanQ - shift, drop, re-post the new spans
 FindAnchorLit          Procedure(STRING pKey),LONG,virtual                            ! binary search anchorLits by key; 0 = absent
 FindFirstPost          Procedure(STRING pKey),LONG,virtual                            ! FIRST anchorPost row for key; 0 = absent
 FreqKey                Procedure(STRING pTok, *STRING pKeyOut),virtual                ! LitMatches identity key: quoted exact, else upper, trunc 80
@@ -210,7 +210,7 @@ OpCanonNot             Procedure(*STRING pTok),STRING,virtual                   
 AnchorNotPair          Procedure(LONG pIx, *STRING pAnchorOp),LONG,virtual            ! does the two-word NOT operator at pIx spell pAnchorOp (already canonical - computed once per rule)
 NotInfixAt             Procedure(LONG pS),LONG,virtual                                ! is the NOT at pS the INFIX one of 'A NOT = B', not the prefix NOT of 'IF NOT x = 1'
 TypeOK                 Procedure(LONG pMvx, LONG pS),LONG,virtual                     ! typed metavar vs symbol table; unresolved = false
-! Design B0b: recombined dotted-receiver (self.Direct) typing for class-typed metavars.
+! recombined dotted-receiver (self.Direct) typing for class-typed metavars.
 NoteChainUnres         Procedure(STRING pRecv),virtual                                ! record a receiver whose class/member is not visible
 NoteMissName           Procedure(STRING pRecv),virtual                                ! the name half of NoteChainUnres: onto the distinct list, capped
 ChainTypeOK            Procedure(LONG pMvx, LONG pS),LONG,virtual                     ! recombined receiver token resolves to the metavar's class
@@ -228,6 +228,8 @@ GuardOK                Procedure(),LONG,virtual                                 
 GuardOneOK             Procedure(),LONG,virtual                                       ! one clause - the LOADED rules.guardQ buffer row - against binds
 SpanHasBoolOp          Procedure(LONG pS, LONG pE),LONG,virtual                       ! 1 = a depth-0 logical operator (AND/OR/XOR/NOT/~) in [pS,pE] - isSimple = ~this
 SpanHasConcat          Procedure(LONG pS, LONG pE),BYTE,virtual                       ! a depth-0 & in the span - noConcat()
+SpanIsWhole            Procedure(LONG pS, LONG pE),BYTE,virtual                       ! every operand in the span is a whole number - integer literals and names of whole-number types - isWhole()
+FoldSafe               Procedure(STRING pIn),STRING,virtual                           ! FoldStr's text of pIn, or pIn when the fold took a name away: EVALUATE ran a call such as today()
 GuardWalk              Procedure(LONG pS, STRING pNameU, BYTE pKind),LONG,virtual     ! does an earlier test prove pKind (1 = size/len = 1, 2 = not NULL) of pNameU at pS? See the banner
 CondGuards             Procedure(LONG pS, LONG pE, STRING pNameU, BYTE pKind, BYTE pMode),LONG,virtual ! the condition pS..pE proves the guard: 2 = the use's own statement, 1 = a block header, 0 = a jump
 NegatedAt              Procedure(LONG pIx, LONG pS),LONG,virtual                      ! a NOT or ~ in front of the token, or of the bracket it opens
@@ -273,6 +275,10 @@ ExprContinuesAfter     Procedure(LONG pIx),LONG,virtual                         
 CompareFollows         Procedure(LONG pIx),LONG,virtual                               ! token pIx+1 is a comparison operator, in any spelling, the infix NOT included - EXPREND refuses it for a replacement opening with ~ or NOT
 ExprContinuesBefore    Procedure(LONG pIx),LONG,virtual                               ! token pIx-1 BINDS INTO the expression (& + - * / ^ % or a comparison) - EXPRSTART refuses
 MatchIsTruthTest       Procedure(LONG pS, LONG pE),BYTE,virtual                       ! NOTBOOL: the match at [pS..pE] is used as a TRUE/FALSE value
+ArgTypeMayChange       Procedure(STRING pNameU, LONG pOpen, LONG pS),BYTE,virtual     ! NOTBOOL: the argument at pS may be read with another type - an untyped parameter, or prototypes not read
+RuntimeOwns            Procedure(STRING pU, LONG pOpen),BYTE,virtual                  ! a name the Clarion runtime owns, for a call no prototype the run read explains
+DestKeepsType          Procedure(LONG pEq),BYTE,virtual                               ! NOTBOOL: the target the '=' at pEq assigns may take the value's own type - an ANY, an untyped parameter, or a name not placed
+ReturnKeepsType        Procedure(LONG pIx),BYTE,virtual                               ! NOTBOOL: a RETURN at pIx may hand back the value's own type - the procedure returns ? or its prototype was not read
 AssignEqAt             Procedure(LONG pIx),LONG,virtual                               ! the '=' at pIx assigns: depth 0 of a statement that opens with its target
 StartsInsideBracket    Procedure(LONG pIx),LONG,virtual                               ! pIx sits inside an unclosed ( or [ of its own statement - INPARENS
 IsMemberDot            Procedure(LONG pIx),LONG,virtual                               ! '.' at pIx is member access (vt:dot, not vt:end)

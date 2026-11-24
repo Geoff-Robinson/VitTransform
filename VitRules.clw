@@ -154,7 +154,7 @@ up        StringTheory
 
   loop x = 1 to pSt.records()
     line.setValue(pSt.getLine(x))
-    line.replaceByte(9, 32)                                                      ! tabs to spaces  ! replace all <tab> with <space>
+    self.TabsOutsideQuotes(line)                                                 ! tabs to spaces, outside quotes
     pos = self.PosOutsideQuotes(line, '!')                                       ! strip comment
     if pos then line.setLength(pos-1).
     line.trim()
@@ -331,10 +331,10 @@ count     long,AUTO
   count = 0
   loop z = 1 to typeIdx - 1
     if len(clip(words.getLine(z))) > size(name)
-      ! silent truncation was worse than it looks: the truncated spelling went into the
-      ! table, every FULL-length use in a pattern then loaded as a LITERAL, and the only
-      ! diagnostic was "declared but never used" naming a spelling the author never wrote
-      ! (CheckNearMiss exits for tokens over vr:maxName, so the use sites said nothing)
+      ! refused, not truncated: a truncated spelling would go into the table, every
+      ! FULL-length use in a pattern would then load as a LITERAL, and the only
+      ! diagnostic would be "declared but never used" naming a spelling never written
+      ! (CheckNearMiss exits for tokens over vr:maxName, so the use sites say nothing)
       self.AddIssue(pLineNo, vr:sevError, 'metavar name is longer than ' & size(name) & ' characters: ' & clip(words.getLine(z)))
       count += 1
       cycle
@@ -369,6 +369,8 @@ optPos   long,auto
 optEnd   long,auto    ! end of the option WORD, for the operand-position message
 hadComma byte,auto    ! the option arrived comma-separated - the deliberate spelling
 kwPos    long,auto    ! start of the last WORD of the replacement
+ptEnd    long,auto    ! the pattern's end, a final ';' and the blanks round it skipped
+ptThen   byte,auto    ! the pattern ends on THEN, a rule for the head of an IF
 kwU      StringTheory
 patTxt   StringTheory
 repTxt   StringTheory
@@ -421,20 +423,20 @@ optTxt   StringTheory
     end
     ! *** AND A KEYWORD THAT TAKES AN OPERAND IS THE SAME MISTAKE ONE TOKEN EARLIER. ***
     ! The test below reads the last CHARACTER, so `x = once` is caught by its '='. But
-    ! `return once` ends in 'n', and the option word was the RETURN VALUE - the rule loaded
-    ! quietly as `return` with the ONCE option set, which is a different rule from the one
-    ! written. RETURN and DO were the only two words this asked about, and two is not the
-    ! whole list: `p ==> if once` loaded as a bare `if`, and a bare `if` spliced into
+    ! `return once` ends in 'n', and there the option word is the RETURN VALUE - read as an
+    ! option, the rule would load quietly as `return` with the ONCE option set, a different
+    ! rule from the one written. RETURN and DO are not the only such words, either:
+    ! `p ==> if once` would load as a bare `if`, and a bare `if` spliced into
     ! someone's source opens a block nothing closes, so the damage lands a long way from
     ! the edit. TakesOperand holds the set, in one place, beside the reason for it.
     kwPos = repTxt._DataEnd
     loop while kwPos > 1 and self.IsLabelChar(repTxt.valuePtr[kwPos - 1])
       kwPos -= 1
     end
-    if repTxt._DataEnd                                                    ! empty after the split ('pat ==> ONCE'):
-      kwU.setValue(upper(repTxt.valuePtr[kwPos : repTxt._DataEnd]))       !   [0 : 0] would slice a freed buffer -
-    else                                                                  !   fall through to the empty-replacement
-      kwU.free()                                                          !   error below, as the comment above says
+    if repTxt._DataEnd                                                          ! empty after the split ('pat ==> ONCE'):
+      kwU.setValue(upper(repTxt.valuePtr[kwPos : repTxt._DataEnd]))             !   [0 : 0] would slice a freed buffer -
+    else                                                                        !   fall through to the empty-replacement
+      kwU.free()                                                                !   error below, as the comment above says
     end
     if ~hadComma and repTxt._DataEnd and kwU._DataEnd and self.TakesOperand(kwU.valuePtr[1 : kwU._DataEnd]) ! a comma-separated option after such a
                                                                                                             !   keyword is the legal spelling, not a
@@ -447,8 +449,27 @@ optTxt   StringTheory
       return
     end
     ! THEN is followed by a STATEMENT, so it is not one of the words above, whose message says it takes an operand; a
-    ! replacement ending on it is an IF with nothing in it, comma or no comma
-    if repTxt._DataEnd and kwU._DataEnd and kwU.getValue() = 'THEN'
+    ! replacement ending on it is an IF with nothing in it, comma or no comma. A PATTERN that ends on THEN is a rule for
+    ! the head of an IF, and its replacement ends on it on purpose: the statement after the THEN stays in the source. So
+    ! is a pattern that ends on THEN and a ';' after it, which matches only where the statement ends at the THEN, as
+    ! when the THEN ends the line.
+    ! The pattern's last word is read past a final ';' and any blanks or tabs either side of it, so
+    ! `then;`, `then ;` and `then  ;` are all the same head.
+    ptThen = 0
+    ptEnd = patTxt._DataEnd
+    loop while ptEnd and (patTxt.valuePtr[ptEnd] = ' ' or patTxt.valuePtr[ptEnd] = '<9>')
+      ptEnd -= 1
+    end
+    if ptEnd and patTxt.valuePtr[ptEnd] = ';'
+      ptEnd -= 1
+      loop while ptEnd and (patTxt.valuePtr[ptEnd] = ' ' or patTxt.valuePtr[ptEnd] = '<9>')
+        ptEnd -= 1
+      end
+    end
+    if ptEnd > 4 and upper(patTxt.valuePtr[ptEnd - 3 : ptEnd]) = 'THEN'
+      if ~self.IsLabelChar(patTxt.valuePtr[ptEnd - 4]) and patTxt.valuePtr[ptEnd - 4] <> '.' then ptThen = 1.
+    end
+    if repTxt._DataEnd and kwU._DataEnd and kwU.getValue() = 'THEN' and ~ptThen
       self.AddIssue(pLineNo, vr:sevError, 'rule option ' & upper(optTxt.sub(1, optEnd - optPos))        & |
                     ' follows THEN, which must be followed by a statement - the replacement would be "' & |
                     repTxt.getValue() & '", an IF with nothing in it.')
@@ -526,7 +547,7 @@ optTxt   StringTheory
   clear(self.rules)
   self.rules.ruleId    = pLineNo
   self.rules.kind      = vr:kindRule
-  self.rules.groupId   = self.curGroup                                    ! 0 = ungrouped (always active)
+  self.rules.groupId   = self.curGroup                                          ! 0 = ungrouped (always active)
   self.rules.guardKind = vr:guardNone
   self.rules.srcText  &= new STRING(pLine._DataEnd)
   self.rules.srcText   = pLine.getValue()
@@ -546,7 +567,7 @@ optTxt   StringTheory
   if repTxt._DataEnd = 6 and upper(repTxt.valuePtr[1 : 6]) = 'DELETE'
     self.rules.isDelete = true
   elsif repTxt._DataEnd = 7 and upper(repTxt.valuePtr[1 : 7]) = 'COMMENT'
-    self.rules.isComment = true                                           ! delete's comment-out sibling (VitRewrite comment path)
+    self.rules.isComment = true                                                 ! delete's comment-out sibling (VitRewrite comment path)
   else
     self.workQ &= self.rules.repQ
     self.TokenizeFragment(repTxt.getValue(), pLineNo, false)
@@ -587,10 +608,10 @@ need   long,auto
     self.AddIssue(pLineNo, vr:sevError, 'NEEDBUILD takes a plain build number: ' & raw.getValue())
     return
   end
-  ! *** A LONG WRAPS, AND THIS ONE WRAPPED TO ZERO. *** NEEDBUILD exists to REFUSE a file an
-  ! old engine would mis-bind, so a NEEDBUILD that quietly passes is the failure it was
-  ! written to prevent, inverted: 4294967296 came back as 0, and 0 is not greater than any
-  ! build. The driver's NumArg has capped digits for exactly this reason since long before.
+  ! *** A LONG WRAPS, SO THE DIGITS ARE CAPPED. *** NEEDBUILD exists to REFUSE a file an
+  ! old engine would mis-bind, so a NEEDBUILD that quietly passes is the failure it is
+  ! there to prevent, inverted: 4294967296 would wrap to 0, and 0 is not greater than any
+  ! build. The driver's NumArg caps its digits for the same reason.
   if raw._DataEnd > 9
     self.AddIssue(pLineNo, vr:sevError, 'NEEDBUILD number is too long: ' & raw.getValue() & |
                   ' - a build number is at most 9 digits')
@@ -1034,11 +1055,11 @@ val       StringTheory
   up.upper()
 
   ! EVERY SCRATCH FIELD guardQ COPIES IS CLEARED HERE, not on the path that happens to
-  ! use it. func and op were cleared only further down, on the COMPARISON path, and the
-  ! class-test arm below returns before reaching them - so `WHERE fold(a) = 'x' and
-  ! isConst(b)` stored a class-test row still carrying fold and '=' from the clause
-  ! before it. Nothing reads those two off a class-test row today, which is the only
-  ! reason it never showed; the .inc calls guardQ "the parsed WHERE clauses", so the
+  ! use it. Cleared only further down on the COMPARISON path, func and op would outlive
+  ! the class-test arm below, which returns before reaching them - so `WHERE fold(a) =
+  ! 'x' and isConst(b)` would store a class-test row still carrying fold and '=' from
+  ! the clause before it. Nothing reads those two off a class-test row today, but
+  ! the .inc calls guardQ "the parsed WHERE clauses", so the
   ! next reader of a class-test row would get an answer from a different clause.
   self.rules.guardFunc = vr:gfNone
   self.rules.guardOp   = 0
@@ -1051,6 +1072,7 @@ val       StringTheory
   if up._DataEnd > 8 and up.valuePtr[1 : 8] = 'ISPLAIN('   then self.rules.guardCT = vr:ctPlain;   x = 8.
   if up._DataEnd > 10 and up.valuePtr[1 : 10] = 'MARKSSAFE(' then self.rules.guardCT = vr:ctMarksSafe; x = 10.
   if up._DataEnd > 9 and up.valuePtr[1 : 9] = 'NOCONCAT('  then self.rules.guardCT = vr:ctNoConcat; x = 9.
+  if up._DataEnd > 8 and up.valuePtr[1 : 8] = 'ISWHOLE('   then self.rules.guardCT = vr:ctWhole;    x = 8.
   if up._DataEnd > 8 and up.valuePtr[1 : 8] = 'ISCONST('   then self.rules.guardCT = vr:ctConst;   x = 8.
   if up._DataEnd > 10 and up.valuePtr[1 : 10] = 'ISLITERAL(' then self.rules.guardCT = vr:ctLiteral; x = 10.
   if up._DataEnd > 6 and up.valuePtr[1 : 6] = 'ISVAR('     then self.rules.guardCT = vr:ctVar;     x = 6.
@@ -1069,7 +1091,7 @@ val       StringTheory
       self.AddIssue(pLineNo, vr:sevError, 'unmatched ( in WHERE class test')
       return
     end
-    if closePos > x + 1                                       ! empty parens: no name, and no slice to take
+    if closePos > x + 1                                        ! empty parens: no name, and no slice to take
       mvName.setValue(pText.valuePtr[x+1 : closePos-1])
     else
       mvName.free()
@@ -1120,7 +1142,7 @@ val       StringTheory
       self.AddIssue(pLineNo, vr:sevError, 'unmatched ( in WHERE function')
       return
     end
-    if closePos > x + 1                                       ! empty parens: no name, and no slice to take
+    if closePos > x + 1                                        ! empty parens: no name, and no slice to take
       mvName.setValue(pText.valuePtr[x+1 : closePos-1])
     else
       mvName.free()
@@ -1137,7 +1159,8 @@ val       StringTheory
          'WHERE guard must start with a metavar or fold()/len()/isConst()/isLiteral()/isVar()/isSimple()/is'  & |
            'Pure()/isCaseNeutral()/isCallFree()/isBoolExpr()/isSpaceless()/isByte()/isOneChar()/isNonNull()/' & |
            'returnsRef()/returnsValue()/'                                                                     & |
-           'isNotNumber()/isPlain()/marksSafe()/noConcat()')
+           'isNotNumber()/isPlain()/marksSafe()/noConcat()/'                                                  & |
+           'isWhole()')
       return
     end
     mvName.setValue(pText.valuePtr[startPos : x-1])
@@ -1198,9 +1221,9 @@ val       StringTheory
   val.setValue(pText.valuePtr[x : pText._DataEnd])
   val.trim()
   ! Walk the FIRST literal to its real close, then require that NOTHING follows it.
-  ! The old test was "starts with a quote and does not END with one", which `WHERE w = 'a' 'b'`
-  ! passes - it ends with a quote - so the junk folded into the comparison value quotes-and-all
-  ! and the guard silently never matched anything. A doubled '' inside the literal is an
+  ! Ending in a quote is no proof of ONE literal: `WHERE w = 'a' 'b'` ends in one too, and
+  ! read as one value the junk would fold into the comparison value quotes-and-all and
+  ! the guard would silently never match anything. A doubled '' inside the literal is an
   ! escaped quote, not the close, which is why this walks rather than searching for the next.
   ! >= 1, not > 1: a lone quote is the surest unterminated literal of all, and the walk must reach it
   if val._DataEnd >= 1 and val.valuePtr[1] = ''''
@@ -1209,9 +1232,9 @@ val       StringTheory
       if val.valuePtr[vx] <> ''''
         vx += 1
       elsif vx < val._DataEnd and val.valuePtr[vx + 1] = ''''
-        vx += 2                                               ! '' - an escaped quote, still inside the literal
+        vx += 2                                                ! '' - an escaped quote, still inside the literal
       else
-        break                                                 ! the closing quote
+        break                                                  ! the closing quote
       end
     end
     if vx > val._DataEnd
@@ -1228,7 +1251,7 @@ val       StringTheory
     self.rules.guardVal &= new STRING(val._DataEnd)
     self.rules.guardVal  = val.getValue()
   else
-    self.rules.guardVal &= NULL                               ! fixed STRING cannot hold '': NULL guardVal means empty literal
+    self.rules.guardVal &= NULL                                ! fixed STRING cannot hold '': NULL guardVal means empty literal
   end
   self.rules.guardKind = vr:guardCompare
   return
@@ -1619,11 +1642,11 @@ nPrev     STRING(vr:maxName),AUTO
   ! A SKIPPED RULE IS NOT IN THIS SCAN AT ALL, and neither is it in the containment
   ! warning below. Nothing can activate it - the matcher, the rewriter and the engine's
   ! pass walk each cycle on skip before any group or --only= test - so it can neither
-  ! ping-pong with its mirror nor re-wrap its own output, and the file was refused for a
+  ! ping-pong with its mirror nor re-wrap its own output, and a refusal here would be for a
   ! pair that cannot run together. Keeping a disabled rule in the file, reasoning and all,
-  ! is what SKIP is for, so this refused files that work. Every OTHER lint check still
+  ! is what SKIP is for, and such a file works. Every OTHER lint check still
   ! judges a SKIPped rule: it is still text that has to parse and name declared things.
-  ! Only the checks about what happens WHEN IT RUNS are skipped with it. Review 16 Sep 2026.
+  ! Only the checks about what happens WHEN IT RUNS are skipped with it.
   free(nq)
   loop r = 1 to records(self.rules)
     get(self.rules, r)
@@ -1800,7 +1823,7 @@ crlf  EQUATE('<13,10>')
       line.append(', REVERSE(' & clip(self.groups.name) & ')')
       get(self.groups, m)
     end
-    if self.groups.isFinal then line.append(', FINAL').                         ! FINAL was in neither dump nor selection table, and it is the one group attribute that changes WHEN rules run
+    if self.groups.isFinal then line.append(', FINAL').                         ! shown: FINAL is the one group attribute that changes WHEN rules run
     line.append('  [' & self.groups.handCount & ' hand + ' & self.groups.autoCount & ' auto')
     if self.groups.dropDup then line.append(', ' & self.groups.dropDup & ' collapsed').
     if self.groups.dropSkip then line.append(', ' & self.groups.dropSkip & ' skipped').
@@ -1876,7 +1899,7 @@ crlf  EQUATE('<13,10>')
             get(self.metaVars, self.rules.guardQ.mvx)
             pOut.append('  where: ' & choose(self.rules.guardQ.ct, 'isConst', 'isLiteral', 'isVar', 'isSimple', 'isPure', |
                         'isCaseNeutral', 'isCallFree', 'isBoolExpr', 'isSpaceless', 'isByte', 'isOneChar', 'isNonNull',   |
-                        'returnsRef', 'returnsValue', 'isNotNumber', 'isPlain', 'marksSafe', 'noConcat') &                |                                                                 ! one name per vr:ct value, in equate order. CHOOSE
+                        'returnsRef', 'returnsValue', 'isNotNumber', 'isPlain', 'marksSafe', 'noConcat', 'isWhole') &     |                                                                 ! one name per vr:ct value, in equate order. CHOOSE
                         '(' & clip(self.metaVars.name) & ')' & crlf)                                                      !   returns its LAST expression when the index is out of range - silently - so a value with no name
                                                                                                                           !   here would print under the last name. The IR dump is what a human reads to check what a rule MEANS.
           elsif self.rules.guardQ.kind = vr:guardCompare
@@ -2059,6 +2082,25 @@ inQ  long
   return 0
 
 ! ------------------------------------------------------------------------------------
+! A tab between the words of a rule line is a blank, as it is in source, and becomes a space,
+! so every later scan sees one kind of blank. A tab INSIDE a quoted literal is a character of
+! that literal and is kept: read as a space, a rule written for a tab literal would match a
+! space literal instead.
+! ------------------------------------------------------------------------------------
+VitRules.TabsOutsideQuotes Procedure(StringTheory pSt)
+x    long,auto
+inQ  byte
+  code
+  loop x = 1 to pSt._DataEnd
+    case val(pSt.valuePtr[x])
+    of 39
+      inQ = 1 - inQ
+    of 9
+      if ~inQ then pSt.valuePtr[x] = ' '.
+    end
+  end
+
+! ------------------------------------------------------------------------------------
 VitRules.FindOptionStart Procedure(StringTheory pSt)
 ! find first whole-word WHERE / NOTE / ONCE / SKIP / EXPRSTART / EXPREND / INPARENS / NOTBOOL / NAME at bracket depth 0, outside quotes
 x       long,auto
@@ -2104,9 +2146,11 @@ prevCh  string(1),auto
       x += 1
       cycle
     end
-    ! a word glued to '.' (member access, e.g. rec.Note) or ':' (prefix, e.g. PRE:Skip)
-    ! is part of a qualified name, NOT a trailing option keyword - exclude those boundaries.
-    if ~depth and ~self.IsLabelChar(prevCh) and prevCh <> '.' and prevCh <> ':' and self.IsLabelChar(pSt.valuePtr[x])
+    ! a word glued to '.' (member access, e.g. rec.Note), ':' (prefix, e.g. PRE:Skip) or '?'
+    ! (a control's field equate, e.g. ?Skip) is part of a name, NOT a trailing option keyword -
+    ! exclude those boundaries.
+    if ~depth and ~self.IsLabelChar(prevCh) and prevCh <> '.' and prevCh <> ':' and prevCh <> '?' and |
+       self.IsLabelChar(pSt.valuePtr[x])
       wStart = x
       loop while x <= pSt._DataEnd and self.IsLabelChar(pSt.valuePtr[x])
         x += 1
@@ -2373,8 +2417,8 @@ z  long,auto
 ! ------------------------------------------------------------------------------------
 ! character-class test for the per-character word scans (options, guards, BUILTIN
 ! params). Letters, digits, '_' and ':' are label characters. NB IsLabelToken on a
-! SINGLE character rejects a digit ("must not start with a digit"), which silently made
-! digits word boundaries - 'flag1skip' parsed as 'flag1' + SKIP, 'WHERE e2' as metavar e.
+! SINGLE character rejects a digit ("must not start with a digit"), so it cannot serve:
+! digits would split words: 'flag1skip' reads as 'flag1' + SKIP, 'WHERE e2' as metavar e.
 ! ------------------------------------------------------------------------------------
 VitRules.IsLabelChar Procedure(STRING pCh)
   code
@@ -2905,6 +2949,14 @@ patSet   STRING(1),DIM(500)
     ! OROF a value, TO and BY a LOOP bound, DO and GOTO a label - no statement ends straight after
     ! one. RETURN, CYCLE and BREAK are not in it: their operand may be left out, so a statement
     ! can end after them and the ';' holds. Nor are THEN and ELSE, which a line may end with.
+    ! A rule whose pattern and replacement both end on THEN (the head of an IF), or both end on
+    ! ELSE (the end of an IF's THEN branch), has its twin mirrored without the ';' as well. On
+    ! both sides what follows that word stays in the source, so the twin matches where the
+    ! forward rule does: on a one-line IF, where the word is followed by statements joined by
+    ! ';', and where the word ends the line. THEN ends the condition and ELSE ends the statement
+    ! in front of it, so the twin cannot match the front of a longer one. With the ';' it would
+    ! match only where the word ends the line. When only the new pattern ends on the word, the
+    ! ';' stays: the twin's replacement would otherwise run straight into what follows it.
     revOp = 0
     if repTxt._DataEnd
       case val(repTxt.valuePtr[repTxt._DataEnd])
@@ -2917,10 +2969,15 @@ patSet   STRING(1),DIM(500)
       end
       if c < 2 or repTxt.valuePtr[c - 1] <> '.'
         case upper(repTxt.valuePtr[c : repTxt._DataEnd])
-        of 'AND' orof 'OR'    orof 'XOR'   orof 'NOT'
+        of 'AND'  orof 'OR'    orof 'XOR'   orof 'NOT'
           revOp = 1
-        of 'IF'  orof 'ELSIF' orof 'WHILE' orof 'UNTIL' orof 'CASE' orof 'EXECUTE' orof 'OF' orof 'OROF' orof 'TO' orof 'BY' orof 'DO' orof 'GOTO'
+        of 'IF'   orof 'ELSIF' orof 'WHILE' orof 'UNTIL' orof 'CASE' orof 'EXECUTE' orof 'OF' orof 'OROF' orof 'TO' orof 'BY' orof 'DO' orof 'GOTO'
           revOp = 1
+        of 'THEN' orof 'ELSE'
+          t = patTxt._DataEnd
+          if c > 1 and t > 4 and upper(patTxt.valuePtr[t - 3 : t]) = upper(repTxt.valuePtr[c : repTxt._DataEnd])
+            if ~self.IsLabelChar(patTxt.valuePtr[t - 4]) and patTxt.valuePtr[t - 4] <> '.' then revOp = 1.
+          end
         end
       end
     end
@@ -2957,7 +3014,8 @@ patSet   STRING(1),DIM(500)
     ! forms): a mid-condition term followed by and/or fails the assertion. NB a hand
     ! rule that wants to OVERRIDE an auto twin must spell the same trailing ';' or
     ! the normalized patterns will not collide. A twin whose pattern ends in an operator
-    ! or such a keyword has no ';' (above), and a hand rule that overrides one spells none.
+    ! or such a keyword has no ';' (above), and nor has the twin of a rule whose two sides both
+    ! end on THEN or both on ELSE; a hand rule that overrides one of these spells none.
     ! A twin whose replacement ends in a word that takes an operand writes a comma before its
     ! options when the loader needs one (revKw).
     ! A twin the loader refuses (TwinRefused) is skipped with a warning, not an error.
@@ -3221,11 +3279,11 @@ knownSty StringTheory       ! the style names this file declares, for the unknow
   if self.defaultStyle and ~pStyle           ! layer 0b: DEFAULTSTYLE from the rule file - applied ONLY
     styNm  = self.defaultStyle               !   when no explicit style was asked for. An explicit
     styWhy = 'DEFAULTSTYLE'                  !   --style= REPLACES the default rather than layering over
-    do ApplyOneStyle                         !   it: under layering, anything the
+    do ApplyOneStyle                         !   it: layered, anything the
     if styOk then self.styleFromDefault = 1. !   default switched on that the chosen style never mentions
-  end                                        !   stayed on - fastcompare-negatives leaked into a readable run - so the style you ask for is the style you get.
+  end                                        !   would stay on (fastcompare-negatives in a readable run) - so the style you ask for is the style you get.
                                              !   Axes the chosen style does not name still fall back to their per-axis DEFAULT members (layer 0 above).
-  if pStyle                                  ! layer 1: style / profile. Bare-string IF is the non-blank test and the compare behind it is trailing-space-blind, so clip() here was the exact redundancy this tool removes
+  if pStyle                                  ! layer 1: style / profile. Bare-string IF is the non-blank test and the compare behind it is trailing-space-blind, so clip() here is the exact redundancy this tool removes
                                              !
     styNm  = pStyle
     styWhy = 'style/profile'

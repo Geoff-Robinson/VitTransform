@@ -8,7 +8,7 @@
 ! expansion.
 !
 ! Runs before the lexer. See Preprocessor.inc for the design summary. The whole
-! algorithm was validated against a real Clarion .RED before being written here.
+! algorithm follows the way Clarion itself reads a real .RED.
 !
 ! Facts this file relies on:
 !   * EXISTS(path) is the standard Clarion file-existence built-in.
@@ -28,8 +28,8 @@ preprocessor.Construct PROCEDURE()
 dbg StringTheory ! trace-only local, not used for any real parsing
   code
   ! DELIBERATELY KEPT. This is the transpiler's build-provenance convention: it is how that
-  ! project confirms which build of a module is actually running, and it has settled more
-  ! than one wrong conclusion there. It goes to the DEBUG VIEWER, never to a file and never
+  ! project confirms which build of a module is actually running, so a stale build shows
+  ! up at once. It goes to the DEBUG VIEWER, never to a file and never
   ! to the user - nothing is written to disk and nothing appears unless a viewer is attached.
   ! Do not delete it as a stray debug statement; this file is shared, and the transpiler
   ! relies on it. (Mind the length if you edit it - an over-long single-quoted Clarion
@@ -308,13 +308,13 @@ preprocessor.ExpandMacros PROCEDURE(StringTheory s)
 ! NormalizeDir - expand macros, then resolve a RELATIVE directory against ProjDir.
 !
 ! EVERY relative form resolves against the project, not against wherever the
-! process happens to have been started. A leading '.' or '..' always did; a BARE
-! relative name - `libsrc`, the commonest spelling in a real redirection file -
-! fell through the early return untouched and was later resolved by the OS
-! against the CWD. That is the same directory only when the tool is run from the
-! project, which is how it survived: every gate here runs in the project
-! directory. A user's build does not have to, and the failure is silent - the
-! include is simply not found, or a DIFFERENT file of that name is.
+! process happens to have been started. A BARE relative name - `libsrc`, the
+! commonest spelling in a real redirection file - is joined to ProjDir here,
+! as '.' and '..' are. Left alone it would be resolved later by the OS
+! against the CWD, which is the same directory only when the tool is run
+! from the project. A user's build does not have to be, and the
+! failure is silent - the include is simply not found, or a DIFFERENT
+! file of that name is.
 !
 ! Absolute paths are left exactly as written, and so is an empty one.
 ! ---------------------------------------------------------------------------
@@ -347,13 +347,13 @@ preprocessor.NormalizeDir PROCEDURE(StringTheory pDir)
   end
 ! A LEADING DOT DOES NOT MAKE A NAME RELATIVE-TO-HERE. `.private` and `..foo` are ordinary
 !     directory names that happen to start with a dot, and every arm above is looking for the
-!     NAVIGATION spellings - '.', '..', '.\x', './x', '..\x', '../x'. Without the ELSE above,
-!     a name matching none of them left this procedure with pDir UNCHANGED and still relative,
-!     and the OS then resolved it against the current directory instead of the project - so the
-!     include was not found, or a DIFFERENT file of that name was, and nothing said a word.
+!     NAVIGATION spellings - '.', '..', '.\x', './x', '..\x', '../x'. A name matching none of
+!     them reaches the ELSE above. Left unchanged and still relative, it would be resolved by
+!     the OS against the current directory instead of the project, so the include would not be
+!     found, or a DIFFERENT file of that name would be, and nothing would say a word.
 !     The ELSE gives it the same treatment as any other relative name: joined to ProjDir, which
 !     is exactly what the `pDir.valuePtr[1] <> '.'` arm at the top of this procedure does. The
-!     dot was never the point; being relative was.
+!     dot is not the point; being relative is.
 
 ! ---------------------------------------------------------------------------
 ! ResolveFile - locate an INCLUDE'd file. Default extension .CLW. Absolute names
@@ -379,9 +379,9 @@ i     long,auto
   !    ('sub/ScopeManager.inc') - gate it on the name carrying a path separator
   !    and a plain sibling include is never found.
   !    pFromDir is the INCLUDING file's directory, passed down the ProcessText
-  !    recursion. ProjDir alone was wrong for anything nested: it is set ONCE in Init
-  !    from the MAIN source, so an include living in a subdirectory had ITS siblings
-  !    looked for next to the main file, where they are not, and the run reported
+  !    recursion. ProjDir alone is wrong for anything nested: it is set ONCE in Init
+  !    from the MAIN source, so an include in a subdirectory would have ITS siblings
+  !    looked for beside the main file, where they are not, and the run would report
   !    'INCLUDE not found' for a file sitting right beside the one asking for it.
   if ~omitted(pFromDir)
     cand = self.JoinPath(clip(pFromDir), nm)
@@ -393,8 +393,8 @@ i     long,auto
   cand = self.JoinPath(self.ProjDir, nm)
   if EXISTS(clip(cand)) then return clip(cand).
   ! 3. The .RED search table, by base name.
-  ! fall through and try by base name through the search table (matches
-  ! original behaviour for path-bearing names not found via ProjDir either)
+  ! a name with a path, not found in (1) or (2), is looked up here too, by
+  ! its base name alone.
   base = self.BaseName(nm)
   loop i = 1 to records(self.RedDirs)
     get(self.RedDirs, i)
@@ -493,6 +493,8 @@ Sup         byte           !   IS the region stack, and an unterminated region i
           END              !   include cannot leak into the file that included it
 rgTerm    StringTheory     ! CheckOmitCompile out-params
 rgSup     byte
+rgAft     long
+rgEnd     byte
 fileName  string(512)
 secName   string(256)
 onceFlag  byte
@@ -555,7 +557,9 @@ secOfs    long,auto        ! section start line in the included file
       if rgq:Sup then cycle.
     end
     do SemiDirective
-    if self.CheckOmitCompile(tl, rgTerm, rgSup)
+    if self.CheckOmitCompile(tl, rgTerm, rgSup, rgAft)
+      do OwnLineEnd
+      if rgEnd then cycle.
       clear(RegionQ)
       rgq:Term &= new string(rgTerm._DataEnd)
       rgq:Term = rgTerm.getValue()
@@ -661,6 +665,30 @@ secOfs    long,auto        ! section start line in the included file
     delete(RegionQ)
   end
 
+! ---- THE DIRECTIVE'S OWN LINE CAN END ITS BLOCK. The search for the terminator starts on the
+!      rest of that line, after the directive's closing ')': measured, a terminator in the line's
+!      comment ends the block on that line, and the block is empty - nothing is omitted and no
+!      region is opened. The condition in front of the ')' is not searched: measured, the
+!      compiler does not end the block on a terminator spelled inside it. The line is searched
+!      as written, so a terminator that ends in a blank is found as it is on the lines below. A
+!      directive whose ')' is not on its line is not searched ----
+OwnLineEnd routine
+  data
+olRaw  StringTheory
+olRest StringTheory
+olK    long,auto
+  code
+  rgEnd = 0
+  if ~rgAft then exit.
+  if rgAft <= tl._DataEnd then olRest.SetValue(tl.valuePtr[rgAft : tl._DataEnd]).
+  olRaw.SetValue(work.getLine(i))
+  olK = olRaw._DataEnd
+  loop while olK > 0 and (olRaw.valuePtr[olK] = ' ' or olRaw.valuePtr[olK] = '<9>')
+    olK -= 1
+  end
+  if olK < olRaw._DataEnd then olRest.Append(olRaw.valuePtr[olK + 1 : olRaw._DataEnd]).
+  if olRest.findChars(rgTerm.getValue()) then rgEnd = 1.
+
 ! ---- A DIRECTIVE AFTER A ';'. The compiler takes INCLUDE, OMIT and COMPILE after a line break
 !      or after a ';' and white space (LRM, compiler messages: "INCLUDE has to follow a
 !      line-break, or a semi-colon"), so in  n = 1 ; INCLUDE('x.inc')  the INCLUDE is a
@@ -717,8 +745,12 @@ sdOnce byte
 ! the line was a directive (the caller drops it either way) and fills the
 ! region's terminator + suppress flag; the CALLER pushes it onto its region
 ! stack, which is what lets regions nest where the LangRef allows.
+! pAfter, when it is passed, says where the text after the directive's closing
+! ')' starts in pTrimmed: the brackets are counted, and a bracket inside a
+! literal is not one. 0 when the ')' is not on the line - a '|' or a '!'
+! outside a literal comes first.
 ! ---------------------------------------------------------------------------
-preprocessor.CheckOmitCompile PROCEDURE(StringTheory pTrimmed, StringTheory pTerm, *BYTE pSuppress)
+preprocessor.CheckOmitCompile PROCEDURE(StringTheory pTrimmed, StringTheory pTerm, *BYTE pSuppress, <*LONG pAfter>)
 u        StringTheory ! the directive upper-cased, for the keyword test only: the terminator and the condition are sliced from pTrimmed in source case
 isOmit   byte,auto
 condVal  byte,AUTO
@@ -727,13 +759,16 @@ p1       long,AUTO
 p2       long,AUTO
 pc       long,AUTO
 pr       long,AUTO
+k        long,auto
+dep      long
+q        byte
   code
   u.setValue(pTrimmed)
   u.upper()
   ! A TAB SEPARATES THE KEYWORD FROM ITS '(' EXACTLY AS A SPACE DOES, and a compare
-  ! ignores TRAILING spaces only, so 'OMIT' + tab never equalled 'OMIT '. The region then
-  ! never opened: the omitted block AND its terminator line were spliced into the expanded
-  ! stream as live code, with nothing reported.
+  ! ignores TRAILING spaces only, so 'OMIT' + tab never equals 'OMIT '. Untested, a tab
+  ! would leave the region unopened - the omitted block AND its terminator line go into
+  ! the expanded stream as live code, with nothing reported.
   if u.startsWith('OMIT(') or u.startsWith('OMIT ', true, st:NoClip) or u.startsWith('OMIT<9>', true, st:NoClip)
     isOmit = true
     p = 5
@@ -760,6 +795,22 @@ pr       long,AUTO
     condVal = true
   end
   pSuppress = choose(isOmit = true, condVal, 1 - condVal)
+  if ~omitted(pAfter)
+    pAfter = 0
+    loop k = p to pTrimmed._DataEnd
+      case val(pTrimmed.valuePtr[k])
+      of 39
+        q = 1 - q
+      of 40
+        if ~q then dep += 1.
+      of 41
+        if ~q then dep -= 1.
+        if ~dep then pAfter = k + 1 ; break.
+      of 33 orof 124
+        if ~q then break.
+      end
+    end
+  end
   return true
 
 ! ---------------------------------------------------------------------------
@@ -868,7 +919,7 @@ q    long,AUTO
   if ~p then p = u.findChars('<9>EQUATE').
   if p < 2 then return.
   nm = left(u.sub(1, p - 1))
-  ! `Label<9><9>EQUATE(1)`: the probe matched at the SECOND tab and the first stayed in the name,
+  ! `Label<9><9>EQUATE(1)`: a search can match at the SECOND tab and leave the first in the name,
   ! where clip() does not reach it - a tab after the label is a separator, so it becomes a space
   loop q = 1 to len(clip(nm))
     if nm[q] = '<9>' then nm[q] = ' '.
@@ -914,8 +965,8 @@ pq      long,AUTO
   p1 = ln.findByte(40)                                   ! '(' - and the opening quote: WHICHEVER COMES FIRST
   pq = ln.findByte(39)                                   !   picks the arm. A '(' can sit in a trailing comment
   if ~p1 or (pq and pq < p1)                             !   or in the name itself, and a whole-line search for
-    p1 = pq                                              !   one sent such a line down the bracketed arm, where
-    if ~p1 then return 0.                                !   it failed and went out as text in silence. NO
+    p1 = pq                                              !   one would send such a line down the bracketed arm
+    if ~p1 then return 0.                                !   to fail and go out as text in silence. NO
     gap.SetValue(ln.Sub(8, p1 - 8))                      !   BRACKETS is a spelling real sources use, so it is
     gap.Trim(' <9>')                                     !   read. Whitespace must still separate the keyword
     if gap._DataEnd then return 0.                       !   from the quote: that keeps INCLUDEFILE out of here
@@ -940,18 +991,18 @@ pq      long,AUTO
   end
   gap.SetValue(ln.Sub(8, p1 - 8))                        ! between INCLUDE and '(' must be WHITESPACE. A TAB
   gap.Trim(' <9>')                                       !   separates exactly as a space does, and a bare-string
-  if gap._DataEnd then return 0.                         !   test calls one NON-blank, so the whole line went out
-                                                         !   as ordinary text with the include never expanded
-  ! the MATCHING ')', not the first one. The case that makes this a real
-  ! bug rather than a tidy-up is the commonest path on Windows -
+  if gap._DataEnd then return 0.                         !   test calls one NON-blank, so the line would go out
+                                                         !   as ordinary text, the include never expanded
+  ! the MATCHING ')', not the first one. The case that needs it is the
+  ! commonest path on Windows -
   !     INCLUDE('C:\Program Files (x86)\...\thing.inc')
-  ! where FindChar returns the ')' of '(x86)': the filename came back truncated, the
-  ! include silently did not resolve, and the ONCE scan below started INSIDE the path
-  ! (so a directory containing the letters "once" would have set pOnce too).
+  ! where the first ')' is the one of '(x86)': stopping there would truncate the name, the
+  ! include would not resolve, and the ONCE scan below would start INSIDE the path
+  ! (so a directory containing the letters "once" would set pOnce too).
   ! MatchBrackets counts depth, so a BALANCED pair inside the quotes cancels out and it
   ! lands on the real close. It is not quote-aware - `INCLUDE('a).inc')` still defeats
   ! it - but that needs a quote-aware scan and is a far rarer shape than a program-files
-  ! path. Documented rather than fixed, deliberately.
+  ! path, so it is left as a known limit.
   p2 = ln.MatchBrackets('(', ')', p1)
   if ~p2 or                                              |
      p2 <= p1 + 1                                        ! `INCLUDE()` - nothing to parse; or a '(' inside the
@@ -974,10 +1025,10 @@ pq      long,AUTO
   p3 = ln.findByte(39, 1,, pFile)                        ! <single quote>
   if p3 > 1 and instring('&', clip(pFile), 1, p3) then pFile = sub(pFile, 1, p3 - 1).
   ! CHOOSE(expr, val1, val2) treats a positive-integer expr as a 1-based INDEX into the
-  ! value list, not a boolean (confirmed against Clarion's own docs). INSTRING()
+  ! value list, not a boolean (as Clarion's own docs say). INSTRING()
   ! returns a POSITION, so `choose(instringResult, 1, 0)` returns 1 only when the match
-  ! happens to land at position 1 - which is why onceFlag came out false almost always and
-  ! ONCE deduplicated nothing. The single-argument CHOOSE(expr) is the real boolean-to-0/1
+  ! happens to land at position 1, so onceFlag would be false almost always and ONCE
+  ! would deduplicate nothing. The single-argument CHOOSE(expr) is the real boolean-to-0/1
   ! converter: use it, or an explicit `expr <> 0`, whenever the condition is not already
   ! guaranteed to be exactly 0 or 1.
   ! bound the ONCE search at a trailing comment '!'
@@ -1109,8 +1160,8 @@ i     long,auto
 ! path", and for a path that is only a navigation step there is no part to take. DirName('.')
 ! is '' - correct for what DirName means, and useless as a parent, because '' is read further
 ! down as "the current directory" and so the step up is silently lost. A redirection entry of
-! `..\shared` then resolved to `shared`: the project directory itself, not its parent. If a
-! file of that name happened to live there it was spliced in instead of the right one.
+! `..\shared` would then resolve to `shared`, in the project directory, not its parent, and a
+! file of that name living there would be spliced in instead of the right one.
 !
 ! A trailing navigation step cannot be cancelled by removing it - the parent of `..` is
 ! `..\..`, not '' - so those spellings are extended rather than popped. A single plain name

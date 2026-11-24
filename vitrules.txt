@@ -1,7 +1,7 @@
 ! =====================================================================
 ! vitrules.txt - the shipped VitTransform rule file.
 !
-! Ships with VitTransform 2.0.0. The NEEDBUILD line below names the minimum
+! Ships with VitTransform 2.0.1. The NEEDBUILD line below names the minimum
 ! engine build this file needs, and the engine refuses it if it is older.
 !
 ! HOW TO USE IT
@@ -39,8 +39,8 @@
 ! =====================================================================
 
 ! The canonical numeric type classes - used by the numeric no-op rules below.
-TYPESET INT = BYTE + LONG + ULONG + SHORT + USHORT + INT64 + UINT64
-TYPESET NUM = INT + DECIMAL + PDECIMAL + REAL + SREAL + BFLOAT4 + BFLOAT8 + SIGNED + UNSIGNED
+TYPESET INT = BYTE + LONG + ULONG + SHORT + USHORT + INT64 + UINT64 + SIGNED + UNSIGNED
+TYPESET NUM = INT + DECIMAL + PDECIMAL + REAL + SREAL + BFLOAT4 + BFLOAT8
 TYPESET STRCS = STRING + CSTRING + PSTRING ! the string-typed gate: clip-flag absorption AND the clip-in-a-condition rules.
                                           !   All three are real string types, so clip() means the same thing for each and a
                                           !   bare name is a non-blank test for each. MEMO is NOT here, and neither is any
@@ -57,7 +57,7 @@ nm              NUM             ! any numeric identifier (TYPESET above) - numer
 sc              STRCS           ! declared STRING, CSTRING or PSTRING - the string-typed gate
 c               CONST           ! a single integer literal - compound-assignment rules
 v               ANYVAR          ! a single identifier, no type check - ditto
-ASSUME st* StringTheory         ! GCR naming folklore: undeclared st-prefixed identifiers are StringTheory
+ASSUME st* StringTheory         ! a naming convention: undeclared st-prefixed identifiers are StringTheory
 
 ! ---------------------------------------------------------------------
 ! Rest-of-string: sub with a whole-length second arg
@@ -73,13 +73,16 @@ ASSUME st* StringTheory         ! GCR naming folklore: undeclared st-prefixed id
 ! procedure that takes no parameters can be called by its name alone, so a position that is such a call
 ! would run once where it ran twice: a different string, and one effect fewer. isCallFree leaves alone
 ! a name it cannot see is data - it sees this file's own declarations, not those of an INCLUDEd file.
+! And the position must be a WHOLE number. sub() takes whole numbers, so a REAL position of 2.5 is
+! cut to 2, and the length worked out from it, 8.5, is cut to 8 - the characters 2 to 9. slice(2.5)
+! runs from 2 to the end. isWhole lets through only a name declared as a whole-number type.
 ! ---------------------------------------------------------------------
 st.sub(w, st._DataEnd)           ==>  st.slice(w)
 st.sub(w, st.Length())           ==>  st.slice(w)
 st.sub(w, st.Len())              ==>  st.slice(w)
 st.sub(w, st.LengthA())          ==>  st.slice(w)
-st.sub(v, st._DataEnd - v + 1)   ==>  st.slice(v)       WHERE isCallFree(v)
-st.sub(v + 1, st._DataEnd - v)   ==>  st.slice(v + 1)   WHERE isCallFree(v)
+st.sub(v, st._DataEnd - v + 1)   ==>  st.slice(v)       WHERE isCallFree(v) and isWhole(v)
+st.sub(v + 1, st._DataEnd - v)   ==>  st.slice(v + 1)   WHERE isCallFree(v) and isWhole(v)
 ! The same rest-of-string shape written with the other LENGTH spellings.
 ! Length()/Len()/LengthA() all return _DataEnd verbatim (ST 3.84) and
 ! len(st.getValue()) is the free-function way of asking the same thing, so
@@ -87,14 +90,15 @@ st.sub(v + 1, st._DataEnd - v)   ==>  st.slice(v + 1)   WHERE isCallFree(v)
 ! _DataEnd form above does. Slice's omitted end defaults to _DataEnd
 ! (pEnd = 0 -> pEnd = self._DataEnd), which is what makes the collapse exact.
 ! Every one of these spellings is legal Clarion, and each of them gets written.
-st.sub(v, st.Length() - v + 1)          ==>  st.slice(v)       WHERE isCallFree(v)
-st.sub(v, st.Len() - v + 1)             ==>  st.slice(v)       WHERE isCallFree(v)
-st.sub(v, st.LengthA() - v + 1)         ==>  st.slice(v)       WHERE isCallFree(v)
-st.sub(v, len(st.getValue()) - v + 1)   ==>  st.slice(v)       WHERE isCallFree(v)
-st.sub(v + 1, st.Length() - v)          ==>  st.slice(v + 1)   WHERE isCallFree(v)
-st.sub(v + 1, st.Len() - v)             ==>  st.slice(v + 1)   WHERE isCallFree(v)
-st.sub(v + 1, st.LengthA() - v)         ==>  st.slice(v + 1)   WHERE isCallFree(v)
-st.sub(v + 1, len(st.getValue()) - v)   ==>  st.slice(v + 1)   WHERE isCallFree(v)
+! The position is a whole number here too, for the reason given above.
+st.sub(v, st.Length() - v + 1)          ==>  st.slice(v)       WHERE isCallFree(v) and isWhole(v)
+st.sub(v, st.Len() - v + 1)             ==>  st.slice(v)       WHERE isCallFree(v) and isWhole(v)
+st.sub(v, st.LengthA() - v + 1)         ==>  st.slice(v)       WHERE isCallFree(v) and isWhole(v)
+st.sub(v, len(st.getValue()) - v + 1)   ==>  st.slice(v)       WHERE isCallFree(v) and isWhole(v)
+st.sub(v + 1, st.Length() - v)          ==>  st.slice(v + 1)   WHERE isCallFree(v) and isWhole(v)
+st.sub(v + 1, st.Len() - v)             ==>  st.slice(v + 1)   WHERE isCallFree(v) and isWhole(v)
+st.sub(v + 1, st.LengthA() - v)         ==>  st.slice(v + 1)   WHERE isCallFree(v) and isWhole(v)
+st.sub(v + 1, len(st.getValue()) - v)   ==>  st.slice(v + 1)   WHERE isCallFree(v) and isWhole(v)
 
 ! ---------------------------------------------------------------------
 ! setValue(sub(...)) collapses to the method that does it directly. The
@@ -105,11 +109,11 @@ st.sub(v + 1, len(st.getValue()) - v)   ==>  st.slice(v + 1)   WHERE isCallFree(
 ! 1 as the end of the value - so a computed length, which can be 0, is left as written. Only on a plain local, isPlain(st): the in-place call keeps the object's base64 and encoding markings, which setValue() clears, and on a streamed object it changes what reaches the file - so the object must be a local of the procedure that nothing there marks, streams or hands on.
 st.setvalue(st.sub(1,w2),st:clip)      ==>  if w2 < st._DataEnd then st.setLength(w2). ; st.clip()   WHERE isCallFree(w2) and isPlain(st)
 st.setvalue(clip(st.sub(1,w2)))        ==>  if w2 < st._DataEnd then st.setLength(w2). ; st.clip()   WHERE isCallFree(w2) and isPlain(st)
-st.setvalue(st.sub(w1,w2),st:clip)     ==>  st.Crop(w1,fold(w1+w2-1)); st.clip()   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st)
-st.setvalue(clip(st.sub(w1,w2)))       ==>  st.Crop(w1,fold(w1+w2-1)); st.clip()   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st)
+st.setvalue(st.sub(w1,w2),st:clip)     ==>  st.Crop(w1,fold(w1+w2-1)); st.clip()   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st) and noConcat(w1) and noConcat(w2)
+st.setvalue(clip(st.sub(w1,w2)))       ==>  st.Crop(w1,fold(w1+w2-1)); st.clip()   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st) and noConcat(w1) and noConcat(w2)
 st.setvalue(st.sub(w),st:clip)         ==>  st.Crop(w,w); st.clip()   WHERE isConst(w) and w <> '0' and isPlain(st)
 st.setvalue(clip(st.sub(w)))           ==>  st.Crop(w,w); st.clip()   WHERE isConst(w) and w <> '0' and isPlain(st)
-st.setvalue(st.sub(w1,w2),st:noClip)   ==>  st.Crop(w1, fold(w1+w2-1))   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st)
+st.setvalue(st.sub(w1,w2),st:noClip)   ==>  st.Crop(w1, fold(w1+w2-1))   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st) and noConcat(w1) and noConcat(w2)
 
 ! ---------------------------------------------------------------------
 ! Keeping the value from position x to its end is dropping the first
@@ -139,12 +143,12 @@ BUILTIN FirstAddIsSet                                ! a first += on a zero-init
 ! stay with the guarded IF rule below (whose condition is then genuinely
 ! needed). The constant is written 0 - n, so a power or a chain in it keeps
 ! its grouping; a single number then becomes -n: ...then curPiece.adjustLength(-1). Only on a plain local, isPlain(st): the in-place call keeps the object's base64 and encoding markings, which setValue() clears, and on a streamed object it changes what reaches the file - so the object must be a local of the procedure that nothing there marks, streams or hands on.
-st.setvalue(st.sub(1, st._DataEnd - w2))   ==>  st.adjustLength(0 - w2)   WHERE isConst(w2) and isPlain(st)
-st.setvalue(st.sub(1, st.length() - w2))   ==>  st.adjustLength(0 - w2)   WHERE isConst(w2) and isPlain(st)
-st.setvalue(st.sub(1, st.len() - w2))      ==>  st.adjustLength(0 - w2)   WHERE isConst(w2) and isPlain(st)
+st.setvalue(st.sub(1, st._DataEnd - w2))   ==>  st.adjustLength(0 - w2)   WHERE isConst(w2) and isPlain(st) and noConcat(w2)
+st.setvalue(st.sub(1, st.length() - w2))   ==>  st.adjustLength(0 - w2)   WHERE isConst(w2) and isPlain(st) and noConcat(w2)
+st.setvalue(st.sub(1, st.len() - w2))      ==>  st.adjustLength(0 - w2)   WHERE isConst(w2) and isPlain(st) and noConcat(w2)
 st.setvalue(st.sub(1,w2))                  ==>  if w2 < st._DataEnd then st.setLength(w2).   WHERE isCallFree(w2) and isPlain(st)
 ! st.setvalue(st.sub(1,w2)) with a length that calls something is left as written: Crop(1, w2) keeps the whole value when w2 is 0 or less, where sub(1, w2) emptied it, and the guarded IF above may not run a call twice.
-st.setvalue(st.sub(w1,w2))                 ==>  st.Crop(w1, fold(w1+w2-1))   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st)
+st.setvalue(st.sub(w1,w2))                 ==>  st.Crop(w1, fold(w1+w2-1))   WHERE isConst(w1) and isConst(w2) and w1 <> '0' and w2 <> '0' and isPlain(st) and noConcat(w1) and noConcat(w2)
 st.setvalue(st.sub(w))                     ==>  st.Crop(w, w)   WHERE isConst(w) and w <> '0' and isPlain(st)
 
 ! ---------------------------------------------------------------------
@@ -154,7 +158,7 @@ st.setvalue(st.slice(w1,w2))   ==>  st.Crop(w1, w2)   WHERE isConst(w2) and isPl
 st.setvalue(st.slice(w))       ==>  st.RemoveFromPosition(1,fold(w-1))   WHERE isPlain(st) and noConcat(w)
 
 ! ---------------------------------------------------------------------
-! CheckSetValueToBefore / After (16Jan2020) + 4-arg form (evidence:
+! CheckSetValueToBefore / After + 4-arg form (example:
 ! st.SetValue(st.before('abc',1,10,TRUE)) -> st.SetBefore('abc',1,10,TRUE,true)) Only on a plain local, isPlain(st): the in-place call keeps the object's base64 and encoding markings, which setValue() clears, and on a streamed object it changes what reaches the file - so the object must be a local of the procedure that nothing there marks, streams or hands on.
 ! ---------------------------------------------------------------------
 st.setvalue(st.before(w,w1,w2,w3))   ==>  st.SetBefore(w,w1,w2,w3,true)   WHERE isPlain(st)
@@ -179,7 +183,7 @@ st.setValue(''); st.append(s1)    ==>  st.setValue(s1)
 ! than a prepend and an append.
 ! clip-flag forms: a FINAL literal holding a non-blank character absorbs the clip
 ! via trimr (a blank-only one would leave the operand before it unclipped); any other final operand keeps an explicit st.clip(). Most specific first.
-! Statement PAIRS collapse via the spec v0.3 interior-';' boundary --
+! Statement PAIRS collapse across an interior ';' statement boundary --
 ! see the CheckForPrependAppend rules right after this family. Only on a plain local, isPlain(st): the in-place call keeps the object's base64 and encoding markings, which setValue() clears, and on a streamed object it changes what reaches the file - so the object must be a local of the procedure that nothing there marks, streams or hands on.
 ! ---------------------------------------------------------------------
 st.setValue(w & st.getValue() & w1 & lit, st:clip)   ==>  st.enclose(w, w1 & trimr(lit))   WHERE lit <> '' and isPlain(st)
@@ -236,13 +240,16 @@ st.setValue(st2.getValue())   ==>  st.setValue(st2.getValuePtr())
 ! ---------------------------------------------------------------------
 ! setLength(length() +/- n) -> adjustLength(+/-n); len()/lengthA() are aliases of length(). A subtracted n is written
 ! 0 - n, keeping its terms grouped as they were after the minus (- a - b, - n ^ 2); the two rules after these make 0 - 5 and 0 - k into -5 and -k.
+! The amount must be a WHOLE number (isWhole). Both methods take whole numbers and cut a fraction off:
+! setLength(10 - 1.5) keeps 8, but adjustLength(0 - 1.5) is adjustLength(-1) and keeps 9. So an amount
+! holding a /, a REAL, a call or a name this run cannot place is left alone.
 ! ---------------------------------------------------------------------
-st.setLength(st.length() + w)    ==>  st.adjustLength(w)   WHERE noConcat(w)
-st.setLength(st.length() - w)    ==>  st.adjustLength(0 - w)   WHERE noConcat(w)
-st.setLength(st.len() + w)       ==>  st.adjustLength(w)   WHERE noConcat(w)
-st.setLength(st.len() - w)       ==>  st.adjustLength(0 - w)   WHERE noConcat(w)
-st.setLength(st.lengthA() + w)   ==>  st.adjustLength(w)   WHERE noConcat(w)
-st.setLength(st.lengthA() - w)   ==>  st.adjustLength(0 - w)   WHERE noConcat(w)
+st.setLength(st.length() + w)    ==>  st.adjustLength(w)   WHERE noConcat(w) and isWhole(w)
+st.setLength(st.length() - w)    ==>  st.adjustLength(0 - w)   WHERE noConcat(w) and isWhole(w)
+st.setLength(st.len() + w)       ==>  st.adjustLength(w)   WHERE noConcat(w) and isWhole(w)
+st.setLength(st.len() - w)       ==>  st.adjustLength(0 - w)   WHERE noConcat(w) and isWhole(w)
+st.setLength(st.lengthA() + w)   ==>  st.adjustLength(w)   WHERE noConcat(w) and isWhole(w)
+st.setLength(st.lengthA() - w)   ==>  st.adjustLength(0 - w)   WHERE noConcat(w) and isWhole(w)
 st.adjustLength(0 - c)           ==>  st.adjustLength(-c)
 st.adjustLength(0 - v)           ==>  st.adjustLength(-v)
 ! ---------------------------------------------------------------------
@@ -367,7 +374,7 @@ choose(~w, true, false)        ==>  choose(~w)
 choose(~w, 1, 0)               ==>  choose(~w)
 choose(~w, false, true)        ==>  choose(w)               WHERE isSimple(w)
 choose(~w, 0, 1)               ==>  choose(w)               WHERE isSimple(w)
-! &= null reference compares are provably 0/1 (evidenced x3 in the corpus)
+! &= null reference compares are provably 0/1
 choose(w &= null, true, false)   ==>  choose(w &= null)
 choose(w &= null, 1, 0)          ==>  choose(w &= null)
 choose(w &= null, false, true)   ==>  choose(~(w &= null))
@@ -381,8 +388,8 @@ choose(w &= null, 0, 1)          ==>  choose(~(w &= null))
 !
 ! The rules above cover a condition whose root is a COMPARATOR; these cover
 ! the ones whose root is AND / OR / XOR / NOT, which the comparator rules
-! cannot see and which were left alone until now. `choose(a or b, 1, 0)`
-! is common in real code and matched nothing before.
+! cannot see, so without these `choose(a or b, 1, 0)` keeps its
+! redundant pair - and the shape is common in real code.
 !
 ! isBoolExpr(w) IS THE WHOLE SAFETY ARGUMENT, and it is why these cannot
 ! simply be written for a bare `w`. CHOOSE has a second, unrelated form -
@@ -618,8 +625,8 @@ not st.isAll('1234567890') ;         ==>  not (st._DataEnd and st.isAllDigits())
 ! Returning a StringTheory's value.
 ! ---------------------------------------------------------------------
 ! Declared in the getvalue-form axis at the END of this file.
-! It CANNOT stay here. Rules run in FILE ORDER, so an always-on rule at
-! line 435 fires long before the axis at the end, turning every
+! It CANNOT stay here. Rules run in FILE ORDER, so an always-on rule
+! here would fire long before the axis at the end, turning every
 !     return st.getValue()
 ! into getValuePtr() - and the axis never sees the shape it matches.
 ! The axis owns both spellings.
@@ -696,7 +703,7 @@ instring(lit, st.getValue(), -1, w1)            ==>  st.instring(lit, -1, 1, w1)
 ! holding no space never can - the search covers more characters without
 ! the clip, and finds exactly the same thing.
 !
-! AND THE GUARD IS NOT A FORMALITY. This is a real line in Preprocessor:
+! AND THE GUARD IS NOT A FORMALITY. Take this line from real code:
 !
 !     if instring(' ', clip(nm), 1, 1) > 0 then return.
 !
@@ -721,8 +728,8 @@ instring(lit, clip(w), 1, 1)   ==>  instring(lit, w, 1, 1)   WHERE isSpaceless(l
 ! A default start position of 1 is noise: ST 3.84's 2-arg FindChar takes
 ! the pStart = 1 branch and issues exactly the memchr the 1-arg overload
 ! issues, and FindChars' 2-arg tests pStart < 2 and calls the identical
-! FindCharsAddr. Established sibling: st.instring(lit,1) has always
-! dropped its step argument.
+! FindCharsAddr. The same as its sibling: st.instring(lit,1) drops its
+! step argument.
 !
 ! *** ORDER IS LOAD-BEARING *** these MUST sit ABOVE the containsChar
 ! family below. ApplyAll walks rules in FILE ORDER, so a drop placed
@@ -772,8 +779,8 @@ not st.findChar(w) ;     ==>  not st.containsChar(w)
 
 ! ---------------------------------------------------------------------
 ! MID-CONDITION arms. The bare
-! forms above assert the call ends the condition, so the FIRST arm of
-! `if X or Y` matched nothing and kept its position spelling:
+! forms above assert the call ends the condition, so without these the FIRST
+! arm of `if X or Y` matches nothing and keeps its position spelling:
 !     if bt.findChar('<10>') or bt.containsChar('<13>')
 ! These carry the trailing AND/OR in the pattern and put it back in the
 ! replacement, for each boolean prefix. The operator is consumed, so a
@@ -811,7 +818,7 @@ left(left(w))       ==>  left(w)                 ! CheckLeftLeft
 left(left(w),w1)    ==>  left(w, w1)             !   "
 left(left(w,w1))    ==>  left(w, w1)             !   "
 left(clip(w))       ==>  clip(left(w))           ! CheckLeftClip
-left(clip(w),w1)    ==>  left(w,w1)              !   "  (28Sep2021 form)
+left(clip(w),w1)    ==>  left(w,w1)              !   "
 s1 = sub(left(w),1,w1)   ==>  s1 = left(w,w1)   ! CheckSubLeft
 
 ! ---------------------------------------------------------------------
@@ -838,7 +845,7 @@ left(nm)   ==>  nm   NOTBOOL
 ! the test at all, because its metavar is a declared IDENTIFIER and
 ! `left(s)` is a call. Dropping the wrapper lets the two compose -
 ! `and left(defv) <> ''` becomes `and defv` in two passes instead of
-! staying as it is. Found in Preprocessor.clw 538.
+! staying as it is.
 ! UNGROUPED, and that is the point: this removes a redundancy, it does
 ! not choose a blank spelling. Under `readable` the result stays
 ! `s <> ''`.
@@ -890,7 +897,7 @@ w1 <> upper(clip(w))   ==>  w1 <> upper(w)   WHERE isNotNumber(w)   EXPREND
 
 ! ---------------------------------------------------------------------
 ! clip() on the RIGHT of '=' when the LEFT side is a CALL.
-! 2026). The block above says the bare `x = clip(y)` form is off-limits
+! The block above says the bare `x = clip(y)` form is off-limits
 ! because as a whole statement it is an assignment. `f(...) = clip(y)`
 ! is not: a function result can never be an assignment target, which is
 ! the same argument that makes `clip(x) = y` safe bare - only applied to
@@ -905,12 +912,12 @@ w1 <> upper(clip(w))   ==>  w1 <> upper(w)   WHERE isNotNumber(w)   EXPREND
 ! so `v(a)` matches left(), upper(), lower(), clip(), getValue() or
 ! anything a user writes. ARGS rather than EXPR for the argument list,
 ! so arity does not matter either - left(s), left(s, 2) and GetIt() all
-! bind. Verified by running it, not by reading the matcher.
+! bind.
 !
 ! WHY THIS CANNOT HIT AN ARRAY ELEMENT: Clarion subscripts are BRACKETS
 ! (LRM: "[ ] Brackets enclose an array subscript list"), so `name(` in
 ! an expression is a call and never a subscript. `arr[1] = clip(x)` is
-! an assignment and does not match. Pinned in the fixture.
+! an assignment and does not match.
 !
 ! EXPREND, as everywhere else here: without it the pattern matches a PREFIX of `f(x) = clip(y) & 'z'`,
 ! where the clip is NOT redundant. What is clipped must be text, as in the block above.
@@ -920,7 +927,7 @@ v(a) = upper(clip(w1))   ==>  v(a) = upper(w1)   WHERE isNotNumber(w1)   EXPREND
 
 ! ---------------------------------------------------------------------
 ! clip() on the RIGHT of '=' in a proven COMPARISON context.
-! 2026): the bare form `x = clip(y)` stays off-limits (whole-statement
+! The bare form `x = clip(y)` stays off-limits (whole-statement
 ! it is an assignment; CSTRING targets need the clip), but behind a
 ! condition INTRODUCER it can only be a comparison. Safe by
 ! construction: an EXPR extent stops at depth-0 THEN/ELSE, so these
@@ -1014,7 +1021,7 @@ until not clip(sc)   ==>  until not sc   EXPREND
 ! ---------------------------------------------------------------------
 ! ---------------------------------------------------------------------
 ! Leave blank tests exactly as they are written. The third member of this
-! axis, and the DEFAULT since 15 Sep 2026: collapsing `if s = ''` to
+! axis, and the DEFAULT: collapsing `if s = ''` to
 ! `if ~s` is a real tidy-up, but it is a house-style choice rather than a
 ! correctness one, and most people run with the defaults. It holds no
 ! rules, because leaving code alone is the absence of a rule.
@@ -1076,13 +1083,13 @@ while not sc <> ''   ==>  while ~sc   EXPREND
 until not sc <> ''   ==>  until ~sc   EXPREND
 
 ! ---------------------------------------------------------------------
-! ST method-result blank tests (VitRules 352
-! "if clip(words.getLine(z)) <> ''" only lost its clip). getValue()/
+! ST method-result blank tests (without them
+! "if clip(words.getLine(z)) <> ''" loses only its clip). getValue()/
 ! getLine() return a STRING, so the '' compare collapses to the bare
 ! truthiness test like the sc family above - but sc binds only a
 ! VARIABLE, so these method shapes need their own rules with a typed
 ! StringTheory receiver (arbitrary-expression blank tests stay
-! inexpressible until return-type knowledge exists). The clip-drop
+! out of reach: a rule cannot know their type). The clip-drop
 ! rules feed these on the next engine pass. The = '' forms emit a
 ! single ~term (no AND-chain, so no paren hazard).
 ! ---------------------------------------------------------------------
@@ -1145,7 +1152,7 @@ ENDGROUP
 ! ---------------------------------------------------------------------
 ! ---------------------------------------------------------------------
 ! Leave numeric zero tests exactly as they are written - the sibling of
-! blank-asis above, DEFAULT for the same reason and from the same date.
+! blank-asis above, DEFAULT for the same reason.
 ! ---------------------------------------------------------------------
 GROUP zero-asis, CHOICE(zero-test), DEFAULT
 ENDGROUP
@@ -1267,8 +1274,8 @@ s1 = clip(w1)       ==>  s1 = w1
 ! ...and the same target SUBSCRIPTED. `arr[1] = clip(t)`
 ! is the identical no-op for the identical reason - assignment to a fixed
 ! STRING pads or truncates to the declared length, so removing trailing
-! spaces first cannot change what is stored - and the only thing that
-! stopped it was binding: the rules above take a bare IDENTIFIER, and
+! spaces first cannot change what is stored. It needs rules of its own
+! only for binding: the rules above take a bare IDENTIFIER, and
 ! `arr[1]` is not one.
 ! STRING ONLY, and that gate is the whole safety argument: a CSTRING
 ! element KEEPS its trailing spaces, so for `carr[1]` the clip changes
@@ -1340,7 +1347,7 @@ s1 = lower(clip(w))   ==>  s1 = lower(w)
 BUILTIN ChooseClip                  ! any arity - see VitEngine.BuiltinChooseClip
 
 ! ---------------------------------------------------------------------
-! HOIST a repeated case fold out of a concatenation, from his
+! HOIST a repeated case fold out of a concatenation, as in
 !   ovlKey = UPPER(CLIP(className)) & '::' & UPPER(procName)
 ! One UPPER over the whole string does the work of two over the parts.
 !
@@ -1423,7 +1430,7 @@ ENDGROUP
 ! crop(1) has to be caught BEFORE the general rule below, in the
 ! ungrouped fall-through case too. Both delete-mode groups above handle it,
 ! but the axis can be switched off entirely (--nogroup=delete-remove), and
-! then crop(1) reached the general rule and became RemoveFromPosition(1,0) -
+! then crop(1) would reach the general rule: RemoveFromPosition(1,0) -
 ! one no-op rewritten as another, for no gain and a noisier diff. Comment it
 ! instead: a user who turned the axis off wants to SEE these, not have them
 ! silently restated. File order does the work - specific before general.
@@ -1435,11 +1442,11 @@ st.crop(w)   ==>  st.RemoveFromPosition(1,fold(w-1))   WHERE noConcat(w)
 ! =====================================================================
 
 BUILTIN IncludeBrackets                              ! INCLUDE 'x.clw' -> INCLUDE('x.clw'): the current compiler takes only the bracketed form
-BUILTIN CombineAdjacentLiterals                      ! 'abc' & '123' -> 'abc123' (27Aug2021)
-BUILTIN RemoveDoubledBrackets                        ! 8Sep2021
-BUILTIN CheckCat                                     ! cat -> Append incl. literal truncation (Oct2021 lengths)
-BUILTIN CheckReplaces                                ! replaceByte/removeByte + arg cleanup (9Sep2021, 22Oct2023)
-BUILTIN CheckRemoves                                 ! removeByte + arg cleanup (13Sep2023)
+BUILTIN CombineAdjacentLiterals                      ! 'abc' & '123' -> 'abc123'
+BUILTIN RemoveDoubledBrackets                        ! ((x))
+BUILTIN CheckCat                                     ! cat -> Append incl. literal truncation
+BUILTIN CheckReplaces                                ! replaceByte/removeByte + arg cleanup
+BUILTIN CheckRemoves                                 ! removeByte + arg cleanup
 BUILTIN CheckSplits                                  ! st.split() positional booleans -> st:clip / st:left, trailing defaults dropped
 BUILTIN DeadTrim, PREFIX('! #Removed as unnecessary: ')  ! a trim(), clip() or bare setLeft() or setRight() of a line just loaded from a split on a lone space has nothing to strip
 BUILTIN CheckInLine                                  ! st.inline() -> st:noCase / st:wholeLine / st:begins / st:clip
@@ -1822,8 +1829,8 @@ DEFAULTSTYLE optimised
 ! ones a trailing operator could otherwise extend.
 ! EXPREND = zero-width end-of-operand assertion: the match is
 ! refused when the next token is a continuing operator (& + - * / ^ %),
-! so a clip can no longer be dropped ahead of a '& lit' tail (padding
-! would become internal) and a collapsed blank/zero test can no longer
+! so a clip is never dropped ahead of a '& lit' tail (padding
+! would become internal) and a collapsed blank/zero test can never
 ! prefix-corrupt a longer operand. Rules ending in a final greedy EXPR
 ! metavar are NOT annotated (the extent already absorbs tails); the
 ! bare lenclip forms keep their stronger trailing-; assertion.
@@ -1836,12 +1843,12 @@ DEFAULTSTYLE optimised
 vitcanaryneverfires(w)   ==>  vitcanaryneverfires(w)   NOTE('this rule file needs a newer VitTransform engine') EXPREND
 
 ! =====================================================================
-! The free-function INSTRING form, over a bare st.getValue() haystack:
-! free-function INSTRING over a bare st.getValue() haystack.
-! gtPos = instring('>', srcTxt.getValue(), 1, hit) had no rule - only
-! the METHOD form st.instring() was covered above). ST's Instring method
+! The free-function INSTRING form, over a bare st.getValue() haystack,
+! as in gtPos = instring('>', srcTxt.getValue(), 1, hit) - the
+! counterpart of the METHOD form st.instring() covered above.
+! ST's Instring method
 ! is the built-in over the buffer (verified in ST 3.84: the 1-arg method
-! delegates straight to findChar/FindCharsAddr), so the ratified
+! delegates straight to findChar/FindCharsAddr), so the
 ! findChar/findChars mapping chains: single-char literal -> findChar,
 ! everything else -> findChars (a variable needle: len() = -1 <> 1).
 ! LRM CAUTION (INSTRING): an OMITTED step
@@ -1902,8 +1909,8 @@ BUILTIN InstringSliceToST                            ! instring(x, st.valuePtr[l
 ! rules: the built-in accepts a NEGATIVE position = relative to the END
 ! of the string (LRM), while ST.Sub clamps pStart < 1 to 1. Rule 1:
 ! isConst folds the position and demands ALL DIGITS, so a provably
-! non-negative constant gets the clean st.sub. Rule 2.
-! general-use tool, no attestation shortcuts): a PLAIN VARIABLE position
+! non-negative constant gets the clean st.sub. Rule 2 (a variable may hold
+! any value, so its sign is not assumed): a PLAIN VARIABLE position
 ! gets a runtime dispatch that maps the negative form onto ST inline -
 ! choose(w < 0, st._DataEnd + w + 1, w) - so -1 = last char, -3 = three
 ! from the end, per the LRM reading. isCallFree gates it: the position is
@@ -1911,16 +1918,18 @@ BUILTIN InstringSliceToST                            ! instring(x, st.valuePtr[l
 ! bindings qualify - isCallFree: brackets that only GROUP are fine, so
 ! p - 1 and y + (3 * z) both fire and only calls refuse. The replacement
 ! contains NO copy of the pattern, so it converges in one firing.
-! Doc-verified, no probe needed (clarion.help SUB): negative =
+! Per the Clarion help for SUB: a negative position is counted
 ! relative to the end (-3 = 3 from the end, so -1 = last char =
 ! _DataEnd + w + 1); <39>if position is omitted or ZERO, the default in
 ! Clarion Win32 is 1<39> - exactly the ST pStart<1 clamp the false arm
 ! inherits, so w = 0 aligns by construction. Out-of-range negatives land
 ! below 1 on both sides (SUB is documented as the safe non-overflowing
-! slice; ST clamps to 1) - aligned.
+! slice; ST clamps to 1) - aligned. The second rule also needs a WHOLE
+! position (isWhole): sub() cuts -2.5 to -2, two from the end, while
+! _DataEnd + w + 1 is cut only after the sum, one character earlier.
 ! ---------------------------------------------------------------------
 sub(st.getValue(), w, w1)   ==>  st.sub(w, w1)   WHERE isConst(w)
-sub(st.getValue(), w, w1)   ==>  st.sub(choose(w < 0, st._DataEnd + w + 1, w), w1)   WHERE isCallFree(w) and noConcat(w)
+sub(st.getValue(), w, w1)   ==>  st.sub(choose(w < 0, st._DataEnd + w + 1, w), w1)   WHERE isCallFree(w) and noConcat(w) and isWhole(w)
 
 ! ---------------------------------------------------------------------
 ! clipped length of the buffer: LEN(CLIP(st.getValue())) is
@@ -1970,7 +1979,7 @@ len(clip(st.getValue()))   ==>  st.clipLength()
 ! deliberately NOT converted: findChar guards the empty string, while
 ! findByte(val('')) would hunt for byte 0.
 !
-! val(lit) is a REPLACEMENT-side fold (, sibling of len(lit)):
+! val(lit) is a REPLACEMENT-side fold (a sibling of len(lit)):
 ! escape-aware, so '<9>' folds to 9 and '''' to 39. NOTE(charname(lit)) rides out
 ! as the trailing comment naming the character - the same shape as
 ! st.removeByte(38) ! remove all '&' in hand-written code.
@@ -1996,7 +2005,7 @@ len(clip(st.getValue()))   ==>  st.clipLength()
 ! and guards an older engine may not know, and an engine that does not know a builtin
 ! may skip it and still finish - doing part of the work without saying so. A refusal
 ! is better, and that is what the floor is for.
-NEEDBUILD 359
+NEEDBUILD 360
 ! ---------------------------------------------------------------------
 ! How single-character searches are spelt. This member changes nothing:
 ! findChar(), containsChar(), findByte() and containsByte() all stay
@@ -2052,14 +2061,14 @@ not st.findChar(lit) ;     ==>  not st.containsByte(val(lit))           NOTE(cha
 ~ st.findChar(lit) ;       ==>  ~st.containsByte(val(lit))              NOTE(charname(lit))   WHERE len(lit) = 1
 
 ! MID-CONDITION arms. The rules above need the call at the END of the
-! condition (the trailing ';' assertion), so the FIRST arm of `if X or Y`
-! matched nothing and fell through to the position rule - leaving two
-! different methods on one line:
+! condition (the trailing ';' assertion), so without these the FIRST arm of
+! `if X or Y` matches nothing and falls through to the position rule -
+! leaving two different methods on one line:
 !     if bt.findByte(10) or bt.containsByte(13)
 ! These catch a call followed by AND/OR by putting that operator in the
-! pattern and back in the replacement. Same gap exists in the containsChar
-! family higher up the file - closing it there would
-! change DEFAULT output, so it is a deliberate choice, not a silent change.
+! pattern and back in the replacement. The containsChar family higher up
+! the file carries the same MID-CONDITION arms, for the same
+! reason.
 if st.findChar(lit) and      ==>  if st.containsByte(val(lit)) and         NOTE(charname(lit))   WHERE len(lit) = 1
 if st.findChar(lit) or       ==>  if st.containsByte(val(lit)) or          NOTE(charname(lit))   WHERE len(lit) = 1
 elsif st.findChar(lit) and   ==>  elsif st.containsByte(val(lit)) and      NOTE(charname(lit))   WHERE len(lit) = 1
@@ -2181,8 +2190,8 @@ ENDGROUP
 ! =====================================================================
 ! =====================================================================
 ! ---------------------------------------------------------------------
-! RETIRED, and kept here so it can be revived: a member that returned a
-! StringTheory's value as the cheaper of the two calls -
+! LEFT OUT, kept here as a comment so it can be put back: a member
+! returning a StringTheory's value as the cheaper of the two calls -
 !
 !     return st.getValue()   ==>   return st.getValuePtr()
 !
@@ -2190,9 +2199,9 @@ ENDGROUP
 ! it. Both are virtual calls, and on an empty buffer a RETURN of either
 ! is ''. One copy fewer on a bare return, and nothing else: it is not
 ! more readable, so it has no home in readable, and the slice below does
-! more for extreme. To revive it, put these three lines back as they
-! are - EXPREND keeps it to a BARE return; without it the rule also
-! rewrote the head of `return st.getValue() & '.bak'`:
+! more for extreme. To put it back, restore these three lines as they
+! are - EXPREND keeps it to a BARE return; without it the rule would also
+! rewrite the head of `return st.getValue() & '.bak'`:
 !     GROUP st-getvalue-keep, CHOICE(getvalue-form)
 !     return st.getvalue()   ==>  return st.getValuePtr()   EXPREND
 !     ENDGROUP
@@ -2266,9 +2275,9 @@ ENDGROUP
 !
 ! In extreme only. plain and optimised leave every getValue() read as you
 ! wrote it.
-! The cost is real: on this tool's own eighteen sources it is 616 sites
-! against 166 for the return and comparison forms alone, each about 45
-! characters wider than what you wrote. Outside a comparison it saves the
+! The cost is real: it rewrites several times as many sites as the return
+! and comparison forms alone, each about 45 characters wider than
+! what you wrote. Outside a comparison it saves the
 ! CALL, not the copy - w = st.getValue() copies the bytes into w either way.
 !
 ! To leave it out of an extreme run:
@@ -2442,7 +2451,7 @@ ENDGROUP
 ! members that only comment out a store or an unreachable statement are
 ! ordinary cleanups and run by DEFAULT, in GROUP dead-cleanup at the foot
 ! of this file.
-! UnusedRoutines runs by DEFAULT too (from 2.0.0), in a group of its own.
+! UnusedRoutines runs by DEFAULT too, in a group of its own.
 ! It only ever COMMENTS a routine out, behind a marker the report lists,
 ! and it has to see EVERY do site to be right: where the file shows that
 ! it cannot, it keeps the routine and says so in the report - a routine
@@ -2733,9 +2742,9 @@ ENDGROUP
 ! The variable existed only to carry a value to the very next line, so
 ! the expression moves to where it is read and the store line goes.
 !
-! THE ONLY BUILTIN THAT MOVES CODE rather than respelling it, which is
-! why it has a group of its own: --nogroup=inline-singleuse leaves it
-! out. ON by default, because everything it does rests on proofs the
+! IT MOVES CODE rather than respelling it, as the test hoist below does,
+! which is why the two have a group of their own: --nogroup=inline-singleuse
+! leaves both out. ON by default, because everything it does rests on proofs the
 ! pass makes itself, and it converts only when all of these hold: the target is a plain local, the scope has no GOTO /
 ! COMPILE / OMIT, the read is in the VERY NEXT statement and happens
 ! exactly once, the expression neither mentions the target nor calls
@@ -2763,7 +2772,8 @@ GROUP inline-singleuse
 ! can read it there: a plain procedure local and a RETURN; a routine local and an
 ! EXIT or RETURN; or a name mentioned nowhere else but the line after the test. A
 ! literal spelled with codes counts by what it stands for: '<65>' is 'A'.
-! Here, not in the default: it changes statement ORDER, on the way to inlining.
+! It changes statement ORDER, on the way to inlining. It runs with InlineSingleUse,
+! by default; --nogroup=inline-singleuse leaves out both.
 BUILTIN HoistNeutralTest                             ! a test of the folded value against a literal with no letters moves above the fold
 ! WHY A BUILTIN AND NOT RULES: a rule cannot see who reads the variable after the
 ! jump - code after the loop a BREAK leaves, the procedure an EXIT returns to, the
@@ -2776,7 +2786,7 @@ BUILTIN InlineSingleUse                              ! a store read exactly once
 ENDGROUP
 
 ! ---------------------------------------------------------------------
-! THE BACKWARDS WALK OFF A SPLIT'S BLANK RECORDS. In optimised and extreme; off in plain.
+! THE BACKWARDS WALK OFF A SPLIT'S BLANK RECORDS. In optimised and extreme; off in plain and readable.
 !
 !     a.split('<10>')
 !     na = a.records()
@@ -2791,8 +2801,7 @@ ENDGROUP
 !
 ! Clipping the buffer of trailing spaces and line feeds BEFORE the split
 ! means the blank records are never made, so there is nothing to walk
-! back over. The two spellings were proved to agree over eighteen shapes
-! by a program that builds and runs them both.
+! back over, and the two spellings give the same answer.
 !
 ! A WRONG CONVERSION HERE WOULD BE SILENT - it would compile, run, and
 ! answer differently - so the conversion is refused unless seven

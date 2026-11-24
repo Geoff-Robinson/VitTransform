@@ -22,7 +22,7 @@
   OMIT('__EndPreprocessorInc__', _PreprocessorIncPresent_)
 _PreprocessorIncPresent_ EQUATE(1)
 
-  INCLUDE('StringTheory.inc'), ONCE                                                     ! Transpiler.inc only re-exported StringTheory + unused TK:/ST: equates (decoupled for VitTransform)
+  INCLUDE('StringTheory.inc'), ONCE                                                     ! the one outside class this file uses
 
 ! Maximum INCLUDE nesting depth - a safety net against runaway/circular includes.
 ! it is the ONLY thing catching a cycle.
@@ -33,8 +33,8 @@ _PreprocessorIncPresent_ EQUATE(1)
 ! deep" and carries on. It will have spliced the loop PP:MaxDepth times by then.
 ! WHY IT IS GENEROUS: a real multi-module project has many .inc files all pulling in one
 ! shared common .inc, so depth adds up fast even when every individual chain is reasonable -
-! measured hitting a limit of 3 on an ordinary file. Raising the cap only relaxes the safety
-! net and cannot break anything that worked before, so it is set well clear of real code.
+! a cap of 3 is too small for an ordinary file. A higher cap only relaxes the safety
+! net and changes nothing for code within it, so it is set well clear of real code.
 PP:MaxDepth       EQUATE(100)
 
 ! ---------------------------------------------------------------------------
@@ -119,10 +119,11 @@ ProcessText         PROCEDURE(*StringTheory pSrc, STRING pFileLabel, LONG pDepth
 ParseDirective      PROCEDURE(StringTheory pLine, *STRING pFile, *STRING pSection, *BYTE pOnce), BYTE, PRIVATE
 ExtractSection      PROCEDURE(*StringTheory pBody, STRING pSection, *StringTheory pResult, *LONG pStartLine), PRIVATE ! pStartLine = SECTION line index (0 = section not found)
 StripSections       PROCEDURE(*StringTheory pBody, *StringTheory pResult), PRIVATE
-CheckOmitCompile    PROCEDURE(StringTheory pTrimmed, StringTheory pTerm, *BYTE pSuppress), BYTE, PRIVATE
+CheckOmitCompile    PROCEDURE(StringTheory pTrimmed, StringTheory pTerm, *BYTE pSuppress, <*LONG pAfter>), BYTE, PRIVATE
                                     ! OMIT('t'[,cond]) / COMPILE('t'[,cond]) region opener. Fills the
                                     ! region's terminator + suppress flag; the CALLER stacks it (regions
-                                    ! nest when parsing is continuing)
+                                    ! nest when parsing is continuing). pAfter: where the text after the
+                                    ! directive's closing ')' starts, 0 when the ')' is not on the line
 IsSectionLine       PROCEDURE(StringTheory pTrimmed), BYTE, PRIVATE
                                     ! a real SECTION('name') directive - the word THEN a '('. A label
                                     ! merely STARTING 'Section' (SectionSize EQUATE(100)) is body text,

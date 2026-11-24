@@ -115,7 +115,7 @@ VitMatch.Init Procedure(VitRules pRl, VitTokenize pTk)
   if self.anchorLits &= NULL then self.anchorLits &= new AnchorLitQType.
   if self.anchorPost &= NULL then self.anchorPost &= new AnchorPostQType. !
   self.BuildAnchorLits()                                                  ! rebuild EVERY Init, not only when empty: LoadUserRules/LoadUserText can APPEND rules after a first transform (the VitStyle workbench
-                                                                          !   flow), and a stale set made an appended rule match NOTHING. BuildAnchorLits free()s first, and the rule walk is cheap per file.
+                                                                          !   flow), and a stale set lets an appended rule match NOTHING. BuildAnchorLits free()s first, and the rule walk is cheap per file.
   self.Changed()                                                          ! new file/case: recount on first CountTok, and the stream version moves
   self.patchable = 0                                                      !   the first count is a full walk; patches follow it
   if self.spanQ &= NULL then self.spanQ &= new PatchSpanQType.
@@ -165,8 +165,8 @@ pr       long,auto
     pr = self.FindFirstPost(pKey)
   end
   ! no postings for a key the count says IS present means the anchor was never
-  ! collected, so CountTok answered from its defensive full scan. Returning here turned that
-  ! defence into ZERO matches for the rule - silently, and only for the rule it rescued.
+  ! collected, so CountTok answered from its defensive full scan. Returning here would turn
+  ! that defence into ZERO matches for the rule - silently, and only for the rule it rescued.
   ! Fall through to the linear loop below instead, which needs no postings.
   if aCount > 0 and not self.anchorPost &= NULL and pr
     loop pr = pr to records(self.anchorPost)
@@ -310,7 +310,7 @@ svMatch  long,auto
   return choose(self.matchCount > svMatch)
 
 ! ------------------------------------------------------------------------------------
-! THE GROUP WALK (grouped dispatch, 14 Sep 2026). grpQ holds the rules whose anchor is the
+! THE GROUP WALK (grouped dispatch). grpQ holds the rules whose anchor is the
 ! key pKey - each entered through EnterRule and saved by AddMember - and the postings of
 ! that key are walked ONCE: at every occurrence each member still walking gets its turn, in
 ! rules-queue order, exactly the turn MatchRule would have given it at that occurrence, with
@@ -425,7 +425,7 @@ VitMatch.LoadMember Procedure()
   self.PatFacts()
 
 ! ------------------------------------------------------------------------------------
-! The token stream changed. Every place that knew this set freqDirty by hand; it now also
+! The token stream changed. Every place that changes it calls this, which sets freqDirty and
 ! counts the change (streamVer), which is what the rewriter's match cache is keyed by: a
 ! rule's matches found on one version of the stream are never applied to another.
 ! ------------------------------------------------------------------------------------
@@ -561,8 +561,8 @@ cnt      long,auto
     ! A comparison operator with SYNONYMS is never the anchor. The anchor is looked up by a
     ! single-token frequency key, and the two-word `NOT =` form has no such key - so anchoring
     ! a rule on `<>` against a file that spells it `NOT =` returns a count of 0 and MatchRule
-    ! gives up at "anchor literal absent" before comparing anything. (That is exactly how the
-    ! one-token synonyms failed until FreqKey learned to canonicalise.) They make poor anchors
+    ! gives up at "anchor literal absent" before comparing anything. (The one-token synonyms
+    ! would fail the same way if FreqKey did not canonicalise them.) They make poor anchors
     ! anyway - PickAnchor wants the RAREST literal and operators are the commonest tokens
     ! there are - so the only patterns this changes are those with no other literal at all,
     ! which fall to the linear scan and still match.
@@ -573,8 +573,8 @@ cnt      long,auto
     ! the count is right whichever way the source spells it. What CANNOT anchor is either half
     ! of a two-word `NOT =` in the PATTERN: source spelling it `<>` contains no `NOT` and no
     ! `=`, so either would count 0 and skip the rule. Peek one row each way to recognise the
-    ! pair. (Excluding operators outright also works and is what this did first - it cost 35%
-    ! on the corpus, because rules with no other literal then fell to the linear scan.)
+    ! pair. (Excluding operators outright also works, but it is much slower: rules with no
+    ! other literal then fall to the linear scan.)
     if upper(choose(aTx._DataEnd < 1, '', aTx.valuePtr[1 : aTx._DataEnd])) = 'NOT'
       if t < self.patCount
         get(self.patQ, t + 1)
@@ -598,8 +598,8 @@ cnt      long,auto
     ! THEN, ELSE and a terminator dot end the part an anchor may come from, as an interior ';'
     ! does. Every start tried runs from the statement start of the anchor, and that is found by
     ! walking back no further than the nearest THEN, ELSE or terminator - so an anchor past one
-    ! could never reach the pattern's first token, and the rule matched or not depending on
-    ! which of its words happened to be rarer in the file. The word itself may still anchor.
+    ! could never reach the pattern's first token, and the rule would match or not depending
+    ! on which of its words happens to be rarer in the file. The word itself may still anchor.
     case upper(choose(aTx._DataEnd < 1, '', aTx.valuePtr[1 : aTx._DataEnd]))
     of 'THEN' orof 'ELSE'
       break
@@ -612,14 +612,14 @@ cnt      long,auto
   return bestCnt
 
 ! ------------------------------------------------------------------------------------
-! THE LITERAL IN FRONT OF THE ANCHOR, checked before any start is tried (14 Sep 2026).
+! THE LITERAL IN FRONT OF THE ANCHOR, checked before any start is tried.
 !
 ! MatchRule tries, at every posting of the anchor, every token from the statement's first
 ! token up to the anchor as a start. When the pattern begins with a metavariable there is no
 ! cheap start test (CandOK), so a rule like `w1 <> clip(w)` pays a MatchHere - with the
 ! leading EXPR enumerating its extents - at every one of those tokens, at every one of the
 ! 900 places `clip` occurs in a large file: quadratic in the statement's length. Three such
-! rules were 37 percent of the scan time on VitEngine.clw. Yet whichever start is tried, the
+! rules can cost a third of the scan time on a big file. Yet whichever start is tried, the
 ! pattern part in front of the anchor must match the token in front of the posting; when it
 ! is a literal and it is not there, no start can work. So it is checked once per posting.
 !
@@ -734,7 +734,7 @@ row  long,auto
   code
   if not self.anchorLits &= NULL
     if self.freqDirty
-      if self.patchable and not self.spanQ &= NULL and records(self.spanQ) ! a firing rule's spans: patch (14 Sep 2026)
+      if self.patchable and not self.spanQ &= NULL and records(self.spanQ) ! a firing rule's spans: patch
         self.PatchPostings()
       else                                                                 ! a re-lex or a built-in edit: the full walk
         self.RefreshFreq()
@@ -772,8 +772,8 @@ opC  string(4),auto
   ! RefreshFreq, so object construction per call would dominate.
   pKeyOut = ''
   ! an operator with more than one documented spelling keys under its CANONICAL one, so
-  ! the stream's `=<` and a pattern's `<=` land on the same row. Without this the fix in
-  ! LitMatches is unreachable: PickAnchor asks CountTok how often the pattern's rarest literal
+  ! the stream's `=<` and a pattern's `<=` land on the same row. Without this the synonym test
+  ! in LitMatches is unreachable: PickAnchor asks CountTok how often the pattern's rarest literal
   ! occurs, the count for `<=` comes back 0 against a stream that spells it `=<`, and MatchRule
   ! returns at "anchor literal absent" before any token is ever compared. The postings list is
   ! keyed the same way, so the candidate positions are right too.
@@ -917,8 +917,8 @@ rfT0 long,auto       ! --timing
     ! An infix `NOT` opening a two-word operator is ALSO posted under that operator's canonical
     ! key, so a rule anchored on `<>` still finds source that spells it `NOT =`. Without this
     ! the anchor count comes back 0 and MatchRule gives up before comparing anything - and the
-    ! alternative, refusing to anchor on comparison operators at all, cost 35% on the corpus
-    ! because rules then fell to the linear scan. Posted IN ADDITION to its own 'NOT' key, so a
+    ! alternative, refusing to anchor on comparison operators at all, is much slower, because
+    ! rules then fall to the linear scan. Posted IN ADDITION to its own 'NOT' key, so a
     ! rule that genuinely anchors on the word NOT is unaffected. One probe per NOT token.
     if key = 'NOT' and self.NotInfixAt(i)                   ! `key` is already this token's upper text -
       cmpT = self.TokText(i + 1)
@@ -1125,7 +1125,7 @@ bad     long,auto
   t0 = clock() - t0 ; if t0 < 0 then t0 += 8640000.
   self.nPatch += 1 ; self.tPatch += t0
   if ~self.postCheck then return.
-  ! ---- --postcheck: the old way into scratch queues, compared row for row; a difference keeps the rebuild
+  ! ---- --postcheck: the full walk into scratch queues, compared row for row; a difference keeps the rebuild
   nRefSv = self.nRefresh ; tRefSv = self.tRefresh                       ! the reference rebuild is a CHECK, not a rebuild - --timing must not count it
   chkLits &= new AnchorLitQType
   chkPost &= new AnchorPostQType
@@ -1258,12 +1258,12 @@ tsx LONG,AUTO ! typeSets row
   ! UNRESOLVED only, and only a RECEIVER - a token followed by '.'. `ok` with the
   ! wrong type is an ordinary no-match and must stay silent (see NoteChainUnres), and an
   ! unresolved token that is NOT a receiver is usually a keyword or a runtime function
-  ! sitting where a typed metavar could have bound: the first cut of this diagnostic named
-  ! UPPER, END, DELETE, CYCLE and CLIP on a real file, which is noise wearing a signal's
+  ! sitting where a typed metavar could have bound: counting those would name UPPER, END,
+  ! DELETE, CYCLE and CLIP on a real file, which is noise wearing a signal's
   ! clothes. A receiver is the case the advice can actually help with.
   ! IsMemberDot, not a raw '.' test: a one-liner's TERMINATOR dot is also a '.' token, and
-  ! testing the text alone reported TRUE and FALSE as receivers - `if x then return true.`
-  ! Measured on Preprocessor.clw, where they were the only two names left.
+  ! testing the text alone would report TRUE and FALSE as receivers - `if x then return
+  ! true.` names TRUE, which is no receiver.
   if ~ok and self.IsMemberDot(pS + 1) then self.NoteChainUnres(self.TokText(pS)).
   return false
 
@@ -1318,7 +1318,7 @@ nmU  string(vs:maxName),auto
   add(self.chainMissQ)
 
 ! ------------------------------------------------------------------------------------
-! Design B0b: the tokenizer recombines a member-access receiver into ONE token
+! The tokenizer recombines a member-access receiver into ONE token
 ! ('self.Direct', 'self.Inner.Payload'). Type it by splitting on the FIRST '.': the head
 ! resolves via Lookup (self -> receiver class; else a declared local/param), falling back
 ! to the registry for a labelled structure instance (Grp GROUP - the label IS the typedef;
@@ -1367,8 +1367,8 @@ tsx    long,auto ! dot-form: TYPESET row for terminal membership
   if ~ok
     ! only a real identifier is worth reporting. A quoted LITERAL holding a dot (`'.target='''`)
     ! and a decimal number (2.5) are single tokens too, and split into a "head" that resolves to
-    ! nothing - measured on NetWeb V1400.clw with --thorough on, the residual twelve
-    ! "receivers" were ALL literals. So a head that is not a name is refused without a word.
+    ! nothing, and reporting them would fill the line with "receivers" that are only
+    ! literals. So a head that is not a name is refused without a word.
     if self.rl.IsLabelToken(head)
       self.NoteChainUnres(txt)                                                          ! the HEAD has no known class - not visible, not wrong
     end
@@ -1387,9 +1387,9 @@ tsx    long,auto ! dot-form: TYPESET row for terminal membership
     ! self resolves to PREPROCESSOR, PREPROCESSOR's fields live in the .inc, and without
     ! --thorough nothing ever read it. If the class IS known, the member is simply not a
     ! field of the wanted type (`self.ParseDirective` is a METHOD), the rule correctly does
-    ! not apply, and saying so would put 904 useless names on the line - measured, not
-    ! guessed: that is what the first cut of this diagnostic printed for Preprocessor.clw
-    ! WITH --thorough already on.
+    ! not apply, and saying so would put hundreds of useless names on the line for a
+    ! class of any size (every method of it named with a dot), even with --thorough
+    ! on.
     if ~self.syms.FindTypeDef(tU) then self.NoteChainUnres(txt).
     return false
   end
@@ -1461,9 +1461,9 @@ seen   byte,auto
 !   anything else                 -> '' - a multi-token expression like `a + b` or `f(x)` is a
 !                                   different job, and guessing it would be the wrong kind of
 !                                   confident
-! An empty slot narrows nothing (see VitSymbols.ArgAdmits), so widening from one argument to all
-! of them can only ever ADD resolutions: a call settled by argument one is still settled, and one
-! that was ambiguous may now be settled by a later argument.
+! An empty slot narrows nothing (see VitSymbols.ArgAdmits), so typing every argument rather than
+! the first alone can only ever ADD resolutions: a call settled by argument one stays settled, and
+! one that argument one leaves ambiguous may be settled by a later argument.
 VitMatch.CallArgTypes Procedure(LONG pOpenTok)
 t     long,auto
 dep   long,auto
@@ -1529,7 +1529,7 @@ OneSlot routine
 ! not know answers no: its methods may be named like StringTheory's and return a number,
 ! and `if clip(obj.Left(1))` would lose a clip that kept the test true.
 ! pArgCount selects the OVERLOAD. -1 = the caller does not know its own arity,
-! which considers every row - the behaviour, kept for any caller that cannot count.
+! which considers every row - for any caller that cannot count its arguments.
 ! ------------------------------------------------------------------------------------
 VitMatch.MethodReturnsString Procedure(STRING pRecvClassU, STRING pName, LONG pArgCount, STRING pArgTypesU)
 retU  string(vs:maxName),auto
@@ -1728,8 +1728,8 @@ VitMatch.GuardOK Procedure()
 g     long,auto
   code
   ! a NULL guardQ here is an impossible state - the only caller tests guardKind first,
-  ! so the rule HAS a WHERE - and the answer must be the SAFE direction. Returning true let a
-  ! rule fire with its guard never evaluated; every sibling defensive read in this class
+  ! so the rule HAS a WHERE - and the answer must be the SAFE direction. Returning true would
+  ! let a rule fire with its guard never evaluated; every sibling defensive read in this class
   ! answers false. A guard we cannot evaluate has not passed.
   if self.rl.rules.guardQ &= NULL then return false.
   loop g = 1 to records(self.rl.rules.guardQ) ! WHERE is an AND-list - every clause must pass
@@ -2577,7 +2577,7 @@ kn     BYTE         ! returnsValue: 1 when the procedure's prototype was read
       return false
     of vr:ctConst
       self.SpanText(self.binds.sPos, self.binds.ePos, txt)
-      txt.setValue(self.tk.FoldStr(txt.getValue()))
+      txt.setValue(self.FoldSafe(txt.getValue()))
       if self.IsAllDigits(txt.getValue()) then return true.
       return false
     of vr:ctVar
@@ -2589,6 +2589,8 @@ kn     BYTE         ! returnsValue: 1 when the procedure's prototype was read
       return false
     of vr:ctNoConcat                                                                   ! no depth-0 & in the binding: it binds looser
       return choose(~self.SpanHasConcat(self.binds.sPos, self.binds.ePos))             !   than + and -, so it would regroup
+    of vr:ctWhole                                                                      ! every operand a whole number: a LONG
+      return self.SpanIsWhole(self.binds.sPos, self.binds.ePos)                        !   truncates the fraction of each part
     of vr:ctSimple                                                                     ! no depth-0 logical operator in the binding
       if self.SpanHasBoolOp(self.binds.sPos, self.binds.ePos) then return false.
       return true
@@ -2771,7 +2773,7 @@ kn     BYTE         ! returnsValue: 1 when the procedure's prototype was read
     return 1 - eq
   end
   self.SpanText(self.binds.sPos, self.binds.ePos, txt)
-  txt.setValue(self.tk.FoldStr(txt.getValue()))                                        ! gfFold and bare metavar both fold (spec 2.2). gfTrimr retired: the compare below
+  txt.setValue(self.FoldSafe(txt.getValue()))                                          ! gfFold and bare metavar both fold (spec 2.2). No gfTrimr arm: the compare below
                                                                                        !   is trailing-space-blind already, so a trimr arm could never change the answer.
   if txt._DataEnd > 1
     if txt.valuePtr[1] = '''' and txt.valuePtr[txt._DataEnd] = ''''
@@ -2823,6 +2825,106 @@ t      StringTheory
     end
   end
   return 0
+
+! ------------------------------------------------------------------------------------
+! isWhole(): is every operand in the span [pS,pE] a whole number, so that the sum it stands in
+! has no fraction to lose? A LONG parameter truncates a fraction once, for the whole sum. Split
+! the sum in two and each part is truncated on its own: with n = 5, 10 - n / 2 gives 7, but
+! 0 - n / 2 gives -2 and 10 + -2 gives 8. So the span may hold integer literals, names declared
+! with a whole-number type (BYTE, SHORT, USHORT, LONG, ULONG, INT64, UINT64, SIGNED, UNSIGNED,
+! or an implicit name ending in #), the operators + - * and %, and brackets that group or
+! subscript. Anything else refuses: / or ^, a number with a decimal point, a quoted literal, a
+! call, a property, or a name of another type or one this run cannot place.
+! ------------------------------------------------------------------------------------
+VitMatch.SpanIsWhole Procedure(LONG pS, LONG pE)
+i    long,auto
+t    StringTheory
+tU   StringTheory
+  code
+  if self.syms &= NULL then return false.
+  loop i = pS to pE
+    if self.TokIsEOL(i) then cycle.
+    t.setValue(self.TokText(i))
+    if ~t._DataEnd then cycle.
+    case val(t.valuePtr[1])
+    of 48 to 57
+      if t.containsByte(46) then return false.
+    of 65 to 90 orof 97 to 122 orof 95
+      if self.TokText(i + 1) = '(' then return false.
+      tU.setValue(self.RecvClass(i))
+      if ~tU._DataEnd then tU.setValue(self.ImplicitType(t.getValue())).
+      tU.upper()
+      tU.enclose(' ', ' ')
+      if ~instring(tU.getValue(), ' BYTE SHORT USHORT LONG ULONG INT64 UINT64 SIGNED UNSIGNED ', 1, 1)
+        return false
+      end
+    else
+      if t._DataEnd > 1 and inlist(t.valuePtr[1], '+', '-') and self.IsAllDigits(t.valuePtr[2 : t._DataEnd]) then cycle.
+      if t._DataEnd <> 1 then return false.
+      case val(t.valuePtr[1])
+      of 43 orof 45 orof 42 orof 37 orof 40 orof 41 orof 91 orof 93 orof 44 ! '+' orof '-' orof '*' orof '%' orof '(' orof ')' orof '[' orof ']' orof <comma>
+      else
+        return false
+      end
+    end
+  end
+  return true
+
+! ------------------------------------------------------------------------------------
+! FoldStr's folded text of pIn, or pIn itself when the fold changed a NAME. Folding adds and
+! multiplies numbers and leaves every name where it is, so the names of the folded text, in
+! order, are those of pIn. FoldStr hands no call to the runtime's EVALUATE, which runs any
+! Clarion builtin it is given: day(today()) - 1 would come back as the day the tool ran, and
+! upper('k') as K - a name the program never wrote. This is the second check on the same
+! point: a fold that lost, gained or changed a name is not used.
+! ------------------------------------------------------------------------------------
+VitMatch.FoldSafe Procedure(STRING pIn)
+fs   StringTheory
+cs   StringTheory
+nl   StringTheory
+ni   StringTheory
+cn   long
+nIn  long,auto
+x    long,auto
+q    byte
+inW  byte
+  code
+  fs.setValue(self.tk.FoldStr(pIn))
+  cs.setValue(pIn)
+  do CountNames
+  nIn = cn
+  ni.setValue(nl)
+  cs.setValue(fs)
+  do CountNames
+  if cn <> nIn then return pIn.
+  if cn and ~ni.equals(nl, st:clip) then return pIn.
+  return fs.getValue()
+
+! the names in cs, outside quotes, counted in cn and listed in nl: a run of name characters that
+! starts with a letter, '_' or '?'. A run that starts with a digit is a number, 0FFh as much as 12.
+CountNames routine
+  cn = 0
+  q = 0
+  inW = 0
+  nl.free()
+  loop x = 1 to cs._DataEnd
+    if q
+      if cs.valuePtr[x] = '''' then q = 0.
+      cycle
+    end
+    case val(cs.valuePtr[x])
+    of 39
+      q = 1
+      inW = 0
+    of 65 to 90 orof 97 to 122 orof 95 orof 63
+      if ~inW then cn += 1 ; inW = 1 ; nl.append(' ').
+    of 48 to 57 orof 46 orof 58
+      if ~inW then inW = 2.
+    else
+      inW = 0
+    end
+    if inW = 1 then nl.append(cs.valuePtr[x]).
+  end
 
 ! ------------------------------------------------------------------------------------
 ! does the token span [pS,pE] contain a DEPTH-0 logical operator? The logical
@@ -3210,7 +3312,7 @@ opC  string(4),auto
   ! same operator, different documented spelling. FIRST BYTE GATE: a failed compare is
   ! the ordinary case here - this is the hottest test in the matcher, run for every candidate
   ! and every literal token of every attempt - and every spelling with a synonym begins with
-  ! one of four characters. One indexed byte keeps the rest of the corpus out of OpCanon.
+  ! one of four characters. One indexed byte keeps every other token out of OpCanon.
   case val(pLit[1])
   of 60 orof 62 orof 126 orof 61                              ! '<' '>' '~' '='
     opC = self.OpCanon(pLit)
@@ -3238,12 +3340,12 @@ ckOp  string(4),auto
     if ckOp then return self.AnchorNotPair(pS, ckOp).         !   ('<<>' vs 'NOT =') - the postings walk already admits these
     ! and the other direction, which the comparator test above cannot cover: a pattern that
     ! OPENS `NOT =` matches source spelling it `<>`, as MatchHere does. OpCanon('NOT') is '',
-    ! so without this the start was never tried at all. PatFacts read the pair once per rule.
+    ! so without this the start would never be tried. PatFacts read the pair once per rule.
     if self.pat1NotOp then return choose(self.pat1NotOp = self.OpCanon(self.TokText(pS))).
     ! A '.' that ENDS a pattern fragment is a block TERMINATOR. LitMatches reads every pattern
-    ! dot as member access and refuses a terminator dot outright, so the test above refused the
+    ! dot as member access and refuses a terminator dot outright, so the test above refuses the
     ! one token MatchHere's terminator arm accepts - and a rule whose pattern opens with such a
-    ! dot matched nothing at all. Ask what that arm asks. PatDotEnds leaves the buffer on part 1.
+    ! dot would match nothing. Ask what that arm asks. PatDotEnds leaves the buffer on part 1.
     if self.patQ.tok = '.' and self.PatDotEnds(1)
       return choose(self.TokText(pS) = '.' and ~self.IsMemberDot(pS))
     end
@@ -3252,16 +3354,16 @@ ckOp  string(4),auto
   ! A pattern that OPENS with an EXPR metavar is tried from every token of the statement, the
   ! statement's first word included - and an EXPR extent stops at THEN, ELSE, a comma or a
   ! terminator, never at the word in front of it. So from `if a <> clip(b)` the first start that
-  ! let the rest of the pattern match bound w1 = `if a`, keyword and all, and only a rule that
-  ! put w1 back first and unchanged came out right. No expression begins with the word that
-  ! opens or continues a statement, so such a start is refused here and the next one is tried.
+  ! lets the rest of the pattern match would bind w1 = `if a`, keyword and all, and only a
+  ! rule putting w1 back first and unchanged would come out right. No expression begins with
+  ! the word that opens or continues a statement, so such a start is refused here.
   if self.pat1Expr
     if instring(' ' & upper(self.TokText(pS)) & ' ', ' IF ELSIF CASE OF OROF LOOP WHILE UNTIL RETURN EXECUTE DO TO BY TIMES ', 1, 1) then return false.
   end
   if self.gd1IdMv
     if ~self.rl.IsLabelToken(self.TokText(pS)) and ~instring('.', self.TokText(pS), 1, 1) |
        and ~self.ImplicitType(self.TokText(pS))                                           |
-       then return false.                                                                 ! B0b: a recombined 'self.Direct' receiver token has a '.' and isn't a bare label; implicit variables (total#,
+       then return false.                                                                 ! a recombined 'self.Direct' receiver token has a '.' and isn't a bare label; implicit variables (total#,
                                                                                           !   s", r$) are variables too - MatchHere's arm accepts them, so the gate must not discard them first
     if self.gd2Dot and self.TokText(pS + 1) <> '.' then return false.
   end
@@ -3345,7 +3447,7 @@ r        long,auto
 depth    long,auto
 d        long,auto
 c        long,auto
-dotPos   long,auto          ! B0b: '.' pos in a recombined member-access receiver token
+dotPos   long,auto          ! '.' pos in a recombined member-access receiver token
 recvU    STRING(vs:maxName) ! resolved class of a method-call receiver
 cands    QUEUE              ! EXPR candidate end positions
 epos       LONG
@@ -3436,15 +3538,15 @@ epos       LONG
     ! STRING-classed metavar when the receiver's class RESOLVES and the class's headers
     ! declare the method ,String (any registry-known class, inheritance walked;
     ! six-name fallback for registry-unknown classes). Makes string method results bind
-    ! like string variables everywhere (kills the per-shape rule class at the
-    ! root). Tried FIRST; any refusal falls through to the existing single-token paths.
+    ! like string variables everywhere, so no rule needs a shape of its own for
+    ! one. Tried FIRST; any refusal falls through to the single-token paths below.
     ! mvAnyVar excluded (variables only). Gate order: metavar class first (cheap),
     ! receiver resolution second, method lookup last.
     if kind <> vr:mvAnyVar and ~self.TokIsEOL(pS+1) and ~self.TokIsEOL(pS+2) and ~self.TokIsEOL(pS+3)
-      ! IsMemberDot, NOT a raw '.' test - the reason is written out at IsMemberDot and this
-      ! is the one sibling that did not ask. A one-liner's TERMINATOR dot is also a '.'
-      ! token, so `if c then q9 = s1. left (s1)` bound a method-result span ACROSS the end
-      ! of the statement and emitted `q9 = use(s1. left (s1))` - the IF's terminating
+      ! IsMemberDot, NOT a raw '.' test - the reason is written out at IsMemberDot, and
+      ! every sibling asks it too. A one-liner's TERMINATOR dot is also a '.' token, so a
+      ! raw test would bind `if c then q9 = s1. left (s1)` as a method-result span ACROSS
+      ! the end of the statement and emit `q9 = use(s1. left (s1))` - the IF's terminating
       ! period deleted and the following lines swallowed into the THEN clause. It compiles.
       if self.TokText(pS+1) = '.' and self.IsMemberDot(pS + 1)                           |
          and self.TokText(pS+3) = '(' and self.rl.IsLabelToken(self.TokText(pS+2))
@@ -3483,15 +3585,15 @@ epos       LONG
     ! ANYVAR deliberately does NOT take the dot-form: it means a plain identifier, and a
     ! recombined `self.Direct` receiver is a member ACCESS. A typed metavar takes it because
     ! there is a chain to type; ANYVAR would just be binding a different kind of thing under
-    ! the same name. That is the rationale found missing - the implicit-variable half of
-    ! the same asymmetry had none either, and turned out to be a plain miss (fixed below).
-    if kind <> vr:mvAnyVar then dotPos = instring('.', self.TokText(pS), 1, 1).          ! dot-form: mvTyped/mvTypeSet chains too - a dotted token always REFUSED the single-id path before, so this only ADDS matches
-    if dotPos > 1                                                                        ! B0b: the tokenizer recombines a member-access receiver into ONE token (self.Direct)
+    ! the same name. An implicit variable is another matter: it IS a plain identifier, so
+    ! ANYVAR binds it (below).
+    if kind <> vr:mvAnyVar then dotPos = instring('.', self.TokText(pS), 1, 1).          ! dot-form: mvTyped/mvTypeSet chains too - the single-id path refuses a dotted token, so this only ADDS matches
+    if dotPos > 1                                                                        ! the tokenizer recombines a member-access receiver into ONE token (self.Direct)
       if ~self.ChainTypeOK(pmvx, pS) then return 0.                                      ! type it by splitting on '.' and walking the registry
     elsif self.ImplicitType(self.TokText(pS))                                            ! IMPLICIT variables (clarion.help implicit_variables) -
       ! ANYVAR binds an implicit variable too. `total#` IS an identifier - the whole
-      ! meaning of ANYVAR - and it was refused only because this arm was gated against ANYVAR
-      ! and the fall-through demands IsLabelToken, which a '#'/'"'/'$' suffix fails. A typed
+      ! meaning of ANYVAR - so this arm is not gated against ANYVAR: the fall-through
+      ! demands IsLabelToken, which a '#'/'"'/'$' suffix fails. A typed
       ! metavar reaches ClassSatisfies below; ANYVAR has no type to satisfy, so it just binds.
       if kind <> vr:mvAnyVar
         if ~self.ClassSatisfies(pmvx, self.ImplicitType(self.TokText(pS))) then return 0. !   s" = STRING(32), n# = LONG, r$ = REAL; typed by SUFFIX, never
@@ -3651,9 +3753,9 @@ tb StringTheory
     tb.setValue(self.TokText(i+o))
     ! LitMatches' notion of identity, NOT a blanket fold. A quoted literal is CONTENT
     ! and compares case-sensitively - which is what LitMatches and FreqKey do, so a
-    ! blanket upper() here made repeated-metavar equality the one place in the matcher where
-    ! 'Yes' and 'YES' were the same string: foomatched foo('Yes','YES') and the rewrite
-    ! then emitted ONE of them for both. Everything else in a span is a Clarion identifier or
+    ! blanket upper() here would make repeated-metavar equality the one place in the
+    ! matcher where 'Yes' and 'YES' are one string: foo(w,w) would match foo('Yes','YES')
+    ! and the rewrite emit ONE for both. Everything else in a span is a Clarion identifier or
     ! keyword, where the language itself is caseless, so those stay folded.
     if (ta._DataEnd and ta.valuePtr[1] = '''') or (tb._DataEnd and tb.valuePtr[1] = '''')
       if ~ta.equals(tb, st:clip) then return false.
@@ -3820,7 +3922,7 @@ nxt  StringTheory
 ! leaves padding INTERNAL; a collapsed blank/zero test changes the operand's shape).
 ! Anything else - EOL, ';', terminator '.', THEN/ELSE/END, and/or/xor, ')' - ends the
 ! operand, so the match stands. Blacklist deliberately: unknown next token = fire, the
-! same permissiveness every un-optioned rule has today. A '|' continuation is trivia
+! same permissiveness every un-optioned rule has. A '|' continuation is trivia
 ! in the NEXT token's strBefore, so a continued '& lit' still presents as '&' here.
 ! TryFrom asks this past any bracket that only groups the match: `(clip(s)) & 'x'`
 ! joins on to the match as surely as `clip(s) & 'x'` does.
@@ -3867,15 +3969,21 @@ nxt  StringTheory
 ! clip(n) is TEXT: `if s = clip(n)` compares two strings, `if s = n` compares numbers - a blank
 ! s equals a zero n - whatever stands on the other side, a variable, a literal or a call, and
 ! under every comparison operator. So the match refuses when it is the whole condition of IF,
-! ELSIF, LOOP WHILE or UNTIL, the value a CASE tests or an OF gives, an operand of NOT, ~, AND,
+! ELSIF, LOOP WHILE or UNTIL, the value a CASE tests or an OF gives, the upper bound of an OF's
+! range after its TO (compared with the CASE value as the OF is), an operand of NOT, ~, AND,
 ! OR or XOR, the argument that is choose()'s condition, or either side of a comparison in any
 ! spelling. An '=' that ASSIGNS is no comparison (AssignEqAt): `s = clip(n)` as a statement
-! puts the same text in s either way, and still converts. TryFrom hands this the match widened
-! out through any bracket that only groups it, so `if (clip(n))` is read at the IF and
+! puts the same text in s either way, and still converts - unless the target takes the type it
+! is given, as an ANY or an untyped (?) parameter does, or is a name this run cannot place
+! (DestKeepsType). A RETURN converts to the type the procedure is prototyped to return; it
+! refuses when that is untyped (,?) or the prototype cannot be read (ReturnKeepsType). Either
+! refusal is for the match as the WHOLE value; `s = clip(n) & 'x'` is text either way. TryFrom
+! hands this the match widened out through any bracket that only groups it, so `if (clip(n))` is read at the IF and
 ! `(clip(n)) = s` at the '='. The type also picks the answer where the match is an ARGUMENT: every value of
 ! choose() sets the type it returns - a LONG among STRINGs makes it a number - and a method, or a procedure with
 ! two prototypes, may take another overload. So an argument of choose(), of a method, or of such a procedure refuses;
-! one of a builtin or of a procedure with one prototype converts.
+! one of a builtin or of a procedure with one prototype converts, unless ArgTypeMayChange says the type can still
+! pick the answer there. The first argument of assert() is a truth test, as choose()'s is: it fails on zero or blank.
 ! ------------------------------------------------------------------------------------
 VitMatch.MatchIsTruthTest Procedure(LONG pS, LONG pE)
 prv  STRING(vs:maxName),AUTO
@@ -3887,15 +3995,20 @@ c    STRING(vs:maxName),AUTO
   prv = upper(self.TokText(pS - 1))
   nxt = upper(self.TokText(pE + 1))
   case prv
-  of 'IF'   orof 'ELSIF' orof 'WHILE' orof 'UNTIL' orof 'NOT' orof '~'  orof 'AND' orof 'OR' orof 'XOR'
+  of 'IF'     orof 'ELSIF' orof 'WHILE' orof 'UNTIL' orof 'NOT' orof '~'  orof 'AND' orof 'OR' orof 'XOR'
     return true
-  of 'CASE' orof 'OF'    orof 'OROF'
+  of 'CASE'   orof 'OF'    orof 'OROF'
     return true
+  of 'TO'
+    if inlist(upper(self.TokText(self.StmtStart(pS - 1))), 'OF', 'OROF') then return true.
+  of 'RETURN'
+    if self.IsStmtEndAfter(pE) and self.ReturnKeepsType(pS) then return true.
   of '('
     if upper(self.TokText(pS - 2)) = 'CHOOSE' and (nxt = ',' or nxt = ')') then return true.
   of '='
     if ~self.AssignEqAt(pS - 1) then return true.
-  of '<<'   orof '>'     orof '<<>'   orof '<<='   orof '>='  orof '~=' orof '~<<' orof '~>' orof '=<<' orof '=>'
+    if self.IsStmtEndAfter(pE) and self.DestKeepsType(pS - 1) then return true.
+  of '<<'     orof '>'     orof '<<>'   orof '<<='   orof '>='  orof '~=' orof '~<<' orof '~>' orof '=<<' orof '=>'
     return true
   end
   if self.OpCanon(prv) then return true.
@@ -3908,9 +4021,9 @@ c    STRING(vs:maxName),AUTO
   loop k = pS - 1 to 1 by -1                                               ! the call the match is an argument of
     c = self.TokText(k)
     case c
-    of ')' orof ']'
+    of ')' orof ']' orof '}'
       d += 1
-    of '(' orof '['
+    of '(' orof '[' orof '{{'
       if ~d then break.
       d -= 1
     end
@@ -3919,8 +4032,209 @@ c    STRING(vs:maxName),AUTO
   c = upper(self.TokText(k - 1))
   if c = 'CHOOSE' then return true.
   if instring('.', c, 1, 1) or self.TokText(k - 2) = '.' then return true. ! a method: its overloads are not read here
+  if c = 'ASSERT' and k = pS - 1 and (nxt = ',' or nxt = ')') then return true.
   if self.syms &= NULL then return false.
   if self.syms.MapProtoCount(c) > 1 or self.syms.IncProtoCount(c) > 1 then return true.
+  return self.ArgTypeMayChange(c, k, pS)
+
+! ------------------------------------------------------------------------------------
+! NOTBOOL support: may the argument that starts at pS, in the call to pNameU whose '(' is at pOpen,
+! be read with another type than the one it is given? The name has at most one prototype the run
+! has seen. With one, the parameter in that place is read from it: an untyped one (? or <?>) takes
+! the type of what it is passed - clip(n) passes the STRING '0', which is true, and n the LONG 0,
+! which is false - so it answers yes, as it does when the parameter cannot be found in the
+! prototype. With none, the name is taken for a builtin of the Clarion runtime. That holds only
+! in a PROGRAM file, once the run has read every file the MAP INCLUDEs. A MEMBER module, or an
+! include fragment with no module statement, also calls procedures declared in a MAP the run does
+! not read; and an include the run has not read (the includes were not read, or one could not
+! be) may prototype the name, more than once. In either case only a name the runtime is known
+! to own answers no.
+! ------------------------------------------------------------------------------------
+VitMatch.ArgTypeMayChange Procedure(STRING pNameU, LONG pOpen, LONG pS)
+sg   StringTheory
+ch   STRING(1),AUTO
+tk   long,auto
+x    long,auto
+ai   long
+pi   long
+d    long
+q    byte
+  code
+  if ~self.syms.MapProtoCount(pNameU) and ~self.syms.IncProtoCount(pNameU)
+    if self.syms.isMember or self.syms.incMiss or (~self.syms.incRead and self.syms.mapIncl)
+      return choose(~self.RuntimeOwns(pNameU, pOpen))
+    end
+    return false
+  end
+  loop x = pOpen + 1 to pS - 1
+    case self.TokText(x)
+    of '(' orof '[' orof '{{'
+      d += 1
+    of ')' orof ']' orof '}'
+      d -= 1
+    of ','
+      if ~d then ai += 1.
+    end
+  end
+  tk = self.syms.MapProtoTok(pNameU)
+  if tk
+    sg.setValue(self.syms.ProtoSig(tk))
+  elsif self.syms.IncProtoCount(pNameU) = 1
+    sg.setValue(self.syms.incProtos.sig,st:clip)
+  else
+    return true
+  end
+  x = sg.findByte(40)         ! '('
+  if ~x then return true.
+  d = 0
+  loop x = x + 1 to sg._DataEnd
+    ch = sg.valuePtr[x]
+    if q
+      if ch = '''' then q = 0.
+      cycle
+    end
+    case val(ch)
+    of 39                     ! <single quote>
+      q = 1
+    of 40 orof 91             ! '(' orof '['
+      d += 1
+    of 41 orof 93             ! ')' orof ']'
+      if ~d then return true.
+      d -= 1
+    of 44                     ! <comma>
+      if ~d then pi += 1.
+    else
+      if pi = ai and ~d and ch <> ' ' and ch <> '<<' and ch <> '*' then return choose(ch = '?').
+    end
+  end
+  return true
+
+! ------------------------------------------------------------------------------------
+! NOTBOOL support: may the target of the assigning '=' at pEq take the TYPE of the value it is
+! given, rather than convert it? An ANY does - it receives the value of the source, type and
+! all - and so does an untyped parameter (? or <?>): clip(n) puts the STRING '0' there, which is
+! true, and n the LONG 0, which is false. The target is the name the statement opens with, or
+! that name subscripted. It answers yes for an ANY or an untyped parameter, for a name this run
+! cannot place, and for any other target, a property among them: only a declared type proves
+! that the value converts.
+! ------------------------------------------------------------------------------------
+VitMatch.DestKeepsType Procedure(LONG pEq)
+ss   long,auto
+tU   STRING(vs:maxName),AUTO
+  code
+  if self.syms &= NULL then return true.
+  ss = self.StmtStart(pEq)
+  if ss < 1 or ss >= pEq then return true.
+  if ss + 1 < pEq
+    if self.TokText(ss + 1) <> '[' or self.TokText(pEq - 1) <> ']' then return true.
+  end
+  tU = upper(self.RecvClass(ss))
+  if ~tU then tU = self.ImplicitType(self.TokText(ss)).
+  if ~tU or tU = 'ANY' or tU = vs:unknownType then return true.
+  return false
+
+! ------------------------------------------------------------------------------------
+! NOTBOOL support: may the RETURN at pIx hand back the value's own TYPE? A RETURN converts to
+! the type the procedure or method is prototyped to return, so this answers no only when that
+! prototype was read and names a type. An untyped return (,?) keeps the type - clip(n) returns
+! the STRING '0', which is true, and n the LONG 0, which is false - and a prototype the run
+! could not read may be one.
+! ------------------------------------------------------------------------------------
+VitMatch.ReturnKeepsType Procedure(LONG pIx)
+tU   STRING(vs:maxName),AUTO
+rf   BYTE
+kn   BYTE
+  code
+  if self.syms &= NULL then return true.
+  tU = upper(self.syms.ProcReturnRead(pIx, rf, kn))
+  if ~kn or ~tU or tU = 'ANY' or tU = vs:unknownType then return true.
+  return false
+
+! ------------------------------------------------------------------------------------
+! a name the Clarion runtime owns, for a call whose name no prototype the run has read explains:
+! the read-only builtins, the ones that show a value or stop the program, and the procedures the
+! runtime prototypes in BUILTINS.CLW whose parameters all have a type, so a number and its text
+! reach them the same way (ISSTRING, the one with an untyped parameter, is left out). A program
+! may declare a procedure of its own with one of these names, so a name from the last group
+! answers yes only for a call with as many arguments as one of the runtime's prototypes takes.
+! ------------------------------------------------------------------------------------
+VitMatch.RuntimeOwns Procedure(STRING pU, LONG pOpen)
+ac   long,auto
+  code
+  if self.ReadOnlyCall(pU) then return true.
+  case pU
+  of 'MESSAGE' orof 'STOP' orof 'HALT' orof 'ASSERT'
+    return true
+  end
+  ac = self.CallArgCount(pOpen)
+  if ac < 0 then return false.
+  case pU
+  of   'CLIPBOARD' orof 'COMMAND' orof 'LONGPATH' orof 'PATH' orof 'PUSHBIND' orof 'SETCURSOR' orof 'SETPENCOLOR'
+  orof 'SETPENSTYLE' orof 'SETPENWIDTH' orof 'SHORTPATH' orof 'SHUTDOWN' orof 'UNBIND'
+    return choose(ac <= 1)
+  of   'ALERT' orof 'ALIAS' orof 'BEEP' orof 'DESTROY' orof 'DISABLE' orof 'DISPLAY' orof 'DRAGID'
+  orof 'DROPID' orof 'ENABLE' orof 'ERASE' orof 'HELP' orof 'HIDE' orof 'IDLE' orof 'PRINTERDIALOG'
+  orof 'SETTARGET' orof 'UNHIDE' orof 'UNTIE' orof 'UPDATE'
+    return choose(ac <= 2)
+  of   'PRINTERDIALOGA' orof 'SELECT'
+    return choose(ac <= 3)
+  of   'BLANK'
+    return choose(ac <= 4)
+  of   'GETPOSITION' orof 'SETPOSITION' orof 'UNREGISTER' orof 'UNREGISTEREVENT'
+    return choose(ac <= 5)
+  of   'ACOS' orof 'ASIN' orof 'ATAN' orof 'BOF' orof 'BYTES' orof 'CHAIN' orof 'CHANGES'
+  orof 'CLOSE' orof 'CONTENTS' orof 'COS' orof 'DAY' orof 'DEBUGHOOK' orof 'DELETE' orof 'DUPLICATE'
+  orof 'EMPTY' orof 'EOF' orof 'EVALUATE' orof 'EXISTS' orof 'FIXFORMAT' orof 'FLUSH' orof 'FORWARDKEY'
+  orof 'FREE' orof 'FREEZE' orof 'GETNULLS' orof 'LOG10' orof 'LOGE' orof 'MONTH' orof 'NAME'
+  orof 'NEXT' orof 'NOMEMO' orof 'PACK' orof 'POSITION' orof 'PRESS' orof 'PRESSKEY' orof 'PREVIOUS'
+  orof 'RELEASE' orof 'RESUME' orof 'SET3DLOOK' orof 'SETCLIPBOARD' orof 'SETCLOCK' orof 'SETCOMMAND' orof 'SETDROPID'
+  orof 'SETEXITCODE' orof 'SETKEYCHAR' orof 'SETKEYCODE' orof 'SETPATH' orof 'SETTODAY' orof 'SIN' orof 'SQRT'
+  orof 'STATUS' orof 'STREAM' orof 'TAN' orof 'TYPE' orof 'UNFIXFORMAT' orof 'UNLOAD' orof 'UNLOCK'
+  orof 'UNQUOTE' orof 'WATCH' orof 'YEAR'
+    return choose(ac = 1)
+  of   'CONVERTANSITOOEM' orof 'CONVERTOEMTOANSI' orof 'ENDPAGE' orof 'GETSTATE' orof 'HOLD' orof 'LOCALE' orof 'LOCK'
+  orof 'OPEN' orof 'QUOTE' orof 'REMOVE' orof 'SHARE' orof 'SUSPEND'
+    return choose(ac >= 1 and ac <= 2)
+  of   'BUILD' orof 'COLORDIALOG' orof 'COMPRESS' orof 'NOTIFICATION' orof 'NOTIFY' orof 'POLYGON' orof 'RUN'
+  orof 'SET'
+    return choose(ac >= 1 and ac <= 3)
+  of   'FILEDIALOG' orof 'POPUP' orof 'POST' orof 'PUTINI'
+    return choose(ac >= 1 and ac <= 4)
+  of   'FILEDIALOGA' orof 'START'
+    return choose(ac >= 1 and ac <= 5)
+  of   'FONTDIALOG' orof 'GETFONT' orof 'SETFONT'
+    return choose(ac >= 1 and ac <= 6)
+  of   'FONTDIALOGA'
+    return choose(ac >= 1 and ac <= 7)
+  of   'BINDEXPRESSION' orof 'CHANGE' orof 'COPY' orof 'FREESTATE' orof 'HOWMANY' orof 'INSTANCE' orof 'ISGROUP'
+  orof 'RANDOM' orof 'REGET' orof 'RENAME' orof 'RESET' orof 'SEND' orof 'SETLAYOUT' orof 'SETNULLS'
+  orof 'SKIP' orof 'TIED' orof 'UNFREEZE' orof 'WHERE' orof 'WHO'
+    return choose(ac = 2)
+  of   'CALL' orof 'DECOMPRESS' orof 'DELETEREG' orof 'GETGROUP' orof 'RESTORESTATE' orof 'TIE' orof 'WHAT'
+    return choose(ac >= 2 and ac <= 3)
+  of   'GETINI' orof 'GETREG'
+    return choose(ac >= 2 and ac <= 4)
+  of   'BUFFER' orof 'CLONE'
+    return choose(ac >= 2 and ac <= 5)
+  of   'DATE' orof 'DIRECTORY' orof 'GETREGSUBKEYS' orof 'GETREGVALUES'
+    return choose(ac = 3)
+  of   'SHOW'
+    return choose(ac >= 3 and ac <= 4)
+  of   'PUTREG' orof 'REGISTER' orof 'REGISTEREVENT'
+    return choose(ac >= 3 and ac <= 5)
+  of   'IMAGE'
+    return choose(ac >= 3 and ac <= 6)
+  of   'LINE'
+    return choose(ac >= 4 and ac <= 5)
+  of   'BOX' orof 'ELLIPSE' orof 'ROUNDBOX'
+    return choose(ac >= 4 and ac <= 6)
+  of   'ARC'
+    return choose(ac >= 6 and ac <= 7)
+  of   'CHORD'
+    return choose(ac >= 6 and ac <= 8)
+  of   'PIE'
+    return choose(ac >= 6 and ac <= 10)
+  end
   return false
 
 ! ------------------------------------------------------------------------------------
@@ -4056,8 +4370,8 @@ VitMatch.TokType Procedure(LONG pIx)
 ! ------------------------------------------------------------------------------------
 ! How far a token moves the bracket depth: ( [ and a property's { open, ) ] } close. The
 ! braces count because the comma in ?List{PROPLIST:Width, 1} belongs to the property, not to
-! the argument list the property stands in - an extent that stopped there took the property's
-! index for the next argument.
+! the argument list the property stands in - an extent that stopped there would take the
+! property's index for the next argument.
 ! ------------------------------------------------------------------------------------
 VitMatch.DepthDelta Procedure(STRING pTok)
   code

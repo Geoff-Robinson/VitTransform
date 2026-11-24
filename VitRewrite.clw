@@ -124,7 +124,7 @@ spC       long,auto !   and the change count, to tell an applied match from a sk
     if errorcode() then cycle.
     spA = self.m.matches.sPos ; spB = self.m.matches.ePos ; spN = self.tk.records() ; spC = self.changeCount
     self.ApplyOne(mx, pLog)
-    if self.changeCount <> spC ! it applied: the span, as the postings patch needs it (14 Sep 2026)
+    if self.changeCount <> spC ! it applied: the span, as the postings patch needs it
       self.m.NotePatch(spA, spB, spB - spA + 1 + self.tk.records() - spN)
     end
     ! ONCE: at most one APPLIED match per file. The matcher stops at its first clean match, but a
@@ -168,7 +168,7 @@ mx  long,auto
   return 0
 
 ! ------------------------------------------------------------------------------------
-! GROUPED DISPATCH (--dispatch=grouped, 14 Sep 2026). The classic loop gives every rule its
+! GROUPED DISPATCH (--dispatch=grouped). The classic loop gives every rule its
 ! own walk of the file, every pass. Here a rule's matches, once found, are kept - with the
 ! stream version they were found on - and thrown away the moment the stream changes; and a
 ! rule that has to walk takes with it every later rule of the pass whose anchor is the same
@@ -177,7 +177,7 @@ mx  long,auto
 ! found on, and a shared walk gives each member exactly the turns its own walk would have.
 ! On a settled pass - every last pass, and the only pass on a file the rules leave alone -
 ! each anchor is walked once instead of once per rule; on a changing pass each firing costs
-! the re-walks it costs today. --dispatch=classic is the loop as it was.
+! the re-walks the classic loop costs. --dispatch=classic gives each rule its own walk.
 ! ------------------------------------------------------------------------------------
 VitRewrite.CacheFresh Procedure()
   code
@@ -467,7 +467,7 @@ insTxt   StringTheory
     return
   end
 
-  if self.rl.rules.isComment                            ! comment-out mode (design note 71c, not shipped) - survives as
+  if self.rl.rules.isComment                            ! comment-out mode - the statement survives as
     svML = self.multiLine                               !   ONE comment line at the original indent. Tokens are DELETED and the
     self.RenderSpan(sPos, ePos, oldExact)               !   text carried as trivia on the survivor token, so nothing can ever
     self.multiLine = svML                               !   re-match it: fixpoint-safe by construction, and the LINE survives
@@ -685,7 +685,7 @@ eaD  byte
 !      trivia is `! text`, its line break and the next indent, the same thing the width policy
 !      keeps - and taken only when every comment inside the span comes through EXACTLY ONCE. A
 !      comment on a token the rule itself spells, a binding the replacement drops, or a binding it
-!      repeats, each fail that test, and the match is skipped as before: no comment is ever lost
+!      repeats, each fail that test, and the match is skipped: no comment is ever lost
 !      silently. Non-comment trivia (absorbed OMIT prose) is held to the same test. ----
 
 ! ---- Is the whole match on one line? Only then does OuterCarry run for an ordinary match: a match
@@ -751,7 +751,7 @@ cmt  StringTheory
 !      comment (a comment on a token the rule itself spells is outside every binding). Taken only
 !      when every comment inside the span sits on a kept token, or on the first token of the
 !      middle, whose trivia moves onto whatever replaces it; a comment further inside the middle
-!      has nowhere to go and the match is skipped as before. A ';' the rule wrote OUTSIDE a
+!      has nowhere to go and the match is skipped. A ';' the rule wrote OUTSIDE a
 !      literal makes the replacement two statements, which is SplitStmts' business and is not
 !      attempted here; a ';' inside a literal is ordinary text and does not refuse the rescue. ----
 OuterCarry routine
@@ -784,14 +784,14 @@ keepL byte,auto    ! the trivia in front of the old middle stays: it is the matc
   self.BuildRep(newTxt)                                                          ! FLAT: the replacement as the rule spells it
   if ~newTxt._DataEnd then exit.
   ! repTk EXISTS ONLY TO BE COMPARED WITH THE FILE, so it has to tokenize the way the file
-  ! does. midLine=1 was set here to say "a fragment has no column 1" - true, but it also turns
-  ! OFF the label merge, because that gates on BufColOne, and BufColOne is 0 whenever midLine
-  ! is set. The file merges a dotted name that is not a call - `st.value`, `self.count` - into
-  ! ONE token; repTk left it as three. The prefix walk then compares `st.value` with `st`,
-  ! breaks at the first token on both ends, and OuterCarry gives up with k + m = 0 - so the
-  ! whole "head and tail kept with their comments" rescue was unreachable for any replacement
-  ! whose head or tail is a dotted reference, which is most of them.
-  ! Nothing here reads a TYPE - the walk compares text - so the typing midLine was protecting
+  ! does, so midLine is NOT set here. Setting it says "a fragment has no column 1" - true, but
+  ! it also turns OFF the label merge, because that gates on BufColOne, and BufColOne is 0
+  ! whenever midLine is set. The file merges a dotted name that is not a call - `st.value`,
+  ! `self.count` - into ONE token; with midLine set repTk would leave it as three. The prefix
+  ! walk would then compare `st.value` with `st`, break at the first token on both ends, and
+  ! OuterCarry would give up with k + m = 0 - the "head and tail kept with their comments"
+  ! rescue lost for any replacement whose head or tail is a dotted reference, most of them.
+  ! Nothing here reads a TYPE - the walk compares text - so the typing midLine protects
   ! does not matter to this object. What reaches the stream is re-parsed by InsertString, and
   ! that is told it is a fragment separately.
   repTk.ParseText(newTxt)
@@ -905,8 +905,8 @@ wsb    StringTheory
   code
   ! the width limit is LOCAL - the widest ORIGINAL line of the construct
   ! being edited (its own deliberate formatting), NOT the file maximum (one outlier
-  ! wide line - a long comment or the sig literal - inflated the file cap and let
-  ! 465-char flattens through as "in-limit"). allowed = spanW + 12 capped at 200;
+  ! wide line - a long comment or the sig literal - would inflate the file cap and let
+  ! a 465-char flatten through as "in-limit"). allowed = spanW + 12 capped at 200;
   ! a construct already wider than 200 is respected as-is, never extended. Result:
   ! deliberately wrapped constructs PRESERVE and their | columns stay put.
   overWide = 0
@@ -955,10 +955,10 @@ wsb    StringTheory
     get(self.tk.tokens, wt)
     if errorcode() then break.
     ! STOP AT THE LINE END. TokIsEOL only knows a '<10>' TOKEN, and a continuation is not one -
-    ! the break lives as CR/LF inside the next token's trivia - so this walked straight through
-    ! every continuation and kept adding, the next line's indent included. The result over-counted
-    ! and the width policy refused conversions that fit. The prefix walk above and the spanW walk
-    ! below both test for the feed; this one did not.
+    ! the break lives as CR/LF inside the next token's trivia - so without this test the walk
+    ! would go straight through every continuation and keep adding, the next line's indent
+    ! included; the result would over-count and the width policy refuse conversions that fit.
+    ! The prefix walk above and the spanW walk below test for the feed in the same way.
     if not self.tk.tokens.strBefore &= NULL
       wsb.setValue(self.tk.tokens.strBefore)
       wfz = wsb.findByte(13)                      ! CR first: in a CRLF break it is the earlier of the two
@@ -1138,7 +1138,9 @@ VitRewrite.BuildRep Procedure(StringTheory pOut)
 ! Walk the rule's replacement text: copy literally, but substitute declared
 ! metavars with their bound source text and evaluate fold(...)/trimr(...)
 ! (recursing into their argument first, so a fold() written in the rule never
-! confuses a fold(...) that arrives inside bound source text).
+! confuses a fold(...) that arrives inside bound source text). fold() combines
+! numbers only: text holding a call keeps the call (VitMatch.FoldSafe), since
+! day(today()) - 1 has a value only when the program runs.
 ! ------------------------------------------------------------------------------------
 VitRewrite.SubstText Procedure(STRING pText, StringTheory pOut)
 i        long,auto
@@ -1185,8 +1187,8 @@ cmpB     StringTheory
       end
       word.setValue(pText[i : j])
       ! THIS gate decides which words are helper calls at all - a word that fails
-      ! it is written out VERBATIM. the val/chr branches were added later below but not their
-      ! words here, so val('=') survived into the output and BuiltinCheckCase folded it
+      ! it is written out VERBATIM. Every branch below needs its word here too: without
+      ! it, val('=') would go through into the output and BuiltinCheckCase fold it
       ! afterwards, prepending a second trailing comment. Add a branch, add it here too.
       case lower(word.getValue())
       of   'fold' orof 'trimr'                               |
@@ -1204,7 +1206,7 @@ cmpB     StringTheory
               self.SubstText(pText[op+1 : closePos-1], inner)
             end
             if lower(choose(word._DataEnd < 1, '', word.valuePtr[1 : word._DataEnd])) = 'fold'
-              bt.setValue(self.tk.FoldStr(inner.getValue()))
+              bt.setValue(self.m.FoldSafe(inner.getValue()))
               do FoldCompare                                 ! use FoldStr's text only if it actually folded
               if folded
                 pOut.append(bt)
@@ -1254,12 +1256,12 @@ cmpB     StringTheory
       else
         ! a word the rule spells out, which the SOURCE also spells,
         ! keeps the SOURCE's capitalisation. Rules are written lower case, so without
-        ! this a rule that only meant to drop a clip also restyled the author's
-        ! keyword - UPPER(CLIP(x)) & y came back as upper(x) & y. That contradicts the
-        ! tool's own contract ("formatting changes only happen when you ask", and
-        ! KeywordCase is the opt-in way to ask), and it was already INCONSISTENT
-        ! inside one line: a metavar carries the source text verbatim, so
-        ! `upper(LEFT(...))` came out with LEFT in caps and upper in lower case.
+        ! this a rule that only meant to drop a clip would also restyle the author's
+        ! keyword - UPPER(CLIP(x)) & y would come back as upper(x) & y. That contradicts
+        ! the tool's own contract ("formatting changes only happen when you ask", and
+        ! KeywordCase is the opt-in way to ask), and it would be INCONSISTENT inside
+        ! one line: a metavar carries the source text verbatim, so `upper(LEFT(...))`
+        ! would come out with LEFT in caps and upper in lower case.
         ! A word the rule INTRODUCES (a renamed method, an equate) is not in the
         ! source span, so it keeps the rule's spelling - which is what makes a
         ! canonical-spelling rule like clipLen -> clipLength still work.
@@ -1448,8 +1450,8 @@ rep   long,auto
 ! the inverse of ComputeLitByte - the literal SOURCE TEXT for a byte value, so a
 ! rule can emit st.findChar('=') from st.findByte(61). Every quote/bracket in the
 ! result is built with chr() rather than written out: a Clarion literal containing a
-! quote needs four of them in the source, and this file has already been bitten three
-! times by escape-doubling ('' < {), so the arithmetic form is the safe spelling.
+! quote needs four of them in the source, and escape-doubling ('' < {) is easy to get
+! wrong, so the arithmetic form is the safe spelling.
 ! Blank = not a plain 0-255 number, and the caller then keeps the chr(...) spelling.
 ! ------------------------------------------------------------------------------------
 VitRewrite.ComputeByteLit Procedure(STRING pNum)

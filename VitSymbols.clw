@@ -32,6 +32,7 @@ VitSymbols.Construct Procedure()
   self.types  &= new TypeDefQType
   self.fields &= new TypeFieldQType
   self.methods &= new TypeMethodQType !
+  self.pmQ &= new ProtoMemoQType
   self.regTrace &= new StringTheory   ! registry decision trace
   self.tk     &= NULL
   self.expTk  &= NULL                 ! not owned; engine points this at its expanded stream
@@ -41,6 +42,10 @@ VitSymbols.Construct Procedure()
 ! ------------------------------------------------------------------------------------
 VitSymbols.Destruct Procedure()
   code
+  if not self.pmQ &= NULL
+    free(self.pmQ)
+    dispose(self.pmQ)
+  end
   if not self.scopes &= NULL
     free(self.scopes)
     dispose(self.scopes)
@@ -110,6 +115,7 @@ lvl        string(1),auto
 dotPos     long,auto          ! '.' position inside a Class.Method label token
 fldBare    byte               ! a PRE() structure: its fields are named bare, with no prefix
 fldDimAt   long               ! field capture: the block depth from which fields sit in a DIM'd structure
+fldOff     long               ! field capture: the block depth from which fields carry a nested PRE of their own
 fldExt     byte               ! field capture: the structure is declared EXTERNAL, DLL or EXPORT
 declLnk    byte               ! the declaration just read carries EXTERNAL, DLL or EXPORT (LinkedDecl)
 lastProc   long               ! the latest procedure scope - a local class's methods follow it
@@ -124,6 +130,17 @@ lastProc   long               ! the latest procedure scope - a local class's met
   N = pTk.records()
   modScope  = self.AddScope(vs:scModule, 0, 1, '')
   dataScope = modScope
+  self.isMember = 1
+  loop x = 1 to N                                                    ! the module statement: the first MEMBER or PROGRAM in the file
+    if self.TokIsEOL(x) or self.IsColOneLabel(x) then cycle.         !   a word in column 1 is a label, not the statement
+    case upper(self.TokText(x))
+    of 'MEMBER'
+      break
+    of 'PROGRAM'
+      self.isMember = 0
+      break
+    end
+  end
   x = 0
   loop
     x += 1
@@ -146,7 +163,7 @@ lastProc   long               ! the latest procedure scope - a local class's met
         end
       end
       if ~blockDepth then fldPre = ''.                               ! resync fired (mis-levelled structure) - stop field capture
-      if ~blockDepth then fldBare = 0 ; fldDimAt = 0.
+      if ~blockDepth then fldBare = 0 ; fldDimAt = 0 ; fldOff = 0.
       if blockDepth > 0                                              ! still in a block: count levels and skip
         if mapBlock and self.MapProtoAt(x) then self.AddMapProto(upper(self.TokText(x)), self.MapProtoRetAt(x), x).
         if mapBlock and upper(self.TokText(x)) = 'INCLUDE'
@@ -181,6 +198,7 @@ lastProc   long               ! the latest procedure scope - a local class's met
         if ~blockDepth then fldPre = ''.                             ! structure closed
         if ~blockDepth then mapBlock = 0.
         if ~blockDepth then fldBare = 0 ; fldDimAt = 0.
+        if lvl = '-' and fldOff > blockDepth then fldOff = 0.
         cycle
       end
     end
@@ -330,6 +348,7 @@ lastProc   long               ! the latest procedure scope - a local class's met
   end
 
   self.SetScopeEnds()
+  self.MarkBlocks()
   ! The type registry, in its two modes.
   !  WITHOUT the expanded stream (expTk NULL): rebuild from the raw in-file stream on EVERY Build - decls can shift or be
   !                   edited by a rewrite (e.g. UnusedVars comments one out), so it must track them.
@@ -344,8 +363,8 @@ lastProc   long               ! the latest procedure scope - a local class's met
   !                   REWRITES DECLARATIONS IN AN INCLUDE - retypes a field, renames a class or a
   !                   prototype - works from that frozen picture for the rest of the file.
   !                   The supported shape is two runs: the declaration pass first, then everything
-  !                   else against the updated files. Detect-and-refresh was considered and
-  !                   deferred until a real rule set needs it; the README's thorough-mode section
+  !                   else against the updated files. Such a change is not detected and the
+  !                   picture is not refreshed; the README's thorough-mode section
   !                   states the same limit in user terms.
   self.regSorted = 0                                                 ! FindTypeDef's dedupe runs DURING the registry build - use the linear path until re-sorted
   if self.expTk &= NULL
@@ -399,8 +418,8 @@ lastProc   long               ! the latest procedure scope - a local class's met
     do DropRawRows                                                   ! last Build's raw rows: their positions have moved
     self.BuildTypeRegistry(pTk, 1)                                   ! this file's own structures again, WITH their scopes
   end
-  ! sort for keyed (binary) GETs - FindSym was a full linear scan of ALL symbols per
-  ! lookup, up to 3x per typed candidate token = the dominant typed-matching cost.
+  ! sort for keyed (binary) GETs: unsorted, FindSym would scan ALL symbols per
+  ! lookup, up to 3x per typed candidate token - the dominant typed-matching cost.
   sort(self.syms, +self.syms.scopeId, +self.syms.nameU)
   sort(self.hidden, +self.hidden.scopeId, +self.hidden.nameU)
   sort(self.types, +self.types.typeU)
@@ -590,22 +609,34 @@ LinkedDecl routine
   end
 
 ! ---- a field of a PRE() structure is named bare, with no prefix, so it is filed under its own
-!      label: a field all the same, which no pass offers as a candidate. A nested structure with
-!      a PRE of its own ends the capture for the rest of the block, as it does for a prefix ----
+!      label: a field all the same, which no pass offers as a candidate. Every bare label is
+!      filed, because each one hides a name of the same spelling declared further out: a field
+!      whose type is not read is filed as declared with no known type, and the label of a
+!      nested structure is filed as that structure, as HideLabel files one at the top. A nested
+!      structure with a PRE of its own names the fields inside it with that prefix, so none of
+!      them is filed bare; after its END the outer structure's fields are bare again. A nested
+!      PRE() keeps its fields bare. INCLUDE in column 1 is the directive ----
 BareField routine
   t2 = x + 1
   if self.TokIsEOL(t2) then exit.
+  if fldOff and blockDepth >= fldOff then exit.
   if self.TokLevel(t2) = '+'
+    self.AddHidden(upper(self.TokText(x)), fldScope, upper(self.TokText(x)), x)
     t3 = t2 + 1
     loop while ~self.TokIsEOL(t3)
-      if upper(self.TokText(t3)) = 'PRE' then fldBare = 0.
+      if upper(self.TokText(t3)) = 'PRE'
+        if self.TokText(t3 + 1) <> '(' or self.TokText(t3 + 2) <> ')' then fldOff = blockDepth + 1.
+      end
       t3 += 1
     end
     exit
   end
   w2.setValue(upper(self.TokText(t2)))
   do ExtractDeclType
-  if ~typeU._DataEnd then exit.
+  if ~typeU._DataEnd
+    if upper(self.TokText(x)) <> 'INCLUDE' then self.AddHidden(upper(self.TokText(x)), fldScope, vs:unknownType, x).
+    exit
+  end
   self.AddSym(upper(self.TokText(x)), fldScope, typeU.getValue(), isRef, isLike, x, 1, fldExt)
   if fldDimAt then do DimHeld.
 
@@ -649,6 +680,181 @@ nextAnyStart  long,auto
       self.scopes.endTok = N
     end
     put(self.scopes)
+  end
+
+! ------------------------------------------------------------------------------------
+! WHICH DECLARATIONS ARE INSIDE A COMPILE OR CONDITIONAL OMIT BLOCK - code some builds leave out.
+! A variable declared only there does not exist in a build without the block, and a use of its
+! name outside the block is then another variable of that name, or nothing. So each syms and
+! hidden row declared in a block is given the token of the block's keyword and the first token
+! after the block, and Visible answers "unknown" for it at a use the block does not hold.
+!
+! The blocks are found once per Build, in one walk of the file from its first token, by the
+! rules VitEngine.CondBlockAt reads them by, so the two agree on where a block ends: the
+! keyword and a quoted terminator survive as tokens (a plain OMIT is trivia, no build has its
+! code); each physical line is read whole, code and trivia alike, while a block is open; a line
+! holding a block's terminator anywhere - in a comment, after a '|', in front of a comment -
+! ends that block and every block opened inside it, and the line itself is in the block. On the
+! directive's own line only the text after its closing ')' is searched. A block with no
+! terminator runs to the end of the file. Blocks nest, so a token is in a block, or in one
+! inside it, exactly when it lies between the keyword and the first token after the block.
+! ------------------------------------------------------------------------------------
+VitSymbols.MarkBlocks Procedure()
+i     long,auto
+j     long,auto
+k     long,auto
+p     long,auto
+e     long,auto
+f     long,auto
+N     long,auto
+r     long,auto
+open  StringTheory ! the terminators of the blocks open so far, the innermost last
+kw    StringTheory ! the blkQ row of each one, line for line with open
+fr    StringTheory ! where on the line being read each one's search starts, 0 = not on this line
+ar    StringTheory ! the token of each one's closing ')' when it is on the directive's own line, else 0
+sb    StringTheory
+ln    StringTheory ! the physical line read so far, trivia and code alike, while a block is open
+lt    StringTheory
+blkQ  QUEUE,PRE(mbk)
+kwTok   long
+endTok  long
+      END
+  code
+  if self.tk &= NULL then return.
+  N = self.tk.records()
+  loop i = 1 to N
+    get(self.tk.tokens, i)
+    if errorcode() then break.
+    if open.records() and not self.tk.tokens.strBefore &= NULL
+      sb.setValue(self.tk.tokens.strBefore)
+      p = 1
+      loop
+        e = sb.findByte(10, p)
+        if ~e then break.
+        if e > p then ln.append(sb.slice(p, e - 1)).
+        do LineEnds
+        p = e + 1
+        if ~open.records() then break.
+      end
+      if open.records() and p <= sb._DataEnd then ln.append(sb.slice(p, sb._DataEnd)).
+      get(self.tk.tokens, i)
+      if errorcode() then break.
+    end
+    if open.records() and not self.tk.tokens.tok &= NULL
+      if self.tk.tokens.tok = '<10>' then do LineEnds.
+    end
+    if self.tk.tokens.tok &= NULL then cycle.
+    if open.records() and self.tk.tokens.tok <> '<10>'
+      ln.append(self.tk.tokens.tok)
+      loop k = 1 to ar.records()
+        if ar.getLine(k) = i then fr.setLine(k, ln._DataEnd + 1).
+      end
+    end
+    if size(self.tk.tokens.tok) <> 4 and size(self.tk.tokens.tok) <> 7 then cycle.
+    case upper(self.tk.tokens.tok)
+    of 'OMIT' orof 'COMPILE'
+      if i > 1 and self.tk.GetTok(i - 1) = '.' then cycle. ! a method of that name
+      if self.tk.GetTok(i + 1) <> '(' then cycle.
+      lt.setValue(self.tk.GetTok(i + 2))
+      if lt._DataEnd < 3 or lt.valuePtr[1] <> '''' or lt.valuePtr[lt._DataEnd] <> '''' then cycle.
+      lt.setValue(lt.valuePtr[2 : lt._DataEnd - 1])
+      lt.replace('''''', '''')
+      if ~lt._DataEnd then cycle.
+      do CloseAt
+      if ~open.records() then ln.free().
+      clear(blkQ)
+      blkQ.kwTok  = i
+      blkQ.endTok = N + 1
+      add(blkQ)
+      open.addLine(lt.getValue()) ; kw.addLine(records(blkQ)) ; fr.addLine(0) ; ar.addLine(e)
+    end
+  end
+  if ~records(blkQ) then return.
+  loop j = 1 to records(self.syms)
+    get(self.syms, j)
+    if errorcode() then break.
+    p = self.syms.declTok
+    do Inner
+    if f
+      self.syms.blkTok = f
+      self.syms.blkEnd = e
+      put(self.syms)
+    end
+  end
+  if self.hidden &= NULL then return.
+  loop j = 1 to records(self.hidden)
+    get(self.hidden, j)
+    if errorcode() then break.
+    p = self.hidden.declTok
+    do Inner
+    if f
+      self.hidden.blkTok = f
+      self.hidden.blkEnd = e
+      put(self.hidden)
+    end
+  end
+
+! ---- the ')' that closes the directive at i when it is on the directive's own line, else 0 ----
+CloseAt routine
+  e = 0
+  j = 0
+  loop k = i + 1 to N
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    if not self.tk.tokens.strBefore &= NULL
+      if sb.findByte(10, 1,, self.tk.tokens.strBefore) then break.
+    end
+    if self.tk.tokens.tok &= NULL then cycle.
+    case self.tk.tokens.tok
+    of '<10>'
+      break
+    of '('
+      j += 1
+    of ')'
+      j -= 1
+      if ~j then e = k ; break.
+    end
+  end
+  get(self.tk.tokens, i)
+
+! ---- a physical line has been read: a terminator on it closes that block and every one inside
+!      it, and token i is the first token after them ----
+LineEnds routine
+  loop k = open.records() to 1 by -1
+    f = fr.getLine(k)
+    if f and ln.findChars(open.getLine(k), f)
+      loop while open.records() >= k
+        r = kw.getLine(kw.records())
+        get(blkQ, r)
+        if ~errorcode()
+          blkQ.endTok = i
+          put(blkQ)
+        end
+        open.deleteLine(open.records())
+        kw.deleteLine(kw.records())
+        fr.deleteLine(fr.records())
+        ar.deleteLine(ar.records())
+      end
+      break
+    end
+  end
+  loop k = 1 to fr.records()
+    fr.setLine(k, 1)
+  end
+  ln.free()
+
+! ---- the innermost block that holds token p: f its keyword, e the first token after it; f = 0
+!      for none. A block opened inside another closes no later, so the last one opened wins ----
+Inner routine
+  f = 0
+  loop k = records(blkQ) to 1 by -1
+    get(blkQ, k)
+    if errorcode() then break.
+    if blkQ.kwTok < p and p < blkQ.endTok
+      f = blkQ.kwTok
+      e = blkQ.endTok
+      break
+    end
   end
 
 ! ------------------------------------------------------------------------------------
@@ -775,10 +981,10 @@ dimmed     BYTE                   ! the owner, or a structure it sits in, carrie
             free(OwnerStackQ)                                                      ! TYPE attribute (TYPE is illegal on a nested structure) - so
           end                                                                      ! force a resync: recover from mis-levelling in a prior big
                                                                                    ! class/structure (phantom '+' marks on keyword-texted tokens
-                                                                                   ! in prototypes - diagnosis) that left depth/OwnerStackQ
+                                                                                   ! in prototypes, for one) that left depth/OwnerStackQ
                                                                                    ! stale, which would otherwise swallow this definition as a
-                                                                                   ! NESTED FIELD and lose its fields (TokenQType/RulePartQType/
-                                                                                   ! ScopeQType... were all lost this way in virgin-tokenizer runs).
+                                                                                   ! NESTED FIELD and lose its fields - a QUEUE or GROUP TYPE
+                                                                                   ! after the mis-levelled one would be left with no fields.
           dimB = 0
           if records(OwnerStackQ)
             get(OwnerStackQ, records(OwnerStackQ))
@@ -809,7 +1015,7 @@ dimmed     BYTE                   ! the owner, or a structure it sits in, carrie
             ! agree, whether it is anonymous or `GROUP(NamedType)`: a named base becomes the new
             ! type's PARENT, so its fields resolve through the parent walk and any fields written
             ! inline land on THIS type - not on the shared base, where two GROUP(BaseG) instances
-            ! with different inline fields once made the base's run disagree
+            ! with different inline fields would make the base's run disagree
             fldTypeU = '$ANON:' & curOwner
             fldTypeU = clip(fldTypeU) & ':' & upper(self.TokText(x))
             self.AddTypeDef(fldTypeU, kindB, parentU)
@@ -870,10 +1076,10 @@ dimmed     BYTE                   ! the owner, or a structure it sits in, carrie
                       if ~pSeen and (self.TokText(mdx) = '*' or self.TokText(mdx) = '&' or upper(self.TokText(mdx)) = 'CONST')
                         ! a SEPARATE by-ref marker token ('&' never merges; a spaced '* STRING'
                         ! keeps its own '*') - the parameter's TYPE is the NEXT token, so the
-                        ! parameter does not open here. Recording the marker itself both
-                        ! mis-filed the slot AND consumed pSeen, so the real type was thrown
-                        ! away: no caller-side spelling could ever equal a bare '&', and
-                        ! ArgAdmits POSITIVELY excluded the row - the fail-closed inversion of
+                        ! parameter does not open here. Recording the marker itself would
+                        ! mis-file the slot AND consume pSeen, throwing the real type away:
+                        ! no caller-side spelling can ever equal a bare '&', so ArgAdmits
+                        ! would POSITIVELY exclude the row - the fail-closed inversion of
                         ! its own admit-only-on-positive contract. CONST, the qualifier of a
                         ! variable parameter - (CONST *CSTRING p) - is stepped past the same way:
                         ! it is not the type, and the '*' after it is a separate token too.
@@ -883,11 +1089,10 @@ dimmed     BYTE                   ! the owner, or a structure it sits in, carrie
                         pTx = upper(self.TokText(mdx))
                         if pTx[1] = '*'                                            ! MERGED '*STRING' token (the tokenizer combines
                           pTx = sub(pTx, 2, vs:maxName - 1)                        !   * with the next token after ( , <) - record
-                        end                                                        !   the BARE type: the spelling a call site's CallArgTypes can actually produce. The return class below has always done this same strip.
+                        end                                                        !   the BARE type: the spelling a call site's CallArgTypes can actually produce. The return class below makes the same strip.
                         if aMax = 1 then p1U = pTx.
-                        ! record EVERY slot's type, not just the first. This loop already
-                        ! had them and threw all but slot 1 away. '|'-terminated, in order, so
-                        ! ArgAdmits can line argument N up with parameter N.
+                        ! record EVERY slot's type, not just the first: '|'-terminated, in
+                        ! order, so ArgAdmits can line argument N up with parameter N.
                         if slotsOk
                           if len(clip(slotsU)) + len(clip(pTx)) + 1 > size(slotsU)
                             slotsOk = 0                                            ! too many/too long to hold - see below
@@ -1159,6 +1364,19 @@ VitSymbols.AddTypeField Procedure(STRING pOwnerU, STRING pNameU, STRING pTypeU, 
 ! not, which is why silence still answers nothing.
 ! ------------------------------------------------------------------------------------
 VitSymbols.MethodProtoTok Procedure(STRING pOwnerU, STRING pNameU)
+  code
+  self.EnsureFresh()
+  if self.pmQ &= NULL then return self.MethodProtoTokWork(pOwnerU, pNameU).
+  self.PmCheck()
+  self.pmQ.key = 'C ' & clip(upper(pOwnerU)) & '.' & upper(pNameU)
+  get(self.pmQ, self.pmQ.key)
+  if ~errorcode() then return self.pmQ.tok.
+  self.pmQ.key = 'C ' & clip(upper(pOwnerU)) & '.' & upper(pNameU)
+  self.pmQ.tok = self.MethodProtoTokWork(pOwnerU, pNameU)
+  add(self.pmQ, self.pmQ.key)
+  return self.pmQ.tok
+
+VitSymbols.MethodProtoTokWork Procedure(STRING pOwnerU, STRING pNameU)
 z     long,auto
 hit   long,auto
 tk    long,auto
@@ -1205,8 +1423,8 @@ VitSymbols.AddTypeMethod Procedure(STRING pOwnerU, STRING pNameU, STRING pRetCla
 ! Is the first token of this line, inside a MAP or MODULE block, a PROTOTYPE? Any label-shaped
 ! word that is not one of the block's own keywords counts - in column 1 or indented, with or
 ! without the PROCEDURE keyword: `Say(STRING pMsg)`, `Mark  procedure(long pX), long`, a bare
-! `Foo`. Most MAPs are written indented and keyword-less, and the first count (column-1 labels
-! only) missed every one of those. The next token settles the rest.
+! `Foo`. Most MAPs are written indented and keyword-less, and a count of column-1 labels
+! only would miss every one of those. The next token settles the rest.
 ! ------------------------------------------------------------------------------------
 VitSymbols.MapProtoAt Procedure(LONG pIx)
 tU  string(vs:maxName),auto
@@ -1238,6 +1456,35 @@ tU  string(vs:maxName),auto
 ! prototype seen here does not then make it the only one.
 ! ------------------------------------------------------------------------------------
 VitSymbols.MapProtoTok Procedure(STRING pNameU)
+  code
+  if self.pmQ &= NULL then return self.MapProtoTokWork(pNameU).
+  self.PmCheck()
+  self.pmQ.key = 'M ' & upper(pNameU)
+  get(self.pmQ, self.pmQ.key)
+  if ~errorcode() then return self.pmQ.tok.
+  self.pmQ.key = 'M ' & upper(pNameU)
+  self.pmQ.tok = self.MapProtoTokWork(pNameU)
+  add(self.pmQ, self.pmQ.key)
+  return self.pmQ.tok
+
+!===============================================================================================
+! MapProtoTok and MethodProtoTok remember their answers in pmQ, by name. The answer depends only
+! on the prototype tables and the include state, so the memo is dropped when any of them changes:
+! a symbol rebuild, a row added to either table, the include flags, the expanded stream switched
+! on or off, or the token count.
+!===============================================================================================
+VitSymbols.PmCheck Procedure()
+st  string(80),auto
+  code
+  st = self.nBuild & ' ' & choose(self.mapProtos &= NULL, 0, records(self.mapProtos)) & ' '                            & |
+       choose(self.methods &= NULL, 0, records(self.methods)) & ' ' & self.incRead & self.incMiss & self.mapIncl & ' ' & |
+       choose(self.expTk &= NULL, 'R', 'E') & ' ' & choose(self.tk &= NULL, 0, self.tk.records())
+  if st <> self.pmStamp
+    free(self.pmQ)
+    self.pmStamp = st
+  end
+
+VitSymbols.MapProtoTokWork Procedure(STRING pNameU)
 z  long,auto
   code
   if self.mapProtos &= NULL then return 0.
@@ -1812,11 +2059,11 @@ lvOk   byte,auto          !   ... and whether the target resolved at all
     ! *** A RUN OF ROWS MAY DISAGREE, AND THEN THERE IS NO ANSWER. *** AddTypeField does not
     ! dedupe and the registry is scope-blind, so two procedures that each declare a local QUEUE
     ! of the same name contribute their fields to ONE (owner, name) run. Answering from whichever
-    ! row a keyed GET happened to land on gave one procedure the other's type - measured, with the
-    ! shipped rules: `if clip(lq.s)` where s is a LONG came back as `if lq.s`, which is exactly
+    ! row a keyed GET happens to land on would give one procedure the other's type - with the
+    ! shipped rules, `if clip(lq.s)` where s is a LONG would become `if lq.s`, which is exactly
     ! what the clip-truthiness rule exists to forbid.
     !
-    ! MethodReturnClass has answered this since it was written: walk the whole run and refuse if
+    ! So, as MethodReturnClass does: walk the whole run and refuse if
     ! it does not agree. Refusing costs a resolution; guessing costs the user's code.
     !
     ! a disagreeing run sets `clash` rather than ending the search, and the narrowing at the
@@ -2234,7 +2481,7 @@ aTd   long,auto               !   ... and the registry row that says so
 
 ! AN ARGUMENT THAT IS A STRUCTURE'S OWN LABEL - an instance passed whole - binds by more than
 ! its type's name: a CLASS by derivation, a GROUP as a STRING, a QUEUE to any QUEUE parameter.
-! None of that is read here, so such an argument has no opinion, as it had before its label was
+! None of that is read here, so such an argument has no opinion, as when its label is not
 ! known at all.
 InstArg routine
   aInst = 0
@@ -2496,6 +2743,7 @@ tgt  STRING(vs:maxName)
   ! answers its own label, the name the type registry knows it by. A name declared where this
   ! table cannot read it, or that a declaration it cannot see may hide, answers vs:unknownType
   ! as a reference: no typed rule accepts it, and no pass trusts it as plain storage.
+  self.visMode = 1
   case self.Visible(pNameU, pTokPos, sym)
   of vs:visSym
     do Resolve
@@ -2799,6 +3047,7 @@ Binds routine
   data
 bRow long
   code
+  self.visMode = 2
   if self.Visible(bestName, pTokPos, bRow) <> vs:visSym
     best = 0
     exit
@@ -2941,16 +3190,28 @@ d     long,auto
 ! the ladder has passed a scope whose data INCLUDEs a file, or a method whose procedure cannot
 ! be told, a declaration found further out may be hidden by one this table never read: the
 ! name is declared, so it is not nothing, but what it is cannot be told.
+! The same holds for a declaration inside a COMPILE or conditional OMIT block that does not hold
+! the use: a build without the block has no such declaration, and the name is then whatever is
+! declared further out. A row in no block, or in a block that holds the use, answers as before,
+! and so does a name declared alike in both arms of a COMPILE and an OMIT. Two modes, set in
+! visMode for one call: 1, a question of TYPE alone (LookupIn), answers the block's row when the
+! declaration a build without the block reads has the same type - every build sees that type;
+! 2 (FirstInstanceOf) reads past the blocks, for a caller that asks its own block question.
 !
 ! vs:visSym with pRow a syms row, vs:visHidden with pRow a hidden row, vs:visUnknown, or
-! vs:visNone when nothing on the ladder declares it - an undeclared name, as it always was.
+! vs:visNone when nothing on the ladder declares it - an undeclared name.
 ! ------------------------------------------------------------------------------------
 VitSymbols.Visible Procedure(STRING pNameU, LONG pTok, *LONG pRow)
 sc    long,auto
 nmU   string(vs:maxName),auto
 wall  byte
 ans   long
+mode  byte,auto
+pend  long
+pRs   long
   code
+  mode = self.visMode
+  self.visMode = 0
   pRow = 0
   nmU = upper(pNameU)
   sc = self.ScopeContaining(pTok, vs:scRoutine, vs:scRoutine)
@@ -2977,6 +3238,7 @@ ans   long
     do Rung
     if ans then return ans.
   end
+  if pend then return vs:visUnknown.
   return vs:visNone
 
 ! one rung: what scope sc itself declares under the name
@@ -2984,9 +3246,20 @@ Rung routine
   data
 rs  long,auto
 rh  long,auto
+rc  long,auto
+bs  byte,auto
+bh  byte,auto
   code
+  bs = 0
+  bh = 0
   rs = self.FindSym(nmU, sc)
+  if rs and self.syms.blkTok
+    if pTok <= self.syms.blkTok or pTok >= self.syms.blkEnd then bs = 1.
+  end
   rh = self.FindHidden(nmU, sc)
+  if rh and self.hidden.blkTok
+    if pTok <= self.hidden.blkTok or pTok >= self.hidden.blkEnd then bh = 1.
+  end
   if ~rs and ~rh
     get(self.scopes, sc)
     if ~errorcode() and self.scopes.unseen then wall = 1.
@@ -2997,13 +3270,60 @@ rh  long,auto
   if rs and rh then exit.
   if rs
     if ~self.SymRunAgrees(rs) then exit.
+    if bs
+      rc = self.SymRunCovers(rs, pTok)
+      if rc > 0
+        rs = rc
+      elsif ~rc and mode = 1
+        if pend then exit.
+        pend = rs
+        ans = 0
+        exit
+      elsif ~rc and mode <> 2
+        exit
+      end
+    end
+    if pend
+      pRs = rs
+      do PendSame
+      exit
+    end
     pRow = rs
     ans = vs:visSym
   else
+    if pend then exit.
     if ~self.HiddenRunAgrees(rh) then exit.
+    if bh
+      rc = self.HiddenRunCovers(rh, pTok)
+      if rc > 0
+        rh = rc
+      elsif ~rc and mode <> 2
+        exit
+      end
+    end
     pRow = rh
     ans = vs:visHidden
   end
+
+! a type question (mode 1): the block's row pend answers when the declaration a build without
+! the block reads, syms row rs, has the same type and reference flag, and neither is a LIKE
+PendSame routine
+  data
+tU  string(vs:maxName),auto
+iR  byte,auto
+iL  byte,auto
+  code
+  get(self.syms, pRs)
+  if errorcode() then exit.
+  tU = self.syms.typeU
+  iR = self.syms.isRef
+  iL = self.syms.isLike
+  get(self.syms, pend)
+  if errorcode() then exit.
+  if iL or self.syms.isLike then exit.
+  if self.syms.typeU <> tU or self.syms.isRef <> iR then exit.
+  pRow = pend
+  ans = vs:visSym
 
 ! ------------------------------------------------------------------------------------
 VitSymbols.FindHidden Procedure(STRING pNameU, LONG pScopeId)
@@ -3110,6 +3430,74 @@ tU   string(vs:maxName),auto
     if self.hidden.typeU <> tU then return 0.
   end
   return 1
+
+! ------------------------------------------------------------------------------------
+! Which row of syms row pRow's run - its scope and name - is the declaration in every build that
+! has the use at pTok? A row in no COMPILE or OMIT block is: a build that also kept a block's
+! row of that name would declare it twice and not compile. So is a row whose block holds pTok,
+! since the use is in a build only with that block. The answer is that row, so what is read from
+! it - its DIM, STATIC or THREAD - is the declaration's own. When every row is in a block pTok is
+! not in: -1 for two or more rows - the arms of a COMPILE and an OMIT, which Visible answers as
+! their agreed type - and 0 for one, whose block a build may leave out.
+! ------------------------------------------------------------------------------------
+VitSymbols.SymRunCovers Procedure(LONG pRow, LONG pTok)
+k    long,auto
+sc   long,auto
+nmU  string(vs:maxName),auto
+  code
+  get(self.syms, pRow)
+  if errorcode() then return 0.
+  sc  = self.syms.scopeId
+  nmU = self.syms.nameU
+  loop k = pRow to 1 by -1
+    get(self.syms, k)
+    if errorcode() then break.
+    if self.syms.scopeId <> sc or self.syms.nameU <> nmU then break.
+    if ~self.syms.blkTok then return k.
+    if pTok > self.syms.blkTok and pTok < self.syms.blkEnd then return k.
+  end
+  loop k = pRow + 1 to records(self.syms)
+    get(self.syms, k)
+    if errorcode() then break.
+    if self.syms.scopeId <> sc or self.syms.nameU <> nmU then break.
+    if ~self.syms.blkTok then return k.
+    if pTok > self.syms.blkTok and pTok < self.syms.blkEnd then return k.
+  end
+  if k > pRow + 1 then return -1.
+  get(self.syms, pRow - 1)
+  if ~errorcode() and self.syms.scopeId = sc and self.syms.nameU = nmU then return -1.
+  return 0
+
+! ------------------------------------------------------------------------------------
+! The same question of a hidden row's run.
+! ------------------------------------------------------------------------------------
+VitSymbols.HiddenRunCovers Procedure(LONG pRow, LONG pTok)
+k    long,auto
+sc   long,auto
+nmU  string(vs:maxName),auto
+  code
+  get(self.hidden, pRow)
+  if errorcode() then return 0.
+  sc  = self.hidden.scopeId
+  nmU = self.hidden.nameU
+  loop k = pRow to 1 by -1
+    get(self.hidden, k)
+    if errorcode() then break.
+    if self.hidden.scopeId <> sc or self.hidden.nameU <> nmU then break.
+    if ~self.hidden.blkTok then return k.
+    if pTok > self.hidden.blkTok and pTok < self.hidden.blkEnd then return k.
+  end
+  loop k = pRow + 1 to records(self.hidden)
+    get(self.hidden, k)
+    if errorcode() then break.
+    if self.hidden.scopeId <> sc or self.hidden.nameU <> nmU then break.
+    if ~self.hidden.blkTok then return k.
+    if pTok > self.hidden.blkTok and pTok < self.hidden.blkEnd then return k.
+  end
+  if k > pRow + 1 then return -1.
+  get(self.hidden, pRow - 1)
+  if ~errorcode() and self.hidden.scopeId = sc and self.hidden.nameU = nmU then return -1.
+  return 0
 
 ! ------------------------------------------------------------------------------------
 VitSymbols.AddHidden Procedure(STRING pNm, LONG pSc, STRING pTy, LONG pTok)

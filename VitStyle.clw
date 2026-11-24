@@ -228,6 +228,7 @@ cmtContNone   BYTE
 cmtBarCmt     BYTE
           END
 setStyle   STRING(vr:maxName)                                                          ! the style those settings were last loaded for - a style CHANGE reloads them, a group toggle does not
+setForce   BYTE                                                                        ! Apply asks for the style's settings again, even when that style is already in force
 StyAl     GROUP,PRE(sa)                                                                ! what the style in force gives, taken by KeepStyleAlign - the Align settings that differ go on the batch line
 cmtGap        LONG
 alignLimit    LONG
@@ -260,6 +261,7 @@ uiFn       StringTheory                                                         
 userLoaded BYTE                                                                        ! VitStyle.rules.txt present + validated + appended to the live set
 profSaid   BYTE                                                                        ! the PROFILES SKIPPED box has been shown - once a session is enough
 profLoaded BYTE                                                                        ! VitStyle.profiles.txt is in the live set - the workbench's scratch set loads it only then
+profBad    BYTE                                                                        ! VitStyle.profiles.txt was skipped for an error - a Save... must not write into it
 wbPickTxt  STRING(70)                                                                  ! workbench droplist display
 draftVar   CSTRING(4096)                                                               ! the draft rule text (TEXT control; one logical rule, | continuations ok)
 wbGrp      STRING(vr:maxName)                                                          ! target GROUP (default my-rules)
@@ -526,7 +528,7 @@ dbg StringTheory                                                                
         if ~errorcode()
           curStyle = sq:nm
           free(OvrQ)                                                           ! picking a style resets individual overrides - a style IS the selection
-          setStyle = ''                                                        !   and its Align settings, even when it is the style already in force
+          setForce = 1                                                         !   and its Align settings, even when it is the style already in force
           ApplyOverrides()
         end
       end
@@ -684,11 +686,12 @@ biBad StringTheory ! BUILTIN lines naming a builtin the engine does not have - t
     end
   end
 
-  profLoaded = 0
+  profLoaded = 0 ; profBad = 0
   if exists(profFn.getValue())
     e = rl.ErrorCount()                                                            ! parse errors so far belong to the rules (+user) load
     rl.LoadStyleFile(profFn.getValue())
     if rl.ErrorCount() > e
+      profBad = 1
       ! profiles are machine-written convenience - a broken one must not brick
       ! startup, and its errors are not the rule file's. Report against the RIGHT
       ! file, then rebuild WITHOUT the profile layer - the same non-fatal treatment
@@ -724,6 +727,17 @@ i  LONG,AUTO
     if rl.styles.isProfile               !   row drops the only pointer there is to it, and
       dispose(rl.styles.members)         !   every save comes back through here.
       delete(rl.styles)                  ! dispose of a NULL is a no-op, so no guard is needed
+    end
+  end
+  ! A shipped style's settings come only from a SETTINGS line in the profiles file (a rule
+  ! file refuses one), and a profile that takes the shipped name is given them as it loads.
+  ! So they are cleared before the file is read again: after a save, every style has only
+  ! the settings the file now holds.
+  loop i = 1 to records(rl.styles)
+    get(rl.styles, i)
+    if rl.styles.settings
+      rl.styles.settings = ''
+      put(rl.styles)
     end
   end
   profLoaded = 0
@@ -916,7 +930,8 @@ nogr  StringTheory
   ! is what decides which style is in force - the rule file's own default when the user has
   ! picked none - so the test belongs after it. Toggling a group inside the same style leaves
   ! whatever the Align dialog holds exactly where it is.
-  if upper(rl.appliedStyle) <> upper(setStyle)
+  if setForce or upper(rl.appliedStyle) <> upper(setStyle)
+    setForce = 0
     setStyle = rl.appliedStyle
     ApplyStyleSettings()
   end
@@ -1404,7 +1419,7 @@ wP    LONG,AUTO
   wU = nmU ; do FoldW ; nmU = wU                                                    ! optimised, optimized, optimise and optimize are one name
   ! A FILE SKIPPED AT STARTUP STILL HOLDS ITS ERROR. Writing this profile into it would copy the broken line too, and
   ! the batch line printed for the new profile would name a file the batch run refuses.
-  if ~profLoaded and exists(profFn.getValue())
+  if profBad and exists(profFn.getValue())
     message(clip(profFn.getValue()) & ' was skipped when VitStyle started, because it has an error.' & |
             '||Fix or delete that file and start VitStyle again; then save this profile.'            & |
             '||Nothing has been saved.', 'VitStyle', ICON:Exclamation)
@@ -1614,6 +1629,9 @@ ofs      LONG
     ! count, a WARNING, an ERROR or the file header - and listing those as changes is what
     ! put two `Line 0  Rule 0` rows ABOVE the real one on a pasted snippet, which has no
     ! CODE statement and so makes UnusedVars log a skip on every pass.
+    ! A hoist line whose fourth word is REFUSED is a note too: the move was not made. So is
+    ! `BUILTIN <Name> line <m>: REFUSED - ...`, a change some builtin did not make.
+! A builtin that names the form first writes `BUILTIN <Name> line <m>: <form> REFUSED on ...`.
     ! THE TEST IS THE SECOND WORD, and it fails SAFE - anything it cannot place is KEPT:
     !   every note spells its builtin `<Name>:` with the colon attached, because the text
     !   after it is prose about the file; every CHANGE spells it `<Name> line <m>:`, with
@@ -1628,6 +1646,14 @@ ofs      LONG
       line.SetValueFromLine(3)
       if line.StartsWith('(')                then chgRow = 0.        ! BUILTIN <Name> (<style>): <summary>
       if upper(line.getValue()) = 'WHY'      then chgRow = 0.        ! BUILTIN AutoCheck WHY...  - a diagnostic
+      if upper(line.getLine(4)) = 'REFUSED' then chgRow = 0.         ! BUILTIN <Name> <form> REFUSED line m: - a move not made
+      if upper(line.getLine(5)) = 'REFUSED' then chgRow = 0.         ! BUILTIN <Name> line m: REFUSED - a change not made
+      if line.getLine(3) = 'line'                                    ! BUILTIN <Name> line m: <form> REFUSED on ... - why:
+        loop dw = 6 to line.records()                                !   a change not made, its form named first. Only the
+          if line.getLine(dw) = '-' then break.                      !   words before the ' - ' are read, as the reason
+          if line.getLine(dw) = 'REFUSED' then chgRow = 0.           !   after it is prose; the engine writes REFUSED in
+        end                                                          !   capitals, so a name spelt refused in the code
+      end                                                            !   is not taken for it
     else
       ruleNo = line.getLine(2)
     end
@@ -1640,14 +1666,23 @@ ofs      LONG
       hdrW = 4                                                       ! `rule n line m:` / `BUILTIN Name line m:`
     else
       lnNo = 0
+      loop dw = 3 to line.records() - 1
+        if line.getLine(dw) <> 'line' then cycle.
+        line.setValueFromLine(dw + 1)
+        if line.endsWith(':') then line.adjustLength(-1).
+        if line._DataEnd and line.isAllDigits() then lnNo = line.getValue().
+        break
+      end
     end
 
     if ~chgRow then cycle.
 
     ! a row whose third word is not 'line' - AutoCheck's ADD lines, the END-hoist
     ! formats - must NOT be dropped here: the list would show fewer changes than the header
-    ! counted, and the ones it hid would be real. They are kept with no line number instead;
-    ! the click handler already returns on ~cq:ln, so such a row simply does not navigate.
+    ! counted, and the ones it hid would be real. Their line number is the one after a later
+    ! word `line` (AutoCheck writes it after the variable's name), so the layout rows below see
+    ! the line as covered. A row with none is kept with no line number; the
+    ! click handler already returns on ~cq:ln, so such a row simply does not navigate.
     clear(ChgQ)
     cq:ln   = lnNo
     cq:rule = ruleNo

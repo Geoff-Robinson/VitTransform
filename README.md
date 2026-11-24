@@ -1,4 +1,4 @@
-# VitTransform - 2.0.0
+# VitTransform - 2.0.1
 
 **A safe, format-preserving code transformer for [Clarion](https://www.softvelocity.com/) source code.**
 
@@ -669,7 +669,7 @@ Held-back rules get **one pass only**, so one cannot feed another.
 | `--group=<name>` | Select a group (on top of the style/defaults). **Repeat the switch for several groups.** |
 | `--nogroup=<name>` | Deselect a group. Repeatable, same as above. If `--group=` and `--nogroup=` name the same group, the group is off, and the report says so. |
 | `--stversion=<n>` | The StringTheory version your code is built with, if it is older than 3.90 - for example `--stversion=3.84`. The groups that need 3.90 are not run, even when asked for by name, and `inLine()` is never written to search backwards. Without it, 3.90 or later is assumed. |
-| `--ignoremarks` | **Use with care - read this first.** A StringTheory remembers more than its text. When you call `base64Encode()`, `toUnicode()` or `gzip()` on it, or give it another object's value, it keeps a mark saying so, and its `encoding`, `base64` and `gzipped` properties say what state the text is in. Several clean-ups leave your code alone when they cannot be sure those marks survive the change. For example: a copy made with `tmp.setValue(st.getValue())` takes the text but **not** the marks, so dropping the copy and reading `st` instead could change what `tmp.base64Encode()` does next. This switch tells the tool to **stop guarding those marks**, so more code is changed. Give it ONLY if your code never calls `base64Encode()`, `base64Decode()`, `gzip()`, `toUnicode()`, `toAnsi()` or `setEncodingFromBOM()`, never reads the `encoding`, `base64`, `gzipped`, `base64NoWrap` or `EndOfLastLine` properties, and never gives one StringTheory another one's value expecting the marks to come with it. If it does any of those, the switch can make the tool produce code that encodes a value twice, or reads a mark that is no longer set, and nothing in the report will catch it. It also lets `st.setValue('')` become `st.free()`, and `st.setValue(st.getLine(n))` become `st.setValueFromLine(n)`, on any StringTheory - without it, only on a local that nothing in the procedure marks. Every report of a run that has it says so, on its own line: `[selection] marks: IGNORED`. Off unless you ask for it. A profile can carry it as `ignoremarks=on` (see [Choosing what runs](#choosing-what-runs-groups-choices-styles)). |
+| `--ignoremarks` | **Use with care - read this first.** A StringTheory remembers more than its text. When you call `base64Encode()`, `toUnicode()` or `gzip()` on it, or give it another object's value, it keeps a mark saying so, and its `encoding`, `base64` and `gzipped` properties say what state the text is in. Several clean-ups leave your code alone when they cannot be sure those marks survive the change. For example: a copy made with `tmp.setValue(st.getValue())` takes the text but **not** the marks, so dropping the copy and reading `st` instead could change what `tmp.base64Encode()` does next. This switch tells the tool to **stop guarding those marks**, so more code is changed. Give it ONLY if your code never calls `base64Encode()`, `base64Decode()`, `gzip()`, `toUnicode()`, `toAnsi()`, `setEncodingFromBOM()` or `loadFile()` (which reads the character set from the start of the file), never reads the `encoding`, `base64`, `gzipped`, `base64NoWrap` or `EndOfLastLine` properties, never calls a method whose answer depends on them, such as `chars()`, `equals()` or `clip()`, never reads `lastError`, `winErrorCode` or `eof` from a copy of another StringTheory, and never gives one StringTheory another one's value expecting the marks to come with it. If it does any of those, the switch can make the tool produce code that encodes a value twice, or reads a mark that is no longer set, and nothing in the report will catch it. It also lets `st.setValue('')` become `st.free()`, and `st.setValue(st.getLine(n))` become `st.setValueFromLine(n)`, on any StringTheory - without it, only on a local that nothing in the procedure marks. Every report of a run that has it says so, on its own line: `[selection] marks: IGNORED`. Off unless you ask for it. A profile can carry it as `ignoremarks=on` (see [Choosing what runs](#choosing-what-runs-groups-choices-styles)). |
 | `--batch` | **Unattended.** Never open a modal box; anything that would have been one is appended to `vt-batch.log` instead - not suppressed, since each is something you must see (a rule file refused to load, output that is not on disk). Also makes `--thorough` take the newest Clarion rather than asking. Required by unattended build scripts, which have nobody to click OK |
 | `--dumptokens` | A diagnostic for people working on VitTransform itself. Writes the file as the tool sees it after reading its includes to `<file>.tokens.txt` - named after the **transformed file** (with a wildcard source, the last file transformed) - and reports three things it found in that file's block structure: a block opened **inside brackets**, where nothing can open one; a block **opened and never closed**; and a **close that closes nothing**. Needs the included files read - an ordinary run reads them when it finds Clarion; otherwise add `--thorough` or `--root=<dir>` |
 | `--acdiag` | **Diagnostic.** Explains why comment alignment left each comment where it is. After the columns have settled, every comment that ends up in a different column from the one above it is reported with the numbers behind the decision, and two marks: `FROZEN` (an anchored comment sets the column) and `OUT-OF-WINDOW` (the nearest comment above it is more than `--cmtrun` lines up - a measurement of how far the look-back could see, not a reason the comment stayed; a gap on its own ends no run). Writes to a `Log on <date> at <time>.txt` in the current folder. Use it when a comment sits where you did not expect - a line reporting a non-zero adjustment that the output does not show has been *decided* but not *applied*, which is a different bug from one that was never decided at all |
@@ -690,7 +690,7 @@ SETTINGS mystyle cmtgap=2 cmtlimit=100 cmtop=bar
 
 The words allowed are `cmtgap`, `cmtlimit`, `cmtslack`, `cmtoutlier`, `decloutlier`, `cmtwrap`,
 `cmtsplit`, `cmtreach`, `cmtinner`, `cmtrun`, `width`, `cmtfloor`, `contindent`, `cmtkeep`,
-`cmtop`, `cmtend`, `cmtcont`, `cmtbar` and `ignoremarks` (`on` or `off`; read the warning on `--ignoremarks` in Appendix B before
+`cmtop`, `cmtend`, `cmtcont`, `cmtbar` and `ignoremarks` (`on` or `off`; read the warning on `--ignoremarks` in the table above before
 you set it), with the same values as the switches in
 [Appendix B](#appendix-b-every-switch). An unknown word, or a value missing after the `=`, stops the run.
 
@@ -1021,10 +1021,10 @@ StringTheory; when Clarion is installed, the included files are read too, so it 
 | Turn it on with | What you get |
 |---|---|
 | *(nothing)* | The default style, `optimised`: the cleanups and the faster spellings listed above. |
-| `--style=plain` | The quiet style: the cleanups in the row above and nothing respelled - no `findByte`, no `val()` `CASE`, no `+=`, no `analysis`, no loop tidy, no dropped write. The changes that are always on still happen - `st.sub(5, st._DataEnd)` still becomes `st.slice(5)`. |
+| `--style=plain` | The quiet style: the cleanups in the row above and none of the optional respellings - no `findByte`, no `val()` `CASE`, no `+=`, no `analysis`, no loop tidy, no dropped write. The changes that are always on still happen - `st.sub(5, st._DataEnd)` still becomes `st.slice(5)`. |
 | `--style=readable` | The conservative alternative - the longer, more explicit form rather than the compact one. |
 | `--style=extreme` | Every group that changes what the code does, layout excepted: `optimised`, plus `st-getvalue-slice-all` (a StringTheory's text read straight from its buffer wherever `getValue()` is read) and `deadchoose`, and the short spellings of a blank or zero test - `if s = ''` becomes `if ~s`, and `if n <> 0` becomes `if n`. Like every style, it also comments dead code out and moves a statement repeated in both halves of an `IF` out of it. Much the biggest diff the tool produces; `--dry-run` and read it. |
-| `--group=casevalue` | The `val()` spelling of a `CASE`: `case ch` \/ `of 'a'` becomes `case val(ch)` \/ `of 97 ! 'a'`. Faster - an integer compare rather than a string one - and harder to read, so it is in `optimised` and `extreme` and not in `plain`. It also writes `val(chr(x))` as `x` - only where `x` is a number from 0 to 255 or a `BYTE`: `chr()` keeps one byte, so `val(chr(300))` is 44. Anywhere else in the file, `val()` of one quoted character or digit becomes that character's number, with the character kept as a comment: `n = val('A')` becomes `n = 65 ! 65='A'`. |
+| `--group=casevalue` | The `val()` spelling of a `CASE`: `case ch` \/ `of 'a'` becomes `case val(ch)` \/ `of 97 ! 'a'`. Faster - an integer compare rather than a string one - and harder to read, so it is in `optimised` and `extreme` and not in `plain`. It also writes `val(chr(x))` as `x` - only where `x` is a number from 0 to 255 or a `BYTE`: `chr()` keeps one byte, so `val(chr(300))` is 44. Anywhere else in the file, `val()` of one quoted character becomes that character's number, with the character kept as a comment: `n = val('A')` becomes `n = 65 ! 65='A'`. A bare digit becomes its character code, with no comment: `val(5)` becomes `53`. |
 | `--group=st-instring` | `instring(needle, hay, 1)` becomes `st.findChars(needle,,, hay)` and `instring(needle, hay, 1, start)` becomes `st.findChars(needle, start,, hay)`, using a StringTheory object that is already in scope. The object's own contents are untouched: it only lends its method. If there is no such object, nothing changes - the tool never declares one for this. The haystack must be a STRING variable and the step must be 1; a start of 1 is left out, as it is the default. A string literal to search is left alone - see `--group=st-instring-literal`. Off in every style: `findChars` costs a little more per call than `instring()`, and makes up for it only on a search of two or more characters that runs past about a hundred bytes before it stops, so a one-character search, or one that finds its match early, is faster as `instring()`. Turn it on where your searches are long. A one-character search is `--group=st-instring-onechar`'s, which is on in `optimised` and `extreme`. |
 | `--group=st-instring-onechar` | A one-character search of a STRING variable - `instring('.', nm, 1, 1)`, or a needle that is a `STRING(1)` or one character `s[i]` - becomes `st.findByte(46,,, nm)`, or `st.findByte(val(c),,, nm)`, on a StringTheory object already in scope; a start is carried over. In `optimised` and `extreme`, not `plain`. `findByte` is several times faster than `instring()` when the match comes early or the text is short, and no slower on a long search. A longer needle, a literal to search and an expression to search are left as they are. |
 | `--group=st-instring-literal` | The same for a string literal to search: `if instring(c, '<<>~=', 1, 1)` becomes `if st.findChars(c,,, '<<>~=')`. The answer is the same, but on a text as short as a literal `instring()` is the faster of the two, so it is off in every style - turn it on only if you prefer the StringTheory spelling. Needs StringTheory 3.84 or later. |
@@ -1034,7 +1034,7 @@ StringTheory; when Clarion is installed, the included files are read too, so it 
 | `--nogroup=known-ranges` | Leave `KnownRanges` out of a run. |
 | `--nogroup=if-chain-to-case` | Leave `IfChainToCase` out of a run - your `IF`/`ELSIF` chains stay as you wrote them. |
 | `--nogroup=unused-routines` | `UnusedRoutines` is **on by default**, in a group of its own. It comments out whole routines on one assumption - that every `DO` that calls them is in the file - and keeps a routine, saying so in the report, where the file shows it cannot be sure (a routine no `PROCEDURE` owns, a procedure that `INCLUDE`s a file after its `CODE`; on a `.txa` it only annotates). A routine it wrongly commented out fails the next build on its `DO`, so a mistake is loud, never hidden. `--nogroup=unused-routines` leaves it out. |
-| `--nogroup=deadcode` | `HoistCommonBranchCode` is **on by default**. It MOVES a statement common to both halves of an `IF` out past the `END` and drops the duplicate - a move, not a comment-out, so it is the one default that does more than mark. Where the move leaves both halves empty, the `IF` itself is commented out - never deleted - and only when its test simply reads a value. |
+| `--nogroup=deadcode` | `HoistCommonBranchCode` is **on by default**. It MOVES a statement common to both halves of an `IF` out past the `END` and drops the duplicate - a move, not a comment-out, like the other transforms listed under *Restructure code* in section 3. Where the move leaves both halves empty, the `IF` itself is commented out - never deleted - and only when its test simply reads a value. |
 | `--nogroup=byte-loop-to-call` | `ByteLoopToCall` - a byte-by-byte loop over the value becomes one call. **On by default**; this leaves it out. |
 | `--nogroup=line-search-to-inline` | `LineSearchToInLine` - a loop that searches the lines for a value becomes one `inLine()` call. **On by default**; this leaves it out. |
 | `--nogroup=change-before-split` | `ChangeBeforeSplit` - a change made to every line of a split in a loop is made once to the value, before the split. **On by default**; this leaves it out. |
@@ -1112,7 +1112,8 @@ A good order for a first look:
    ![A group highlighted in the list, with its description in the panel below](images/vitstyle-groups.png)
 4. **Find the changes.** Every changed line is marked `>`. The *Changes* list at the bottom right
    names each rule that fired; click a row and both panes jump to that line. A line that was only
-   lined up, wrapped or trimmed has a `layout` row of its own, with no rule number, and the count
+   lined up, wrapped or trimmed has a `layout` row of its own. Built-in transforms and `layout` rows have
+   no rule number of their own and show 0, so `Sort: rule#` lists them first, in line order. The count
    above the *After* pane is the number of rows in the list. `<< Prev` and `Next >`
    step through them, `Sort: rule#` / `Sort: line#` orders the list by rule or by line, and
    `Chg colour...` changes the highlight if it is hard to read.
@@ -1446,7 +1447,7 @@ VitTransform <rulefile> <source> [outdir] [switches]
       Every report, test result and IR dump carries the run's date-time stamp (th =
       hundredths) in its name, computed once per run - so repeated runs keep separate
       ones instead of overwriting each other. Open the NEWEST one. The transformed files
-      keep their own names unless you ask for `--outsuffix=` or `--outstamp` (B.1).
+      keep their own names unless you ask for --outsuffix= or --outstamp (B.1).
 
       Only three arguments are positional - <rulefile> <source> [outdir].
       A fourth is refused rather than ignored, because it is a PATH WITH A
@@ -1592,6 +1593,7 @@ such as `--kwupper=` - keep every value instead.
 | `--batch` | **Unattended mode.** No modal boxes - anything that would have been one is appended to `vt-batch.log` instead - and `--thorough` takes the newest Clarion rather than asking. Full description in the table under *Choosing what runs* above. |
 | `--dumptokens` | **Diagnostic**, for people working on VitTransform itself. Writes the file as the tool sees it after reading its includes to `<file>.tokens.txt`, and reports any block it found opened but not closed, closed but never opened, or opened inside brackets. Needs the included files read - an ordinary run reads them when it finds Clarion; otherwise add `--thorough` or `--root=<dir>`. Full description under *Choosing what runs* above. |
 | `--acdiag` | **Diagnostic.** Explain why comment alignment left each comment where it is. Full description under *Choosing what runs* above. |
+| `--ignoremarks` | **Use with care.** Stops the tool guarding a StringTheory's base64 and encoding markings, so more code is changed. Read the full warning under *Choosing what runs* above before you use it. |
 
 ## B.1 Naming the output files
 
@@ -1760,12 +1762,12 @@ read before you accept one.
 | `UnusedVars` | Comments out declarations nothing references. A procedure that INCLUDEs code after its `CODE` keeps all its declarations - the included code may be what uses them. An object of a class other than StringTheory is kept too: its `CONSTRUCT` and `DESTRUCT` run whether or not its name is used again, and they may be why it is there. | `PREFIX('text')` - the comment marker written in front of the line. `EXCLUDE(a b c)` - names never to touch. |
 | `UnusedRoutines` | Comments out `ROUTINE`s that no `DO` ever reaches, whole body included. One removal can lead to another: a routine only called from a removed routine goes on the next pass. Kept, with a line in the report, where the file cannot show every `DO`: a routine no `PROCEDURE` in the file owns (part of a file that is included elsewhere), and a routine whose procedure `INCLUDE`s a file after its `CODE`. On a `.txa` it only annotates. | `PREFIX`, `EXCLUDE` as above. |
 | `UnreachableCode` | Comments out statements that can never run - anything after an unconditional `RETURN`/`EXIT`/`BREAK`/`CYCLE`/`GOTO`, up to the next rejoin point. A label inside a block in that dead code keeps the block's opening line and its `END` in use only when a `GOTO` in the same code names it - above the label or below it, since a `GOTO` further down can jump back up. Such a label that no `GOTO` names cannot be reached, and is commented out with the rest. | `PREFIX('text')` - the comment marker written in front of the line. |
-| `UnusedAssignments` | Comments out dead stores: assignments to a local that is written but never read. A local read where the code does not name it is never one: shown by a window or report control's `USE()`, named in a file's `NAME()`, read through a reference (`r &= v`), handed to `BIND` or `ADDRESS()`, or used in code the procedure INCLUDEs. The value stored must be a plain read too - `Ticket = NextTicketNo` calls a procedure, and stays. Feeds `UnusedVars` - once the writes are gone the declaration is unused too. A name reached over a `\|` line continuation is a *comparison*, not a store (`IF a = 1 AND \|` / `x = 5`), and is never counted as a write. A line inside an `EXECUTE` is left alone: an `EXECUTE` runs one of the statements between it and its `END`, picked by the value it is given, so the statements are alternatives - none of them overwrites the one above it, and taking one away would change which line each value runs. | `PREFIX('text')` - the comment marker written in front of the line. |
+| `UnusedAssignments` | Comments out dead stores: assignments to a local that is written but never read. A local read where the code does not name it is never one: shown by a window or report control's `USE()`, named in a file's `NAME()`, read through a reference (`r &= v`), handed to `BIND` or `ADDRESS()`, handed by address to a procedure or method that may keep a reference to it (a later call can then read it there), or used in code the procedure INCLUDEs. The value stored must be a plain read too - `Ticket = NextTicketNo` calls a procedure, and stays. Feeds `UnusedVars` - once the writes are gone the declaration is unused too. A name reached over a `\|` line continuation is a *comparison*, not a store (`IF a = 1 AND \|` / `x = 5`), and is never counted as a write. A line inside an `EXECUTE` is left alone: an `EXECUTE` runs one of the statements between it and its `END`, picked by the value it is given, so the statements are alternatives - none of them overwrites the one above it, and taking one away would change which line each value runs. | `PREFIX('text')` - the comment marker written in front of the line. |
 | `AutoCheck` | Adds `,AUTO` to locals it can **prove** are written before every read, and removes it from ones that are read first. `,AUTO` means the variable is not set to zero when the procedure starts, so adding it wrongly is a real bug - the check refuses whenever it cannot be sure. It never adds `,AUTO` to a local that something can read without the code naming it - a control's `USE()`, which `DISPLAY` reads, a reference, `BIND`, or an INCLUDEd file. A starting value written in the declaration, such as `LONG(0)`, goes when `,AUTO` is added - the variable is set before it is read, so that value is never used - and a note on the line says what it was. A string declared with a literal, `STRING('abc')`, is left alone: the literal sets its length too. A line that starts with a `?` in column 1 runs only in a debug build, so a variable set there does not count as set for the lines after it. A branch that ends by returning from the procedure never reaches the code after its `IF`, so it counts as having assigned the local there. | `SAFE` - removals only, never add (the zero-risk direction). `NOTE('text')` - the comment left on a removal. `WHY` - explain every declaration that did *not* get `,AUTO`, one line each. |
 | `KnownRanges` | Removes a test, or a `choose()`, that cannot go the other way, by following where a local's value came from. After `p = st.findChar('=')` and `if ~p then break.`, `p` must be between 1 and `_DataEnd`, so `if p - 1 < st._DataEnd then ...` can never fail and the test goes. With the same knowledge it rewrites several string-building shapes into the one call that does the same work - the list is under *What `KnownRanges` rewrites* below. When it stops trusting what it knows is listed under *`KnownRanges`, in detail* below. | `PURE(a b c)` - extra call names to treat as side-effect free. |
 | `DeadGuard` | Removes a test **this tool wrote** when an earlier one shows it cannot fire. The slice rewrite writes `choose(st._DataEnd < 1, '', st.valuePtr[1 : st._DataEnd])`, and the test matters in general - `valuePtr` cannot be read on an empty StringTheory - but not in a procedure that has already returned when the string is empty: `if st._DataEnd < 1 then return.` a few lines above settles it, so only the slice is left. The tool walks back up the code to check, and gives up at any call that could change the object; passing the object **bare** to anything at all counts as a change, and so does a reference pointed at it anywhere in the procedure, which could change it under another name. In group `deadchoose` (off, `FINAL`) | - |
 | `DeadLeft` | Drops a `left()` that can be shown to have nothing to strip: the object was trimmed above it - by `Trim()`, or by a `setLeft()` whose flags can be **seen** to include `st:spaces` - and the read starts at a literal `1`, so there is no leading space to remove. `left(st.sub(1, p - 1))` -> `st.sub(1, p - 1)`. `Trim('*')` strips something else and proves nothing; a read starting at `2` proves nothing about character 2. The read must be the whole argument: in `left(st.sub(1, p - 1) & rest)` the read can be empty, and then `left()` strips `rest`. Runs after `DeadGuard` in the same group, and takes the `left()` that `DeadGuard`'s work uncovers | - |
-| `TrailingSpaces` | Where nothing below a point can see **or create** a trailing space, inserts one `clip()` and then removes the code that asked about them - `clipLength()` becomes `_DataEnd`, a redundant `clip()` around `getValue()` goes. The only transform that INSERTS a statement; it logs insertions separately from rewrites. It can also use a fact established in **another procedure in the same file** (see procedure summaries below), and names that procedure in the log line. A routine with data of its own is judged like a procedure: its StringTheory exists only for that call. A comment written above the statement that gets the `clip()` stays above both lines. | - |
+| `TrailingSpaces` | Where nothing below a point can see **or create** a trailing space, inserts one `clip()` and then removes the code that asked about them - `clipLength()` becomes `_DataEnd`, a redundant `clip()` around `getValue()` goes. It inserts no `clip()` on an object the procedure may make UTF-16 - by `toUnicode()`, by a `setValue()` from another object (unless that is a plain local the procedure never marks), or by handing it to a call that may - since StringTheory's `clip()` works differently on UTF-16 text; the procedure's ROUTINEs and the methods of a class it declares are read for this too, and `--ignoremarks` lifts it. It logs insertions separately from rewrites. It can also use a fact established in **another procedure in the same file** (see procedure summaries below), and names that procedure in the log line. A routine with data of its own is judged like a procedure: its StringTheory exists only for that call. A comment written above the statement that gets the `clip()` stays above both lines. | - |
 | `CheckDeleteInLoop` | Reports, and changes nothing: a `st.deleteLine(i)` inside a forward loop over the same lines skips the line after each deletion, because the lines above the cursor close up. The report names the line so you can walk the loop backwards or count the deletion. Group `analysis`. | - |
 
 **Where the checks deliberately stand back.** Each of these judges a file by what that file
@@ -1782,6 +1784,7 @@ left alone and why.
 A fact is dropped as soon as anything could change its variable or string without naming it:
 
 - a write through a reference to it;
+- a call made after the local was handed by address to a procedure or method that may keep a reference to it;
 - a method of a class the procedure declares;
 - a write into one character of a string (`x[5] = 'z'`);
 - a call on the object that holds a string (`self.Shrink()` ends what was known about `self.buf`);
@@ -1873,7 +1876,10 @@ pass over the file first and records, for each procedure, a single fact about wh
 returns - "never negative", "at least 1 and within the string", or "the string it hands back
 has no trailing spaces". A call to it can then use that fact.
 
-The same pass records, for each procedure, which of its parameters the body only reads. A copy or a line buffer
+The same pass records, for each procedure, which of its parameters the body only reads. It also records which
+parameters taken by address the body keeps no reference to. A local handed to any other parameter declared with `*`
+or `&` may be changed later by a call that does not name it, so the clean-ups stop relying on what they knew about
+it. A call whose prototype is not in the file is judged by what the file shows. A copy or a line buffer
 that the tool would otherwise leave alone because its source is "handed whole to a call, which could change it"
 goes when that call is to a procedure of the same file that only reads the parameter - `DropValueCopy`, `DeadTrim`
 and `DropLineBuffer` ask. A parameter counts as written by an assignment of any kind, a subscript write, a method
@@ -1937,7 +1943,7 @@ arms are picked by position. Each refusal names the line in the report.
 | `IncludeBrackets` | An `INCLUDE` written without brackets is written with them: `INCLUDE 'KeyCodes.CLW'` -> `INCLUDE('KeyCodes.CLW')`. The current compiler accepts only the bracketed form. Only the plain one-name form is changed; a line with a second argument after a comma is left as written. |
 | `CombineAdjacentLiterals` | `'abc' & '123'` -> `'abc123'` |
 | `RemoveDoubledBrackets` | `((expr))` -> `(expr)` |
-| `CheckCaseStatements` | Single-character `CASE` values -> `val()` integers. The `CASE` must be on something that is certainly one character: a quoted character, a variable declared `STRING(1)` without `DIM`, one character picked from a string (`s[i]`, a string parameter included, but not an element of an array parameter), or one character of a StringTheory's buffer (`st.valuePtr[i]`). Each converted arm keeps the characters as a comment: `of 40 orof 91 ! '(' orof '['`. A range of characters, `of 'A' to 'Z'`, becomes `of 65 to 90`. If your program sets its own order for comparing text, run with `--colseq=custom`: in such an order `'A' to 'Z'` can take in the small letters too, where `65 to 90` never does, so a `CASE` with a range is then left as it is. |
+| `CheckCaseStatements` | Single-character `CASE` values -> `val()` integers. The `CASE` must be on something that is certainly one character: a quoted character, a variable declared `STRING(1)` without `DIM`, one character picked from a string (`s[i]`, a string parameter included, but not an element of an array parameter), or one character of a StringTheory's buffer (`st.valuePtr[i]`). Each converted arm keeps the characters as a comment: `of 40 orof 91 ! '(' orof '['`. Anywhere else in the file, `val('A')` becomes `65` with `! 65='A'` after it, and a bare digit becomes its character code: `val(5)` becomes `53`. A range of characters, `of 'A' to 'Z'`, becomes `of 65 to 90`. If your program sets its own order for comparing text, run with `--colseq=custom`: in such an order `'A' to 'Z'` can take in the small letters too, where `65 to 90` never does, so a `CASE` with a range is then left as it is. |
 | `CheckCat` | StringTheory `cat` -> `Append`, including literal-length truncation |
 | `CheckReplaces` | `replace`/`replaceByte` argument cleanup |
 | `CheckRemoves` | `remove`/`removeByte` argument cleanup |
@@ -1950,11 +1956,11 @@ arms are picked by position. Each refusal names the line in the report.
 | `MergeGuardChain` | Consecutive single-line `IF`s that set the **same thing** become one test. When every condition asks whether the same receiver holds **one character**, they collapse into a single `st.containsA('\/.')`; otherwise they become one `OR`-joined test with a condition to a line, so each keeps the comment written beside it. Merging is refused unless the assignment is identical in all of them and every condition is safe to stop at early - N separate `IF`s test all N conditions, and one merged test stops at the first true one, so a condition that does anything besides answer would make a different program. Whether a call is safe that way comes from the same list `IfChainToCase` uses, which `PURE(...)` extends |
 | `IfChainToCase` | An `IF`/`ELSIF` chain of equality tests on **one repeated expression** becomes a `CASE`, so the expression is evaluated once instead of once per arm: `if lower(w.getValue()) = 'fold' or ... = 'trimr'` -> `case lower(w.getValue())` / `of 'fold' orof 'trimr'`. Bodies, a trailing `ELSE` and the terminator are untouched - only the heads are rewritten. More shapes it takes - a range, a negated test, a one-line `IF` - and the cases it refuses are under *`IfChainToCase`, in detail* below. **On by default** - it makes the code clearer as well as faster, which is what a plain run is for. Parameter: `PURE(a b c)` - extra call names to treat as having no side effects. |
 | `MergeAdjacentCase` | Two tests of one expression, one after the other, become one `CASE`: after a `CASE` with no `ELSE`, a second `CASE` on the same expression, or an `IF` on it, joins it as more arms. `case E` / `of '~' orof 'NOT'` / `return true` / `end` / `if E = '(' and k > 0` / ... / `end` becomes `case E` / `of '~' orof 'NOT'` / `return true` / `of '('` / `if k > 0` / ... / `end` / `end`. The shapes it joins, and the cases it leaves alone, are under *`MergeAdjacentCase`, in detail* below. **On by default**; `--nogroup=merge-adjacent-case` leaves it out. |
-| `InlineSingleUse` | A local that exists only to carry a value to the very next line is removed, and its expression moves to where it is read: `wU = upper(x)` / `case wU` becomes `case upper(x)`. The StringTheory spelling folds the same way: `head.setValue(upper(x))` then `case head.getValue()` becomes `case upper(x)`, and `head` goes. **It MOVES code rather than respelling it**, so it converts only when it can show four things, listed under *`InlineSingleUse`, in detail* below. Anything it cannot show, it leaves alone. On by default; `--nogroup=inline-singleuse` leaves it out. A variable passed whole to a call is moved only into a parameter the prototype takes by value, or into a known function: with `*STRING`, the call would change the original. A slice of it passed to a call is judged the same way. A store whose value is read in an `EXECUTE` arm stays, and a field is never moved into a `GET`, `ADD`, `PUT` or `SORT`, where it could be read as a key rather than a value. |
+| `InlineSingleUse` | A local that exists only to carry a value to the very next line is removed, and its expression moves to where it is read: `wU = upper(x)` / `case wU` becomes `case upper(x)`. The StringTheory spelling folds the same way: `head.setValue(upper(x))` then `case head.getValue()` becomes `case upper(x)`, and `head` goes. **It MOVES code rather than respelling it**, so it converts only when it can show four things, listed under *`InlineSingleUse`, in detail* below. Anything it cannot show, it leaves alone. On by default; `--nogroup=inline-singleuse` leaves it out. A variable passed whole to a call is moved only into a parameter the prototype takes by value, or into a known function: with `*STRING`, the call would change the original. A procedure of the Clarion runtime, such as `message()` or `putini()`, counts when every one of its prototypes with that many arguments takes that argument by value, your program has no procedure of that name, and the file is a `PROGRAM` file - in a `MEMBER` module, or a file another one includes, the program's own `MAP`, which the tool does not read, may declare a procedure of that name that takes the argument by address. The code an `IF` marked as a possible bug always runs is left as written, and so is a value read right beside it, so the `IF` can be put back as it was. A slice of it passed to a call is judged the same way. A store whose value is read in an `EXECUTE` arm stays, and a field is never moved into a `GET`, `ADD`, `PUT` or `SORT`, where it could be read as a key rather than a value. |
 | `LoopBlankRecords` | A loop that walks backwards from the end of a split's lines to skip the blank ones - `loop while n > 0` / `line.setValue(st.getLine(n), st:clip)` / `if line._DataEnd then break.` / `n -= 1` - becomes a single `st.clip('<32,10>')` before the split, so the blank lines are never made, and the split clips. The read line may also load the object itself - `st.setValueFromLine(n)` with `st.clip()` on the next line, or without it when the split already clips. It refuses, and says which condition failed, in the cases listed under *`LoopBlankRecords`, in detail* below. Group `loop-blank-records`. |
 | `ClipAtSplit` | When every read of a split's lines clips - `line.setValue(st.getLine(n), st:clip)`, or `st.setValueFromLine(n)` with `st.clip()` on the next line, throughout - the clip moves onto the split, `st.split('<10>',,,,st:clip)`, and the reads give theirs up: the `st:clip` goes from the first form, the clip line from the second. A line that only reads the object's value, such as `st._DataEnd` or `st.length()` after a load, is no reason to refuse. Each read must be exactly that line and nothing else: a read of more than the line, or another object's read beside it, refuses. A split inside a routine refuses: the code that runs after the `do` may read the lines. The object must be the procedure's own: a parameter, a global, a member of a class or a reference is left as it is, since the clipped lines stay in the object, where other code may read them later. So is an object that a method of a class the procedure declares uses: such a method shares the procedure's data. The split counts as clipping already only when `st:clip` is its own fifth argument - in `split(',', '"', '"', st:clip)` it removes quotes. A split that shares its line with other statements is treated as under `LoopBlankRecords`. Group `loop-blank-records`. |
 | `ChooseClip` | The clips at the end of every arm of a `choose()` come off when the result is stored into a plain `STRING`, which pads with blanks anyway: `s = choose(c, clip(a), clip(b))` becomes `s = choose(c, a, b)`. Never on the condition, never on a clip with text after it, never into a `CSTRING`. Always on. |
-| `FirstAddIsSet` | A local declared without `AUTO` starts at zero, so a `+=` that is its first write is an `=`, and the local can be `,auto`: `n += st.count(x)` becomes `n = st.count(x)` with `n long,auto`. Only when nothing mentions the local before that line, and the line is in no loop, no routine and after no label, and the local is not a field of a `QUEUE` or `GROUP` (a `GET` or an assignment of the structure sets it), and the line does not read the local itself (`n += n + 1` reads the zero, which `AUTO` would take away); each refusal says which. Always on. |
+| `FirstAddIsSet` | A local declared without `AUTO` starts at zero, so a `+=` that is its first write is an `=`, and the local can be `,auto`: `n += st.count(x)` becomes `n = st.count(x)` with `n long,auto`. Only when nothing mentions the local before that line, and the line is in no loop, no routine and after no label, and the local is not a field of a `QUEUE` or `GROUP` (a `GET` or an assignment of the structure sets it), and the local is declared once, with its type and nothing after it - no `STATIC`, `THREAD`, `OVER` or other attribute, on that row or on a row it carries on to with `|` - and neither the declaration nor the line sits in a `COMPILE` or `OMIT` block the other is not in, and the line does not read the local itself (`n += n + 1` reads the zero, which `AUTO` would take away); each refusal says which. Always on. |
 | `DropLineBuffer` | A scratch object that only ever holds one line of another object - `line.setValue(src.getLine(x))` - is dropped: `src.setValueFromLine(x)` loads the line into the object itself, and every other use of the scratch reads the object. The scratch may read and change its value. A load that clips keeps its clip. It refuses, and names the call and its line, in the cases listed under *`DropLineBuffer`, in detail* below. Group `loop-blank-records`. |
 | `RepairNotes` | A note VitTransform wrote onto the end of a comment with no `!` of its own gets one: ` replace all <`, ` replace all '`, ` remove all <` and ` remove all '` inside a comment, with anything but a `!` in front of them, get `  ! ` put in front. Comment text only; a second run finds nothing. Group `repair-notes`, off unless asked for. |
 | `ClippedCompare` | A comparison of two StringTheory values that are both clipped lines of a split - `a.getValue() <> b.getValue()`, in either that spelling or the direct-read one - becomes a length test first and a byte compare only when the lengths agree: `a._DataEnd <> b._DataEnd or (a._DataEnd and a.valuePtr[1 : a._DataEnd] <> b.valuePtr[1 : b._DataEnd])`, and the same for `=`. When it can be sure both values are clipped, and the cases it refuses, are under *`ClippedCompare`, in detail* below. Group `loop-blank-records`. |
@@ -1965,7 +1971,7 @@ arms are picked by position. Each refusal names the line in the report.
 | `LineSearchToInLine` | A loop over every line that tests one line for equality with a value and stops at the first match - `loop i = 1 to st.records()` holding `if st.getLine(i) = x then found = 1 ; break.` - becomes `if st.inLine(x,,,,,st:wholeLine) then found = 1.`, and with `pos = 0` on the line before, `pos = i` becomes `pos = st.inLine(x,,,,,st:wholeLine)`. StringTheory's `inLine` with the whole-line argument compares clipped lines exactly as Clarion's `=` does, so the answer is the same. More shapes it takes, and the cases it refuses, are under *`LineSearchToInLine`, in detail* below. Group `line-search-to-inline`, on by default. |
 | `ChangeBeforeSplit` | A loop that loads each line of a split into the value, changes it and stores it back - `st.setValueFromLine(i)`, `st.upper()`, `st.setLineFromValue(i)` over `loop i = 1 to st.records()`, or the compact `st.setLine(i, upper(st.getLine(i)))` - becomes the same change made once to the whole value, just before the split; the loop goes and `UnusedVars` sweeps the index. Only `upper()`, `lower()` and a two-argument `replace` of literals qualify. Comments on the loop's own lines stay where the loop was, on lines of their own. Which changes and separators it takes, and the cases it refuses, are under *`ChangeBeforeSplit`, in detail* below. Group `change-before-split`, on by default. |
 | `DropValueCopy` | A StringTheory that only ever holds a copy of another one's value - `tmp.setValue(st.getValue())`, `tmp.setValue(st.getValuePtr())` or `tmp.setValue(st)` - and only reads it afterwards is dropped: the copy line goes and every later read of `tmp` reads `st`. `UnusedVars` then sweeps the declaration. The source may be a `STRING`, `CSTRING` or `PSTRING` variable or parameter as well as an object: the scratch's length then reads as `len(src)` and its slices as `src[a : b]`. It refuses, and says why, in the cases listed under *`DropValueCopy`, in detail* below. Group `drop-value-copy`, on by default. |
-| `TakeOverValue` | A StringTheory loaded with a copy of another one's value - `tmp.setValue(st.getValue())`, `tmp.setValue(st.getValuePtr())` or `tmp.setValue(st)` - where `st` is never mentioned again takes it over: the copy line goes and every later mention of `tmp` names `st`, whatever `tmp` does with the value. The mirror of `DropValueCopy`. It refuses, and says why, when `st` is used again after the copy, is a parameter, a reference or `STATIC` or `THREAD` (its value lasts to the next call), or is not this procedure's local; when `tmp` is a parameter, a reference or is mentioned before the copy; when the copy is `st.getValue()` or `st.getValuePtr()` - which leaves `st`'s encoding, base64 and gzip settings behind - and `st` may have had them set before the copy (by a method such as `toUnicode`, `base64Encode` or `gzip`, by a `setValue` from another object, or by being handed whole to a call), and `tmp` is then used by a method that reads them (`toAnsi`, `toUnicode`, `equals`, `base64Decode`, `gunzip` and the like) or is handed whole to a call; when the copy could run more than once (in a routine, inside a LOOP or ACCEPT, or below a label); when a later mention could run without the copy (the copy inside an IF the mention is outside of, or in another branch, routine or EXECUTE arm). A comment on the copy line stays where the line was, on a line of its own. `UnusedVars` then sweeps `tmp`. |
+| `TakeOverValue` | A StringTheory loaded with a copy of another one's value - `tmp.setValue(st.getValue())`, `tmp.setValue(st.getValuePtr())` or `tmp.setValue(st)` - where `st` is never mentioned again takes it over: the copy line goes and every later mention of `tmp` names `st`, whatever `tmp` does with the value. The mirror of `DropValueCopy`. It refuses, and says why, when `st` is used again after the copy, is a parameter, a reference or `STATIC` or `THREAD` (its value lasts to the next call), or is not this procedure's local; when `tmp` is a parameter, a reference or is mentioned before the copy; when the copy is `st.getValue()` or `st.getValuePtr()` - which leaves `st`'s encoding, base64 and gzip settings behind - and `st` may have had them set before the copy (by a method such as `toUnicode`, `base64Encode` or `gzip`, by a `setValue` from another object, or by being handed whole to a call), and `tmp` is then used by a method that reads them (`toAnsi`, `toUnicode`, `equals`, `base64Decode`, `gunzip` and the like) or is handed whole to a call; when `tmp`'s `lastError` or `winErrorCode` is read (whichever form the copy takes), or `tmp` is handed whole to a call that could read them - a procedure of yours that does more with it than read its value, or one the tool cannot see into (a fresh `tmp` has them blank, and `st` may not); when the copy could run more than once (in a routine, inside a LOOP or ACCEPT, or below a label); when a later mention could run without the copy (the copy inside an IF the mention is outside of, or in another branch, routine or EXECUTE arm). A comment on the copy line stays where the line was, on a line of its own. `UnusedVars` then sweeps `tmp`. |
 | `CutToSplit` | Cutting a value at its first separator into a head and a tail - `p = x.findByte(32)` (or `findChar('c')`), the test `if ~p then return.` (or `exit`, `cycle`, `break`) on the very next line, then `x.valuePtr[1 : p - 1]` and `x.valuePtr[p + 1 : x._DataEnd]` (or `x.slice(p + 1)` for the tail) - is a split: `x.split(' ')`, `if x.records() < 2` (or `>= 2` for a positive test), `x.getLine(1)` and `x.getLines(2, 0, ' ')`. The same bytes: the split cuts at every separator, line 1 is the text before the first, and the lines after it joined by the separator, empty pieces kept, are the text after it. Where the reads may sit, and the cases it refuses, are under *`CutToSplit`, in detail* below. Group `cut-to-split`. |
 | `SplitInPlace` | A scratch copied from a local only to be split - `tmp.setValue(st)` (or `st.getValue()`, `st.getValuePtr()`) straight before `tmp.split(sep)` - is that local, split in place: the copy line goes and every later mention of `tmp` names `st`. Where `st`'s value is read after the lines were loaded into it, `st.join(sep)` goes in front of that read, after the structure holding `tmp`'s last use, and gives the value back byte for byte - a plain split leaves the value alone, and a join with the same separator rebuilds it from unchanged lines. It refuses, and says why, when `tmp` writes its lines, is handed whole to a call, is assigned by reference, is a parameter or a reference, or is mentioned before the copy; when `st` is a parameter or a reference, has lines of its own in use anywhere, or is mentioned between the copy and `tmp`'s last use; when the split is not plain (a quote, clip or left argument); when the copy could run twice or a use could run without it. A comment on the copy line stays, on a line of its own. `TakeOverValue` runs first and takes the case where `st` is never mentioned again. Group `split-in-place`. |
 | `ResplitToLines` | A joined range of one object's lines - `rest.setValue(full.getLines(2, 0, sep))`, from any line to the end - split again on the same separator, `rest.split(sep)`, is those lines: the copy line becomes `full.deleteLine(1)`, once for every line before the range (nothing, for a range from line 1), the split line goes, and every later mention of `rest` names `full`. Exact, from the library: a split and a join with one separator undo each other, empty pieces included. It refuses, and says why, in the cases listed under *`ResplitToLines`, in detail* below. Group `resplit-to-lines`. |
@@ -2061,7 +2067,9 @@ Both are left as they are when:
 - a line that goes carries a comment;
 - a fall-through arm holds a value it cannot compare;
 - the `CASE` is an arm of an `EXECUTE` - joining the next arm into it would renumber the arms below;
-- its selector has another name an arm could write it through (an `OVER`, a reference);
+- its selector is a `GROUP`, `QUEUE` or record, or may have another name an arm could write it through: an `OVER`,
+  a reference, a field of a structure, a parameter passed by address, or a local handed by address to a call that
+  may keep it;
 - it has a label inside it - a `GOTO` could reach an arm with any value;
 - an arm's statements before an `OROF` line write the selector - control falls into the `OROF`'s
   statements.
@@ -2106,10 +2114,18 @@ Also:
 
 - A `head.upper()` or `head.lower()` on the line between a StringTheory store and its read rides into
   the expression as `upper(x)`.
+- The copy stays when the variable it reads may have a second name the code does not show: a parameter
+  passed by address (`*LONG p`) when the procedure has another one, or uses a global - a caller may pass
+  the same variable to both; a global that a reference set elsewhere in the file points at (`r &= g`);
+  a field of a group declared with `PRE()`, written by its own name, while the group is used whole or
+  through another name; a local handed by address, earlier, to a procedure or method that may keep a reference to
+  it; or a variable declared `OVER` another one, which shares its memory.
 - Written where an operator neighbours it, a compound expression is bracketed: `inner - (z - 1)`.
 - A comment on the store line stays, on a line of its own where the store was. So does one after a `|`
   that carries the store over two lines, unless the `|` is inside the expression: that comment moves
   with the expression, once.
+- It leaves alone a store or a read right beside, or inside, an `IF` commented out as `! #Possible bug`:
+  the code that `IF` always ran stays as you wrote it, so the `IF` can be put back.
 - It never touches a line inside an `EXECUTE`. An `EXECUTE` runs one of the statements between it and
   its `END`, picked by the value it is given, so the statement below the store never sees the store at
   all, and taking a line away would change which line each value runs.
@@ -2183,10 +2199,10 @@ What the object may be:
   would change what the scratch reads. When the reads after it rely on such a `join`, a `GOTO` anywhere
   from the top of the loop around the load to the `join` refuses: it could jump past the `join`.
 
-A load that clips - `line.setValue(src.getLine(x), st:clip)`, the load's own `, st:clip` and not another statement's on the same
-line - keeps its clip. When every split of the object already
-clips (by its own fifth argument, `split(x,,,,st:clip)`), the lines sit clipped in the queue and the read's `st:clip` simply goes; otherwise the object is
-clipped after the load, `src.setValueFromLine(x) ; src.clip()`.
+A load that clips - `line.setValue(src.getLine(x), st:clip)`, the load's own `, st:clip` and not another statement's
+on the same line - keeps its clip. When every split of the object already clips (by its own fifth argument,
+`split(x,,,,st:clip)`), and nothing else writes its lines, the lines sit clipped in the queue and the read's
+`st:clip` simply goes; otherwise the object is clipped after the load, `src.setValueFromLine(x) ; src.clip()`.
 
 The load must be sure to have run before every read of the scratch. Each of these refuses:
 
@@ -2194,6 +2210,8 @@ The load must be sure to have run before every read of the scratch. Each of thes
 - a read in another branch of the structure holding the load;
 - a read in a different routine, or a label between the load and the read;
 - the load as one arm of an `EXECUTE`;
+- the load inside a `COMPILE` block, or an `OMIT` with a condition, that a read is not in - a build may leave the
+  load out and still run the read;
 - a routine called between the load and a read - a routine shares the locals and could change the object;
 - a read of the scratch before the load, or above it inside the same loop;
 - a read of the scratch after a later load of it that may not run - inside an `IF` or a loop - since that read can
@@ -2295,11 +2313,17 @@ It refuses, and says why, when:
   file a value the object never held;
 - a `STATIC` or `THREAD` object is never written afterwards;
 - the index is used elsewhere;
+- the index has a second name that can read what the loop left in it: a field of a structure, an `OVER`, a
+  reference, or a parameter passed by address;
+- the split and its loop are not in the same `COMPILE` block, or `OMIT` with a condition: one of them is inside
+  such a block and the other is not, or they are in different ones;
 - the split is an `EXECUTE` arm;
 - a `do` comes between the split and the loop - a routine could read the lines;
 - the split is inside a routine - the code after the `do` may read the value;
 - the split is inside an outer loop that does not set the object afresh before it - its next pass
   would split the changed text, where the original split the last line.
+- a `GOTO` below the split jumps back to a label between the loop around it and the split, and the object is not
+  set afresh after that label - the lines from the label would run again on the changed text.
 
 #### `DropValueCopy`, in detail
 
@@ -2328,7 +2352,8 @@ Two things do not refuse:
   same file that only reads that parameter (see *Procedure summaries* above).
 - A touch of the source inside a body of an `IF` or `CASE` that opens after the copy - the source handed
   to a call, a routine called - when only the heads of that structure read the copy, since a body runs
-  after every head it can reach and before none.
+  after every head it can reach and before none - and no `LOOP` or `ACCEPT` that the copy is outside of holds
+  the structure, which would run it again.
 
 Also:
 
@@ -2348,6 +2373,8 @@ its `end`; or `if p` (or `if p > 0`, `if p <> 0`) with every read inside it.
 It refuses, and says why, when:
 
 - `p` is used in any other way (arithmetic, a second write, a call);
+- `p` is a field of a structure, or has another name (an `OVER`, a reference): a store under that name changes it
+  unseen;
 - `x` is a parameter, a reference, or has lines of its own in use anywhere in the procedure;
 - `x` changes between the cut and the last read - a store through `x.valuePtr` or `x._DataEnd` counts,
   and so does handing the buffer to a procedure that may write it;
@@ -2460,8 +2487,8 @@ scalar type (`STRING`, `LONG`, ...), a class name like `StringTheory`, or a **TY
 so one rule covers the whole class:
 
 ```
-TYPESET INT = BYTE + LONG + ULONG + SHORT + USHORT + INT64 + UINT64
-TYPESET NUM = INT + DECIMAL + PDECIMAL + REAL + SREAL + BFLOAT4 + BFLOAT8 + SIGNED + UNSIGNED
+TYPESET INT = BYTE + LONG + ULONG + SHORT + USHORT + INT64 + UINT64 + SIGNED + UNSIGNED
+TYPESET NUM = INT + DECIMAL + PDECIMAL + REAL + SREAL + BFLOAT4 + BFLOAT8
 TYPESET STR = STRING + CSTRING + PSTRING
 
 METAVARS
@@ -2493,7 +2520,7 @@ Options trail the replacement, in any order:
 | `EXPRSTART` | Refuse the match unless it **starts its own operand** - that is, nothing just in front of it binds to it. Use it, with `EXPREND`, on a rule that replaces a whole comparison. In `if 'x' & st.getValue() = st2.getValue()` the `&` binds more tightly than `=`, so the comparison is really `('x' & st.getValue()) = st2.getValue()` - not the `st.getValue() = st2.getValue()` the pattern sees - and rewriting it would change your program without any error. `EXPRSTART` refuses the match when the thing in front is `& + - * / ^ %`, or another comparison operator (`= <> < > <= >=`) - Clarion does not allow two comparisons in a row, so such a match is not one comparison of its own. After `IF`, `AND`, `OR`, `NOT` or `~`, `RETURN`, a bracket, a comma or at the start of a line, the match stands - `NOT` and `~` are worked out after a comparison, so `~a = b` means `~(a = b)`. |
 | `EXPREND` | Refuse the match unless it **is the whole of its operand** - that is, the next thing is not `& + - * / ^ %`. Use it on any rule whose pattern could match the first part of a longer expression: without it, `... = UPPER(clip(w)) & '_X'` would match the `UPPER(clip(w))` part and drop a `clip()` that was doing real work on the concatenation. |
 | `INPARENS` | Refuse the match unless it **starts inside a bracket that is still open** in its own statement. What that tells you: an `=` inside brackets is always a COMPARISON, never an assignment - the left side of an assignment closes every bracket it opens before its `=`, so anything inside brackets is an argument, a subscript or a bracketed condition, and Clarion has no way to assign there. It is what lets `w1 = clip(w)` be dropped inside `choose(...)` while the same text as a whole statement is left alone. Pairs naturally with `EXPREND`. |
-| `NOTBOOL` | Refuse the match where it stands as a true/false value: the whole condition of an `IF`, `ELSIF`, `LOOP WHILE` or `UNTIL`, beside `NOT`, `~`, `AND`, `OR` or `XOR`, the first argument of `choose()`, or one side of a compare with a quoted literal. Use it on a rule that keeps a value's text but changes its type: `clip(n)` of a number is never blank, so `if clip(n)` is always true while `if n` is a test for zero. |
+| `NOTBOOL` | Refuse the match where it stands as a true/false value or is compared: the whole condition of an `IF`, `ELSIF`, `LOOP WHILE` or `UNTIL`, beside `NOT`, `~`, `AND`, `OR` or `XOR`, the first argument of `assert()`, any argument of `choose()`, the value a `CASE` tests or an `OF` gives, the upper end of an `OF ... TO` range, or either side of any compare. It also refuses the match as the whole value stored or returned where the type is kept as given: assigned to an `ANY`, to an untyped `?` parameter, or to a target whose type the tool cannot find (a property, or a variable whose declaration it cannot see), and returned from a procedure that returns `?` or whose prototype it cannot read. And it refuses an argument whose type can change the answer: an argument of a method, of a procedure with more than one prototype or with an untyped `?` parameter in that place, or of a procedure whose prototypes the tool cannot see: the `MAP` takes them from an `INCLUDE` it did not read (with `--nothorough`, or when the file cannot be found), or the file is a `MEMBER` module, or has no `PROGRAM` or `MEMBER` statement because another file includes it, and the procedure may be declared in a `MAP` the tool does not read. A call to a procedure of the Clarion runtime, such as `message()` or `putini()`, is still rewritten, as long as it has a number of arguments the runtime's own procedure takes. An argument that comes after a property with an index, such as `0{PROP:Width, 1}`, or after an array parameter in the prototype, such as `*LONG[,]`, is matched to its own parameter. Use it on a rule that keeps a value's text but changes its type: `clip(n)` of a number is never blank, so `if clip(n)` is always true while `if n` is a test for zero. And `clip(n) = s` compares text, while `n = s` compares numbers. |
 | `ONCE` | Fire at most once **per file**. |
 | `SKIP` | Disable the rule but keep it in the file. |
 | `NAME(x)` | Give the rule a name, so `--only=` and `--skip=` can take the name instead of the id. **Optional** - most rules have none, and a rule without a name is still selected by its id in the usual way. Worth adding to any rule you expect to name in a `.bat`, because an id is a line number and moves when lines are added above it, while a name does not. Names use the same characters as a group name (letters, digits, `_`, `:`, `-`) and must be unique across the rule file - the tool refuses to load one that is used twice, since a name that meant two rules could not select either. Works on a `BUILTIN` line too, where it is written as a parameter: `BUILTIN Reindent, WIDTH(2), NAME(indent-2)`. |
@@ -2535,7 +2562,8 @@ loads, with a message saying which side is wrong.
 **A replacement cannot end with one of the option words.** `WHERE`, `NOTE`, `ONCE`, `SKIP`,
 `EXPRSTART`, `EXPREND`, `INPARENS`, `NOTBOOL` and `NAME` are ordinary names, and they are read as options wherever they
 appear outside brackets - so a replacement whose last word is one of them, such as `x = skip`,
-would have the `skip` taken as the SKIP option and the replacement would be cut short to `x =`. An
+would have the `skip` taken as the SKIP option and the replacement would be cut short to `x =`. A word written
+straight after a `?`, such as the field equate `?Skip`, is part of that name and is not read as an option. An
 operator in front of the word shows it was meant as a value, and the rule file is refused
 instead:
 
@@ -2552,6 +2580,11 @@ option word is read as an option is refused too. A rule whose pattern ends in th
 exception - it rewrites the start of a longer condition and leaves the rest as it was:
 `if st.findChar(lit) and ==> if st.containsByte(val(lit)) and NOTE(charname(lit))`.
 
+A replacement that ends on `THEN` once the option word is read is refused as well: `THEN` must be followed by a
+statement, so the rule would write an `IF` with nothing in it. Here too a rule whose pattern ends on `THEN` is the
+exception - it rewrites the head of an `IF`, and the statement after the `THEN` stays where it was:
+`if st.findChar(lit) then ==> if st.containsByte(val(lit)) then NOTE(charname(lit))`.
+
 A `|` continues a long rule onto the next line.
 `ASSUME <name-pattern> <Type>` gives a fallback type for names your declarations don't cover - handy for
 naming conventions, e.g. `ASSUME st* StringTheory` treats any name starting with `st` as a StringTheory
@@ -2562,7 +2595,7 @@ when nothing else says otherwise.
 | Helper | Meaning |
 |---|---|
 | `trimr(lit)` | The matched literal with its trailing spaces removed: if `lit` matched `'abc  '`, `trimr(lit)` writes `'abc'`. Trailing spaces go however they are written - as `<32>`, as the last codes of a group, or with a repeat count: `'ab<32>'` becomes `'ab'`, and `'x<9,32>'` becomes `'x<9>'`. The rest keeps its spelling. **Replacement only** - it edits the literal's real bytes, which matter at runtime. In a `WHERE` you never need it: the guard compare already ignores trailing spaces. |
-| `fold(expr)` | Works the arithmetic out in advance: if `w` matched `5`, `fold(w-1)` writes `4`; if it cannot be fully worked out, the expression is written as it is. Numbers are added only when they are terms of the same sum, a minus straight after `*`, `/`, `%` or `^` stays with its number, a `%` is not worked out when a `*`, `/` or `%` stands on its left, and a `0` is dropped only where the value stays the same: `n * -1 + 5 - 1` becomes `n * -1 + 4`. |
+| `fold(expr)` | Works the arithmetic out in advance: if `w` matched `5`, `fold(w-1)` writes `4`; if it cannot be fully worked out, the expression is written as it is. Only numbers are worked out. A call - `day(today())`, `clock()`, `clip('ab ')` - a quoted literal and a `&` join are written as they stand, never replaced by a value the tool worked out; numbers inside a call's brackets still fold, so `f(2 + 3)` is written `f(5)`. Numbers are added only when they are terms of the same sum, a minus straight after `*`, `/`, `%` or `^` stays with its number, a `%` is not worked out when a `*`, `/` or `%` stands on its left, and a `0` is dropped only where the value stays the same: `n * -1 + 5 - 1` becomes `n * -1 + 4`. |
 | `len(lit)` | The literal's character count, written as a number: `'ab'` -> `2`. It understands the `<13>` escape form, so `'<13>'` is 1. |
 | `val(lit)` | The byte value of a **one-character** literal: `'='` -> `61`, `'<9>'` -> `9`, `''''` -> `39`. Anything longer keeps the `val(...)` spelling, which is valid Clarion meaning the same thing. |
 | `chr(nn)` | The inverse: the literal **source text** for a byte value, `61` -> `'='`, `9` -> `'<9>'`. Note this writes a literal into your source; it does not emit a runtime `chr()` call. |
@@ -2573,11 +2606,12 @@ when nothing else says otherwise.
 |---|---|
 | `WHERE <mv> = 'x'` / `<> 'x'` | Compare the matched text (case-insensitive unless quoted as a literal). The compare is Clarion's own, so **trailing spaces are ignored** - `= 'x'` also matches `'x  '`, and an all-space literal equals `''` (which is exactly what makes `WHERE lit <> ''` a blank guard). Use `len()` when exactness matters. `fold()` works here too. |
 | `WHERE len(lit) = 1` | Logical character count of a matched **literal** - `'<13>'` counts as 1, `''''` as 1, `'<13,10>'` as 2. **`len()` only knows the length of a literal.** Against a binding that is not one - a variable, or any expression - there is no length to measure, so `len(x) = 1` cannot pass and `len(x) <> 1` passes for everything. Guard on a LITERAL metavar if you mean to test a length. |
-| `WHERE isConst(w)` / `isLiteral(w)` / `isVar(w)` | The match works out to a whole number / is a single quoted literal / is one name whose declaration the tool can see. `isConst` refuses a negative number written as such, so it also means "a constant that is certainly not negative". |
+| `WHERE isConst(w)` / `isLiteral(w)` / `isVar(w)` | The match works out to a whole number / is a single quoted literal / is one name whose declaration the tool can see. `isConst` refuses a negative number written as such, so it also means "a constant that is certainly not negative". A call, such as `day(today())`, is not a constant: its value is not known until the program runs. |
 | `WHERE isPure(w)` | The match contains no `(` and no `{` **anywhere**. Read that literally: it refuses `y + (3 * z)`, which calls nothing, purely because of the grouping brackets. If what you need is "safe to evaluate twice", `isCallFree` is the test you want; `isPure` is the blunter one. A procedure called by its name alone, with no brackets, is refused too, and so is any name the tool cannot see is data. It sees the declarations in the file itself, not those in an included file, so a name declared only in an included file is refused as well. A StringTheory's own `_DataEnd` and `valuePtr` are data whether its include was read or not |
 | `WHERE isCallFree(w)` | The match **calls nothing**, so a replacement may evaluate it a different number of times than the pattern did. Grouping brackets are fine - `y + (3 * z)` passes, `f(x)` and `self.M(x)` do not. Nor does a procedure called by its name alone, with no brackets. A `(` counts as a call when a name comes right before it; one after an operator, after a comma, or at the start of the match is grouping. `{` is refused as well, because a property expression may itself be a method call on an OLE or OCX control and nothing in the syntax says which it is. A name the tool cannot see is data is refused as `isPure` refuses it |
 | `WHERE isSimple(w)` | The match has no `AND`, `OR`, `XOR`, `NOT` or `~` outside brackets, so its comparison operator is the top of the condition - the check that makes it safe to turn a test around. |
-| `WHERE noConcat(w)` | The match has no `&` outside brackets. `&` joins strings and binds more loosely than `+`, `-`, `*` and `/`, so a match holding one, written next to one of those, would be read with another grouping: `a & b - 1` means `a & (b - 1)`. The shipped rules that write the match beside `+` or `-` use it. |
+| `WHERE noConcat(w)` | The match has no `&` outside brackets. `&` joins strings and binds more loosely than `+`, `-`, `*` and `/`, so a match holding one, written next to one of those, would be read with another grouping: `a & b - 1` means `a & (b - 1)`. The shipped rules that write the match beside `+` or `-`, or inside `fold()`, use it. |
+| `WHERE isWhole(w)` | Every part of the match is a whole number: whole-number literals, and names declared `BYTE`, `SHORT`, `USHORT`, `LONG`, `ULONG`, `INT64`, `UINT64`, `SIGNED` or `UNSIGNED` (or written with a `#` on the end and not declared), joined with `+`, `-`, `*` and `%`, with brackets that group or index. A division, `^`, a number with a decimal point, a quoted literal, a call, a property, or a name of another type or one the tool cannot find the declaration of, fails it. The shipped rules that split a length or a position into two parts use it: a whole-number parameter drops a fraction once for the whole sum, and each part would drop it on its own - with `n = 5`, a `LONG` parameter given `10 - n / 2` receives 7, but given the two parts `10` and `0 - n / 2` it receives 10 and -2, which make 8. |
 | `WHERE isBoolExpr(w)` | The exact opposite of `isSimple`: the match **does** have a top-level `AND`/`OR`/`XOR`/`NOT`/`~`, so the match is a *logical* expression and its value is already 1 or 0. Those four bind more loosely than any comparison, so one that is not inside brackets is the top of the expression. Use it where a rewrite is only right on a condition - `choose(a or b, 1, 0)` -> `choose(a or b)` is safe, while the same collapse on a plain value or a sum would hit the *other* form of `CHOOSE`, which picks from a list by number. |
 | `WHERE isCaseNeutral(w)` | `upper(match) = lower(match)` - true only when the match holds no letter, so neither case fold can change it. A quoted literal counts by the characters it stands for, so `'<97>'` is the letter `a` and does not pass. A character from 127 up never passes, typed or written as a code: a program's `CLACASE` setting can make any of them a letter. Used to hoist a repeated fold out of a concatenation: `upper(a) & '::' & upper(b)` -> `upper(a & '::' & b)` is safe because `'::'` cannot change when it comes inside the `upper()`. |
 | `WHERE isSpaceless(w)` | The match holds no space character anywhere. A quoted literal counts by the characters it stands for, so a single space `' '` does not pass, and neither does a space written as its code, `'<32>'`, or repeated, `' {3}'`. Used where a `clip()` is dropped from the text a search looks in: `instring(lit, clip(w), 1, 1)` -> `instring(lit, w, 1, 1)`. A `clip()` only ever removes trailing spaces, and a search text with no space in it could never have matched inside them, so the answer is the same without the copy. |
@@ -2587,8 +2621,8 @@ when nothing else says otherwise.
 | `WHERE returnsRef(w)` | The match is inside a procedure or method whose prototype says it returns `*STRING`, a reference to a string. A `RETURN` there must give back a variable or `NULL`, so it cannot use the `choose(...)` form that a procedure returning a value can. Looked up from the prototype in the same file; a `RETURN` inside a `ROUTINE` belongs to the procedure around it. |
 | `WHERE returnsValue(w)` | The match is inside a procedure whose prototype the tool has read and that does not return a reference: it returns a value or nothing at all. A procedure prototyped in another file - a MEMBER module's procedures are usually prototyped in the PROGRAM's MAP - does not pass, since one that returns `*STRING` cannot take what such a rule writes. A procedure that returns some other reference, such as `*LONG`, passes neither test, so a rule guarded by either one leaves its code alone. |
 | `WHERE isNotNumber(w)` | The match is not a number: not a number written out, and not one name declared as a number. Used on the rules that drop a `clip()` from a compare: `clip()` of a number is text such as `'0'`, never blank, so comparing it with text is not the same as comparing the number. Anything that is not one plain name passes. |
-| `WHERE isPlain(st)` | The match is a StringTheory that is a plain local of the code around it: declared in column 1 of that procedure or method, and not a parameter, a reference, `STATIC` or `THREAD`. No method of a class the procedure declares names it, nothing is `INCLUDE`d there, and nothing in the procedure gives it `base64Encode()`, `toUnicode()` or another call that sets its markings, calls `Stream()` on it, takes a reference on it, hands it whole to a procedure, or gives it another object's value with `setValue`, `append` or `prepend`. The shipped rules that respell `setValue()` as a call that works in place use it: `setValue()` clears an object's base64 and encoding markings, those calls do not, and on a streamed object they change what reaches the file. |
-| `WHERE marksSafe(st)` | The same as `isPlain(st)`, except that with `--ignoremarks` (or `ignoremarks=on` in a profile) it holds for any StringTheory. It is for a change whose only difference from the original is the object's base64 and encoding markings. The shipped rules `st.setValue('')` to `st.free()` and `st.setValue(st.getLine(n))` to `st.setValueFromLine(n)` use it. |
+| `WHERE isPlain(st)` | The match is a StringTheory that is a plain local of the code around it: declared in column 1 of that procedure or method, and not a parameter, a reference, `STATIC` or `THREAD`. No method of a class the procedure declares names it, nothing is `INCLUDE`d there, and nothing in the procedure gives it `base64Encode()`, `toUnicode()` or another call that sets its markings, calls `Stream()` on it, takes a reference on it, hands it whole to a procedure, or gives it another object's value with `setValue`, `append` or `prepend`. With `--ignoremarks` the markings, and a value given from another object, are not asked about; the rest still holds. The shipped rules that respell `setValue()` as a call that works in place use it: `setValue()` clears an object's base64 and encoding markings, those calls do not, and on a streamed object they change what reaches the file. |
+| `WHERE marksSafe(st)` | The same as `isPlain(st)`, except that with `--ignoremarks` (or `ignoremarks=on` in a profile) it holds for any StringTheory, local or not. It is for a change whose only difference from the original is the object's base64 and encoding markings. The shipped rules `st.setValue('')` to `st.free()` and `st.setValue(st.getLine(n))` to `st.setValueFromLine(n)` use it. |
 
 **Multi-statement patterns:** a `;` *inside a pattern* matches a statement boundary (so
 `st.prepend(w) ; st.append(w1) ==> st.Enclose(w,w1)` collapses a two-statement pair), and a *trailing* `;`
@@ -2651,6 +2685,21 @@ indented to where the first one begins, never into column 1, where it would be a
   it would otherwise have left alone - never identify it as something else - so on a fragment, a
   half-written file or a file mid-edit the step finds nothing and the code is left alone. Nothing
   else it decides is assumed: the rest is read straight off the source in front of it.
+- **`OMIT` and `COMPILE` blocks are read as the compiler reads them.** The code in an `OMIT` block with no
+  condition is never changed. A `COMPILE` block, or an `OMIT` with a condition, may be left out of a build, so a
+  change outside such a block never relies on a line inside it; a change whose lines, and everything they rely on,
+  are all inside one such block, or in a block inside it, is still made. Moving a per-line change in front of a
+  split also needs the split and its loop in the same block, as its own section says. A variable declared
+  differently in the two arms has no single type, and is left alone
+  wherever its type matters. A variable declared only inside such a block, over one of the same name outside it, is
+  left alone by the built-in clean-ups that move, merge or remove code; the rules, and the built-ins that only ask
+  its type, leave alone a use the block does not hold when a build without the block would see another type there,
+  or no declaration.
+  An `OMIT` or `COMPILE` line whose own comment, after its closing `)`, holds the terminator ends the block on that
+  line: `OMIT('**end**')  ! runs to **end**` omits nothing. The terminator is not looked for inside a `COMPILE` or
+  `OMIT` condition. A terminator on a row of a statement carried on with `|` ends the block on that row, and a line
+  inside an `OMIT` block that ends in `|` does not carry on into the first line after the block. The files the tool
+  reads through `INCLUDE` are read the same way.
 - **The BUILT-IN transforms find their work by METHOD NAME**, not through a typed metavar.
   `CheckReplaces`, `CheckRemoves`, `CheckSplits`, `CheckInLine` and `CheckCat` look for
   `.replace(`, `.remove(`, `.cat(` and so on, and `MergeGuardChain` looks for `.containsByte(` and
@@ -2880,7 +2929,8 @@ about the thing it is comparing".
 any `upper()` compare of two token strings, and any check that reads a declaration's own
 attributes without looking at its neighbours. Ask of each one whether it is deciding a
 *spelling* question or a *storage* question. If it is storage, it wants `NameRoot` on both
-sides - and, if a write is at stake, `HasSiblingOver` as well.
+sides - and, if a write is at stake, `NameShared`, which asks `HasSiblingOver` and every other way a second name
+can arise (a reference, a field of a structure, a parameter passed by address).
 
 ---
 
@@ -3214,17 +3264,20 @@ on an empty line `setValueFromLine()` empties the object with `free()`.
   `st.setValue(st.getValue() & x)` becoming `st.append(x)`, a `setValue()` of part of the text
   becoming `crop()`, `setLength()`, `setBefore()`, `setAfter()` or `setBetween()`, and the ones that
   write `enclose()`, `prepend()`, `upper()` and `lower()` - are also made where the procedure
-  encodes or converts the object. They still need a local object;
+  encodes or converts the object, or gives it another object's value. They still need a local object;
 - the clean-ups that drop a copy or a scratch object - `DropValueCopy`, `TakeOverValue`,
   `SplitInPlace`, `ResplitToLines`, `DeadTrim`, `DeadValueWrite` and `KnownRanges` - no longer leave
-  your code alone just because a copy would not carry the markings.
+  your code alone just because a copy would not carry the markings;
+- `TrailingSpaces` no longer leaves your code alone where the object could hold UTF-16 text.
 
 Use it when your code never calls `base64Encode()`, `base64Decode()`, `gzip()`, `toUnicode()`,
-`toAnsi()` or `setEncodingFromBOM()`, and never reads the `encoding`, `base64`, `gzipped`,
-`base64NoWrap` or `EndOfLastLine` properties. If it does any of those, leave it off: the tool could
+`toAnsi()`, `setEncodingFromBOM()` or `loadFile()`, never reads the `encoding`, `base64`, `gzipped`,
+`base64NoWrap` or `EndOfLastLine` properties, never calls a method whose answer depends on them,
+such as `chars()`, `equals()` or `clip()`, and never reads `lastError`, `winErrorCode` or `eof`
+from a copy of another StringTheory. If it does any of those, leave it off: the tool could
 then write code that encodes a value twice, or reads a marking that is no longer set. Every report
 of a run with the switch says so on its own line. The full warning is on `--ignoremarks` in
-[Appendix B](#appendix-b-every-switch); `ignoremarks=on` in a profile does the same.
+[Choosing what runs](#choosing-what-runs-groups-choices-styles); `ignoremarks=on` in a profile does the same.
 
 **I don't like one particular transformation (or a few of them) but want all the
 others. How do I exclude some - for this run, or permanently?**
@@ -3579,6 +3632,49 @@ it did.
 What each release added or moved, newest first. A default that moved can always be
 switched off on its own, and the switch is named beside it.
 
+## 2.0.1
+
+Minor fixes. Nothing you have to change: the switches, the styles and the rule files work as
+in 2.0.0.
+
+- **Changes that made code that did not compile are fixed:** a method of another object that
+  has the name of a copy or of a variable (`Counter.buf()`) is no longer renamed, nor taken for
+  a read of the variable; and `fold()` in a rule no longer works out a call or a piece of text,
+  which wrote `len(clip('ab '))` as `len(ab)`.
+- **More of your code is left as you wrote it** in a few rare cases where a change could have
+  made it behave differently: a variable that may also be changed under another name, one
+  declared `OVER` another among them, a variable of a `GROUP` type, and a local handed by
+  address to a procedure that may keep a reference to it; a StringTheory copy whose `lastError`
+  or `winErrorCode`
+  is read later, or that a loop reads in one branch while its source changes in another; an
+  object handed to a procedure of yours that may set its base64 flag or encoding, or make it
+  UTF-16; and a `clip()` around a number wherever its type changes the answer - a truth value,
+  any compare, a `CASE` value, an `ANY` or `?` target, or a call whose prototype the tool
+  cannot see.
+- **`COMPILE` and conditional `OMIT` blocks:** a build may leave one out, so a change outside
+  such a block no longer relies on a line inside it. A change wholly inside one block, or in a
+  block inside it, is still made.
+- **An `OMIT` or `COMPILE` block ends where the compiler ends it:** on the directive line
+  itself when its own comment holds the terminator, also in an `INCLUDE`d file, and on a row
+  of a statement carried on with `|`. The terminator is not looked for in the condition.
+- **Adding `,AUTO`** no longer takes a `RETURN` that closes an inner `IF` or `LOOP` for the
+  end of the outer branch, nor a field of a `GROUP`, a variable of a `GROUP` type or declared
+  `LIKE` one, or a reference as the test that proves a variable was set; and a `+=` first write
+  does not make a local `AUTO` when its declaration carries an attribute on a second row.
+- **The code an `IF` marked `! #Possible bug` always ran** is left exactly as written, so the
+  `IF` can be put back.
+- **A value that only carries to the next line** is now also moved into a call such as
+  `message()` or `putini()`, which takes it by value, in a `PROGRAM` file.
+- **Rule files:** a new guard, `isWhole()`, which the rules that split a length or a position
+  into two parts now use; `fold()` and `isConst()` work out numbers only, never a call or a
+  piece of text;
+  `?Skip` at the end of a replacement is a name, not the `SKIP` option.
+- **VitStyle:** Apply on the style already in force puts its alignment settings back, Save...
+  no longer refuses a profiles file another VitStyle window created, a changed line is
+  listed and counted once, a refused change is not listed, and every built-in's changes are.
+
+2.0.1 has 522 rules and 60 built-in transforms, arranged in 67 groups.
+
 ## 2.0.0
 
 ### You can choose where AND and OR sit on a long line
@@ -3619,6 +3715,8 @@ Leave them all out and the tool uses its own settings, which suit most code.
 - `--colseq=custom` - for a program that sets its own text order.
 - `--dispatch=grouped` - a faster way to run the rules, with the same result.
 - `--define=` - project flags for reading `OMIT` and `COMPILE` in the included files.
+- `--ignoremarks` - lets more clean-ups run, for code that does not rely on a StringTheory's
+  encoding markings. Read its warning first.
 
 Each is explained in [Appendix B](#appendix-b-every-switch).
 

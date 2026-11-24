@@ -1,4 +1,4 @@
-! Vitesse Tokenize Class 29Sep2019
+! Vitesse Tokenize Class
 !
 ! (c) 2019-2026 Geoffrey C. Robinson.
 ! Released under the MIT License - see LICENSE.
@@ -162,15 +162,15 @@ st          StringTheory
 ! THE TOKENIZER. Clarion source in, self.tokens out - see the token stream description at
 ! the top of this file for what a row is and why the trivia lives where it does. JoinToks
 ! is the exact inverse, and the pair round trips byte-for-byte on an untouched file, which
-! is the property every gate in this project ultimately rests on.
+! is the property every lossless rewrite ultimately rests on.
 !
 ! It does three things at once, which is why it is long: it cuts the text into tokens, it
 ! classifies each one (type, and later varType), and it marks block structure in level -
 ! '+' opens, '-' closes, '/' is else/elsif.
 !
-! THE LEVEL MARKS ARE THE SUBTLE PART, and most tokenizer bugs this project has had were
-! really level bugs: something that looked like a structure keyword opened a block nothing
-! closed, and the damage surfaced hundreds of lines away. Two rules earn their complexity:
+! THE LEVEL MARKS ARE THE SUBTLE PART, and a tokenizer mistake is most often a level
+! mistake: something that looks like a structure keyword opens a block nothing closes,
+! and the damage surfaces hundreds of lines away. Two rules earn their complexity:
 !  - The CODE structures - IF CASE LOOP EXECUTE BEGIN ACCEPT - open unconditionally,
 !    because each is followed by an expression and none is ever a variable name.
 !  - The DATA and CONTROL structures open only in DECLARATION POSITION, decided by the
@@ -186,7 +186,6 @@ pos            Long,auto
 svPos          Long,auto
 omitDir        Long              ! is this OMIT the DIRECTIVE, or a method that spells it?
 mergeGap       Long              ! the gap before a member dot is blanks only - the name merges across it
-omitEol        Long,auto         ! end of the OMIT directive's own line - the terminator search starts AFTER it
 x              Long,auto
 z              Long,auto
 depth          Long,auto
@@ -218,6 +217,7 @@ stmtLbl     long                 !   ... and the statement's first token stands 
 prevStrCall long                 !   ... and that keyword stands first in a statement of a CODE body, where a CALL goes
 inCode      long                 ! inside a CODE body: from CODE, or a ROUTINE header, to the next PROCEDURE header or DATA
 mapDep      long                 ! inside a MAP: 1 for the MAP itself, one more for each MODULE open inside it
+mpAlone     long,auto            ! the word MAP stands alone in its statement: a line end, a ';' or a '.' follows it, or nothing
 decln       string(vt:maxVarLen) ! declaration
 tok         StringTheory
 strBefore   StringTheory
@@ -285,17 +285,10 @@ inQuotes    Long,auto
 
     of 3                                                                               ! omit looking for ')'
       if tok._DataEnd = 1 and tok.valuePtr[1] = ')'
-        ! the terminator search starts on the NEXT line, never on the rest of the OMIT
-        ! line itself. Starting it here found a terminator sitting in a trailing COMMENT on
-        ! the directive line - `OMIT('**end**')  ! runs to **end**` - and closed the block
-        ! before it had begun, leaving everything that should have been omitted live. The
-        ! compiler ends the block at a SUBSEQUENT line holding the terminator.
-        omitEol = st.findByte(10, pos)                                                 ! end of the OMIT directive's own line <line feed>
-        if omitEol
-          pos = st.findChars(tempST.valuePtr[1 : tempST._dataEnd],omitEol + 1)
-        else
-          pos = 0                                                                      ! OMIT on the last line: nothing can terminate it
-        end
+        ! the terminator search starts on the rest of the OMIT line itself, after its ')':
+        ! measured, the compiler ends the block there when that line's comment holds the
+        ! terminator - `OMIT('**end**')  ! runs to **end**` omits nothing below it.
+        pos = st.findChars(tempST.valuePtr[1 : tempST._dataEnd], pos)
         if pos
           ! search to end of line
           pos = st.findByte(10, pos)                                                   ! <line feed>
@@ -401,8 +394,8 @@ inQuotes    Long,auto
     if errorcode() then break.
     ! EVERY QUEUE HAS ITS OWN RECORD BUFFER: get() filled self.tokens' buffer, but add(newQ)
     ! appends newQ's buffer - copy field-by-field first (same TYPE; references copy as pointers).
-    ! Without this the rebuild appended newQ's STALE buffer: garbage records, duplicated &STRING
-    ! pointers, and a double-dispose GPF in FreeToks (the round-1 crash).
+    ! Without this the rebuild would append newQ's STALE buffer: garbage records, duplicated
+    ! &STRING pointers, and a double-dispose GPF in FreeToks.
     newQ.lineNo      = self.tokens.lineNo
     newQ.firstOnLine = self.tokens.firstOnLine
     newQ.strBefore  &= self.tokens.strBefore
@@ -519,15 +512,15 @@ inQuotes    Long,auto
       end
     of 1                                                                               ! have label looking for dot
       ! A SPACE BEFORE THE MEMBER DOT IS LEGAL CLARION AND THE NAME MERGES ACROSS IT.
-      ! `x.y .getvalue()` is one member reference written with a gap. Requiring NO leading
-      ! trivia on the dot meant the merge gave up and handed the reference back as THREE
-      ! tokens, and every consumer that reads a member as one token was then looking at
-      ! something it did not recognise. Nine of them answer "cannot prove" and leave the code
-      ! alone, which is safe by accident rather than by design; the tenth silently deleted
-      ! a load-bearing guard. Merging here fixes the whole class at the source instead
+      ! `x.y .getvalue()` is one member reference written with a gap. Were the merge to
+      ! require NO leading trivia on the dot, it would hand the reference back as THREE
+      ! tokens, and every consumer that reads a member as one token would be looking at
+      ! something it does not recognise. Most answer "cannot prove" and leave the code
+      ! alone, which is safe by accident rather than by design; one can silently delete
+      ! a load-bearing guard. Merging here settles the whole class at the source instead
       ! of one consumer at a time.
       ! THE GAP IS DROPPED. The merge builds its text from the two label
-      ! texts and a literal '.', so the dot's trivia was never carried anyway - it is disposed
+      ! texts and a literal '.', so the dot's trivia is not carried anyway - it is disposed
       ! with the token. `x.y .getvalue()` therefore comes out as `x.y.getvalue()`. That is a
       ! change to the user's layout, and it is bounded: nothing is written unless the file
       ! changed for some other reason, so this only ever appears in a file being rewritten
@@ -546,7 +539,7 @@ inQuotes    Long,auto
       ! *** THE THIRD ARGUMENT IS pClip, NOT A CASE FLAG. *** false measures the alphabet with
       ! size() rather than clipLen(), which trims trailing SPACES. It changes nothing for
       ! '<32,9>', whose last byte is a tab - but write the alphabet '<9,32>' and the default would
-      ! clip the space straight out of it, and no plain-space gap would ever merge again.
+      ! clip the space straight out of it, and no plain-space gap would ever merge.
       if self.tokens.tok = '.'
         mergeGap = choose(self.tokens.strBefore &= NULL or                             |
                           ~self.tokens.strBefore        or                             |
@@ -565,9 +558,9 @@ inQuotes    Long,auto
     of 2                                                                               ! have label. looking for another label
       ! NO GAP AFTER THE DOT - asked of the trivia itself, not of BufColOne. BufColOne answers 0
       ! for every token of a FRAGMENT (midLine), so a replacement spliced into the middle of a line
-      ! kept `self.sepTxt` as three tokens until the next RUN parsed the file again, and a builtin
-      ! that reads a member as one token refused it on every pass that was left. midLine is about
-      ! the fragment's FIRST word, and this is never the first word. A file parse answers the same.
+      ! would keep `self.sepTxt` as three tokens until the next RUN parsed the file again, and
+      ! a builtin that reads a member as one token would refuse it on every pass left. midLine is
+      ! about the fragment's FIRST word, and this is never the first word. A file parse agrees.
       ! NO GAP MEANS NONE AT ALL. After a line break the name is on another line: a '|' and a comment,
       ! or a folded OMIT block, sit in that gap, and merging across it would throw them away with the
       ! token - `n = G.|  ! the count` over `qty` would come out as one line with the comment gone.
@@ -578,8 +571,8 @@ inQuotes    Long,auto
         state = 0
       end
     of 3                                                                               ! have label.label
-      !if pMergeLabels !or self.tokens.tok <> '('  !!NB. GCR 13Oct2021 removed 'or condition' as joined ST._dataEnd into one token (not sure if this will muck up something else??)
-      if pMergeLabels or self.tokens.tok <> '('                                        !!NB. GCR 13Oct2021 REINSTATED 'or condition' as mucked up variable checking in NetMaps.clw
+      ! the 'or' test merges a dotted name that is not a call (ST._dataEnd) even without pMergeLabels:
+      if pMergeLabels or self.tokens.tok <> '('                                        ! the variable checks read such a name as ONE token
         ! combine labels
         self.SetTok(x-3,self.getTok(x-3) & '.' & self.getTok(x-1))                     ! combine three tokens into one
         if self.tokens.type <> vt:label
@@ -636,7 +629,7 @@ inQuotes    Long,auto
     ! EOL token, so a CONTINUED statement holds none and is not falsely split.
     ! The reset matters at all because a single stray '(' would otherwise leave depth stuck
     ! above zero and silently suppress EVERY structure open for the rest of the file - a far
-    ! worse failure than the one being fixed. Bounding it to one statement is the point.
+    ! worse failure than the one it guards against. Bounding it to one statement is the point.
     if size(self.Tokens.tok) = 1 and (self.Tokens.tok[1] = '<10>' or self.Tokens.tok[1] = ';')
       parenDep = 0                                                                     ! EOL or ';' - parens cannot span a statement
     elsif self.Tokens.tok = '('
@@ -645,9 +638,9 @@ inQuotes    Long,auto
       if parenDep then parenDep -= 1.
     elsif parenDep > 0 and self.Tokens.Level = '+'
       self.Tokens.Level = ' '                                                          ! a type or an attribute - it opens nothing.
-      put(self.tokens)                                                                 ! RETAINED, but NOT for the declaration
+      put(self.tokens)                                                                 ! a guard, but NOT for the declaration
     end                                                                                !   structures - the guard at the promotion below excludes parenDep already. What is left for this to catch is the SIX unconditional
-                                                                                       !   openers (IF/CASE/LOOP/EXECUTE/BEGIN/ ACCEPT) and anything added to that CASE later, so it stays as a backstop.
+                                                                                       !   openers (IF/CASE/LOOP/EXECUTE/BEGIN/ ACCEPT) and anything else put on that CASE.
 
     ! WHICH TOKEN OF ITS STATEMENT THIS IS, for the declaration-position test further down. A
     ! statement starts after an EOL or a ';', the same boundary parenDep resets at.
@@ -666,6 +659,10 @@ inQuotes    Long,auto
     ! a routine's DATA or a SECTION; and a declaration that does open inside one ends it, which is
     ! what a template export gives when a window section follows an embed of code. A MAP ends at
     ! its own END; each MODULE inside it opens one more level, closed by its own.
+    ! MAP takes no attributes, so the structure is the word alone in its statement, ended by the
+    ! line, a ';' or its own '.'. A word with anything else after it is a name: a replacement such
+    ! as `Map += 1` is parsed on its own, with no CODE in front of it, and the word stands first
+    ! and indented there as the structure does.
     if self.Tokens.Type = vt:reservedWord
       case upper(self.Tokens.tok)
       of 'CODE'
@@ -678,7 +675,15 @@ inQuotes    Long,auto
         inCode = 0
       end
     elsif self.Tokens.Type = vt:Map and self.Tokens.Level = '+'
-      if stmtTok = 1 and ~stmtLbl and ~inCode
+      mpAlone = 1
+      if x < records(self.tokens)
+        get(self.tokens, x + 1)
+        if ~errorcode() and not self.tokens.tok &= NULL
+          if size(self.tokens.tok) > 1 or ~inlist(self.tokens.tok, '<10>', ';', '.') then mpAlone = 0.
+        end
+        get(self.tokens, x)
+      end
+      if stmtTok = 1 and ~stmtLbl and ~inCode and mpAlone
         mapDep = 1
       else                                                                             ! a NAME spelled Map - a column-1 label, a use in code, a word later in
         self.Tokens.Level = ' '                                                        !   a statement: the LRM lets MAP be a label, and only the structure
@@ -696,7 +701,7 @@ inQuotes    Long,auto
     ! The two forms differ by ONE token: in the pre-test the word FOLLOWS LOOP directly; in
     ! the post-test it starts its own statement, so the token before it is an EOL. That is
     ! the same lookback as the ',' and '&' tests above, which is why this is here and not in
-    ! a round of its own.
+    ! a pass of its own.
     ! LEVEL ONLY, deliberately not type vt:end: a good deal of code tests for an END token
     ! by TYPE, and an UNTIL is not an END - it just closes the same structure.
     ! THE RULE ITSELF IS CORRECT AND MUST STAY. Clarion has two LOOP forms:
@@ -708,9 +713,9 @@ inQuotes    Long,auto
     ! `q.until('x')`, where a '-' would close a structure that was never opened and steal a
     ! real END. The legitimate post-test form is untouched, because the token before UNTIL
     ! there is the EOL, and prevCh holds the EOL's own character (a single LF), not '.'.
-    ! No StringTheory method is called `until` or `while` today, so unlike join and break
-    ! this one is prevention rather than an observed failure - said plainly so nobody later
-    ! reads it as evidenced.
+    ! No StringTheory method is called `until` or `while`, so unlike join and break this
+    ! one is prevention: it guards a class that has such a method, not a StringTheory
+    ! call known to go wrong.
     if ~prevLoop and self.Tokens.Type = vt:reservedWord and prevCh <> '.'
       case upper(self.Tokens.tok)
       of 'UNTIL' orof 'WHILE'
@@ -727,9 +732,9 @@ inQuotes    Long,auto
     ! is blank, which keeps every `if ~p then break.` correct) and is promoted HERE, on the
     ! NEXT token, once a '(' proves what it is. Looking forward from BREAK would need a peek;
     ! looking back from '(' needs only what we already have.
-    ! Both forms are in booki274.clw (a real-world corpus file, NOT SHIPPED): the structure at 76 with its END at
-    ! 102, bare statements at 253, 256, 347, 349, 354, 360, 369 and inline ones at 274, 309.
-    ! Leaving it out is NOT a harmless under-reach: with BREAK not opening, the END at 102
+    ! A REPORT often holds both forms: a BREAK structure with its END, and bare BREAK
+    ! statements (and inline ones) in the code that prints it.
+    ! Leaving it out is NOT a harmless under-reach: with BREAK not opening, the BREAK's END
     ! closes the REPORT instead, and the FOOTER, FORM and final END after it all mis-nest.
     if prevBrkIx and size(self.Tokens.tok) = 1 and self.Tokens.tok = '('
       get(self.tokens, prevBrkIx)
@@ -737,9 +742,9 @@ inQuotes    Long,auto
       put(self.tokens)
       get(self.tokens, x)                                                              ! restore the buffer the loop is working on
     end
-    ! BREAK carried NO declaration-position guard, so
-    ! `st.break('x')` promoted exactly like `st.join(` did - it is in the census above as
-    ! `+r 1188-break`. Same four conditions as the guard below.
+    ! BREAK takes the declaration-position guard too, or
+    ! `st.break('x')` would promote exactly as `st.join(` would without it.
+    ! Same four conditions as the guard below.
     if upper(self.Tokens.tok) = 'BREAK' and ~parenDep and prevCh <> '&' and prevCh <> ',' and prevCh <> '.'
       prevBrkIx = x
     else
@@ -791,21 +796,21 @@ inQuotes    Long,auto
     ! AN OPERATOR IN FRONT OF THE WORD MEANS IT IS BEING READ, NOT DECLARED. A declaration
     ! puts a structure keyword at the start of its line or straight after a label, never after
     ! an operator or an '='. Several of these words are ordinary variable names as well -
-    ! `Tab`, `Option`, `Menu`, `Report`, `Window` - so `x = Tab` at the end of a line offered
-    ! the same shape a declaration does (keyword, then end of line) and opened a level nothing
-    ! ever closed. Everything below it then sat one level too deep, which makes the balance
-    ! guards refuse and leaves the type registry short of scopes: silent missed transforms,
-    ! the same symptom the method-call exclusion below was added for. Testing the whole
-    ! operator table also covers the '&' of `grp &GROUP`.
+    ! `Tab`, `Option`, `Menu`, `Report`, `Window` - so `x = Tab` at the end of a line offers
+    ! the same shape a declaration does (keyword, then end of line) and would open a level
+    ! nothing ever closes. Everything below it would sit one level too deep, which makes the
+    ! balance guards refuse and leaves the type registry short of scopes: silent missed
+    ! transforms, the same symptom the method-call exclusion below guards against. Testing
+    ! the whole operator table also covers the '&' of `grp &GROUP`.
     if self.Tokens.Type = vt:reservedWord and ~parenDep                                |
        and prevCh <> ',' and prevCh <> '.' and prevCh <> '='                           |
        and ~self.operator[val(prevCh)+1]
       case upper(self.Tokens.tok)
-      of   'INTERFACE' orof 'VIEW'        orof 'JOIN'    orof 'REPORT'                 ! the eight added later
+      of   'INTERFACE' orof 'VIEW'        orof 'JOIN'    orof 'REPORT'                 ! declaration words
       orof 'HEADER'    orof 'FOOTER'      orof 'DETAIL'  orof 'FORM'
       orof 'OLE'                                                                       ! see the census note below
-      orof 'WINDOW'    orof 'APPLICATION' orof 'QUEUE'   orof 'GROUP'                  ! and the PRE-EXISTING
-      orof 'FILE'      orof 'RECORD'      orof 'CLASS'   orof 'ITEMIZE'                !   declaration structures, which
+      orof 'WINDOW'    orof 'APPLICATION' orof 'QUEUE'   orof 'GROUP'                  ! and the window, data
+      orof 'FILE'      orof 'RECORD'      orof 'CLASS'   orof 'ITEMIZE'                !   and control structures, which
       orof 'MENUBAR'   orof 'MENU'        orof 'TOOLBAR' orof 'SHEET'   orof 'TAB'     !   have the identical exposure
       orof 'OPTION'    orof 'MODULE'
         if stmtTok = 1 or stmtTok = 2 and stmtLbl then prevStrIx = x.
@@ -825,10 +830,10 @@ inQuotes    Long,auto
     ! reservedWords and this list must stay in step with the full set of END-taking Clarion
     ! structures - a word missing from either is this same bug waiting to happen.
     ! `Window` is the Clarion template's default LABEL for a window, so
-    ! `Window{PROP:Text} = 'x'` carries exactly the same hazard as `Report` - and WINDOW is one
-    ! of the ORIGINAL keywords, not one of the later additions. The origin of a keyword says
-    ! nothing about the risk; treating the two sets differently would fix the rarer case and
-    ! leave the commoner one.
+    ! `Window{PROP:Text} = 'x'` carries exactly the same hazard as `Report`, so WINDOW takes
+    ! the same test as the report words, and so does every other declaration structure.
+    ! Treating the two sets differently would guard the rarer case and leave the commoner
+    ! one.
     !
     ! THE CODE STRUCTURES ARE EXCLUDED ON PURPOSE, and this is what makes the rule safe:
     !     IF ~p          CASE EVENT()        LOOP i = 1 TO 3        EXECUTE n
@@ -1023,12 +1028,12 @@ inQuotes    Long,auto
 ! The machine above fires on any four-character token reading OMIT and then wants '(' , a
 ! literal, ')'. A METHOD CALL is exactly that shape - `x.Omit('**zz**')` - and the tokenizer
 ! leaves a method's dot as its own token, because the label merge is suppressed before a '('.
-! So the call entered the machine, and it COMMITTED whenever that literal's text appeared again
-! anywhere later in the file: everything between was swallowed into leading trivia as omitted
-! code. Not a missed conversion - the statements in the gap never became tokens at all, so every
-! pass after it reasoned about a file with a hole in it, and nothing said a word.
-! MEASURED, both ways, on the same file with only the method's NAME changed: `x.Omit(...)` gave
-! 0 changes with the following statement gone; `x.Skip(...)` gave 1 with it intact.
+! Untested, the call would enter the machine and COMMIT whenever that literal's text appears
+! again anywhere later in the file: everything between would be swallowed into leading trivia
+! as omitted code. Not a missed conversion - the statements in the gap would never become tokens
+! at all, so every pass after it would reason about a file with a hole in it, and nothing would
+! say a word. The same file with only the method's NAME changed - `x.Skip(...)` - would keep
+! the following statement; `x.Omit(...)` would lose it.
 ! A directive is never a member, so the test is the token before it. The MERGED spelling needs
 ! no test - `x.Omit` is one token and does not read as OMIT at all - and ':' cannot appear here,
 ! because the colon spelling substitutes for a member dot on every structure EXCEPT a CLASS, and
@@ -1048,7 +1053,7 @@ odN long,auto
 
 ! ---- the literal just added is the terminator of an OMIT or COMPILE directive when the two
 !      tokens in front of it are the directive word and its '('. The pre-processor ends the block
-!      at a later line that CONTAINS the terminator, byte for byte - so one that ends in a blank
+!      at the first line that CONTAINS the terminator, byte for byte - so one that ends in a blank
 !      or a tab is remembered, and ClipLines leaves the tail of a line holding it alone, or the
 !      block would run on past its end in the clipped file. The simple OMIT is swallowed by the
 !      state machine below and remembers its own terminator there; this is for a COMPILE, and for
@@ -1056,13 +1061,22 @@ odN long,auto
 !      words can only add a string nothing will match: a line kept wide, never a wrong clip.
 !      A directive that starts its statement - after a line break or a ';', where the pre-processor
 !      takes one - also puts its terminator on termStk, so that TermFold can find the line that
-!      ends the block. A method call never starts its statement with the word, so it puts nothing
-!      there. ----
+!      ends the block. The rest of the directive's own line after its closing ')' is searched
+!      first: measured, a terminator in its comment ends the block on that line, so nothing is
+!      put on termStk. The condition is not searched: measured, COMPILE('End', EndIt = 1) keeps
+!      its block open. When the ')' is not on this line - a '|' or a '!' comes first - nothing
+!      on it is searched, and the rows after it are searched as continuation rows (TermCont).
+!      A method call never starts its statement with the word, so it puts nothing there. ----
 PpTermNote routine
   data
 ptN   long,auto
 ptDir long
 ptBeg long
+ptEol long,auto
+ptAt  long
+ptZ   long,auto
+ptDep long,auto
+ptQ   byte
 ptLit StringTheory
   code
   ptN = records(self.tokens)
@@ -1092,23 +1106,48 @@ ptLit StringTheory
   ptLit.unquote('''')
   if ~ptLit._DataEnd then exit.
   if ptLit.valuePtr[ptLit._DataEnd] = ' ' or ptLit.valuePtr[ptLit._DataEnd] = '<9>' then self.ppTerms.addLine(ptLit.getValue()).
+  if ptBeg
+    ptEol = st.findByte(10, pos)
+    if ~ptEol then ptEol = st._DataEnd + 1.
+    ptDep = 1
+    loop ptZ = pos to ptEol - 1
+      case val(st.valuePtr[ptZ])
+      of 39
+        ptQ = 1 - ptQ
+      of 40
+        if ~ptQ then ptDep += 1.
+      of 41
+        if ~ptQ then ptDep -= 1.
+        if ~ptDep then ptAt = ptZ + 1 ; break.
+      of 33 orof 124
+        if ~ptQ then break.
+      end
+    end
+    if ptAt and ptAt < ptEol
+      ptAt = st.findChars(ptLit.getValue(), ptAt)
+      if ptAt and ptAt < ptEol then ptBeg = 0.
+    end
+  end
   if ptBeg then termStk.addLine(ptLit.getValue()).
 
-! ---- THE LINE THAT ENDS A COMPILE BLOCK, OR AN OMIT WITH A CONDITION, IS NOT CODE. The
-!      pre-processor ends such a block at the first later line that holds its terminator, and
-!      that whole line belongs to the directive: it is never compiled, whether the block is or
-!      not. Read as code, a terminator spelled with a word - `**END**`, `END***`, `End of include`
-!      - would give the word a level, so the line would close the structure the block sits in
-!      and every scope below it would sit one level too shallow; inside a CLASS, the methods
-!      after it would be read as procedures of their own.
-!      So at the start of each line, while such a block is open, the line is searched for the
-!      terminator of the innermost one, byte for byte, as the pre-processor searches it. Found in
-!      front of any comment, the whole line goes into the trivia ahead of the next line, as a
-!      plain OMIT block does, and its words open and close nothing; the output is unchanged.
-!      Found only in a comment, the block ends with that line, and code in front of the comment
-!      is read as code: measured, it is in the build exactly when its block is. A line that holds the terminator of an OUTER open block ends that
-!      block and every one inside it, and stays code: an inner directive the compiler never read,
-!      because it stood in a block that was skipped, cannot close anything.
+! ---- THE LINE THAT ENDS A COMPILE BLOCK, OR AN OMIT WITH A CONDITION. The pre-processor ends
+!      such a block at the first line that holds its terminator, byte for byte. Measured, the
+!      search starts on the directive's own line: a terminator in that line's comment ends the
+!      block there, and the lines below it are code. A line that holds the terminator in front
+!      of any comment belongs to the directive and is not code. Read as code, a terminator
+!      spelled with a word - `**END**`, `END***`, `End of include` - would give the word a level,
+!      so the line would close the structure the block sits in and every scope below it would
+!      sit one level too shallow; inside a CLASS, the methods after it would be read as
+!      procedures of their own.
+!      PpTermNote has searched the directive's own line. So at the start of each line after it,
+!      while such a block is open, the line is searched for the terminator of the innermost one,
+!      byte for byte, as the pre-processor searches it. Found in front of any comment, the whole
+!      line goes into the trivia ahead of the next line, as a plain OMIT block does, and its
+!      words open and close nothing; the output is unchanged. Found only in a comment, the block
+!      ends with that line, and code in front of the comment is read as code: measured, it is in
+!      the build exactly when its block is. A line that holds the terminator of an OUTER open
+!      block ends that block and every one inside it, and stays code: an inner directive the
+!      compiler never read, because it stood in a block that was skipped, cannot close anything.
 !      On entry pos is the first byte of a line; each folded line moves it to the next one. ----
 TermFold routine
   data
@@ -1158,6 +1197,34 @@ tfLn   StringTheory
     state = 4
   end
 
+! ---- A CONTINUATION ROW IS A LINE OF ITS OWN to the pre-processor, which ends an open block at
+!      the first line that holds its terminator, byte for byte. GetNextToken reads the row after
+!      a '|' as part of the statement it continues and adds no line end in front of it, so
+!      TermFold never sees it; GetNextToken does this at the start of each such row instead. A
+!      row that holds the terminator of an open block ends that block and every one inside it.
+!      Its text stays code, wherever on it the terminator is: the statement it continues goes on
+!      on it, and folding the row away would cut that statement in two. On entry pos is the line
+!      feed in front of the row ----
+TermCont routine
+  data
+tcEol  long,auto
+tcZ    long,auto
+tcK    long
+tcLn   StringTheory
+  code
+  if pos >= st._DataEnd then exit.
+  tcEol = st.findByte(10, pos + 1)
+  if ~tcEol then tcEol = st._DataEnd + 1.
+  if tcEol = pos + 1 then exit.
+  tcLn.setValue(st.slice(pos + 1, tcEol - 1))
+  loop tcZ = termStk.records() to 1 by -1
+    if tcLn.findChars(termStk.getLine(tcZ)) then tcK = tcZ ; break.
+  end
+  if ~tcK then exit.
+  loop while termStk.records() >= tcK
+    termStk.deleteLine(termStk.records())
+  end
+
 AddToken routine
   if Tok._DataEnd
     self.tokens.tok &= new string(tok._DataEnd)
@@ -1201,6 +1268,7 @@ GetNextToken routine
         inContinuation = false
         inPicture      = 0                                             ! the other place a newline is consumed - a picture dies at one either way
         picEsc         = 0
+        if termStk.records() then do TermCont.
       else
         strBefore.append(st.valueptr[pos])
       end
@@ -1251,7 +1319,7 @@ GetNextToken routine
       if ~tok._DataEnd
         if self.stopIt
           self.TraceIt('error in vitTokenize.parseText - unexpected white space at position' & pos & |             ! The 'cycle'
-             choose(~omitted(pFilename),' in ' & clip(pFilename),'')                               & |             ! already recovers by skipping the char, so this was
+             choose(~omitted(pFilename),' in ' & clip(pFilename),'')                               & |             ! below recovers by skipping the char, so this is
              '<13,10,13,10>character is [' & st.valuePtr[pos] &'] in:<13,10,13,10>' & self.GetCurrentLine(st,pos)) ! only a debug assertion.
         end
         cycle                                                          ! skip initial whitespace - should NOT happen as skipped ws at top
@@ -1264,7 +1332,7 @@ GetNextToken routine
         pos += 1
         ! `=<` and `=>` are DOCUMENTED spellings of `<=` and `>=` (LRM p528's combined
         ! operator table lists both pairs). '=' is a delimiter, not an operator, so it never
-        ! reached the two-character merge below and those two came out as two tokens.
+        ! reaches the two-character merge below, and without this those two are two tokens.
         if st.valuePtr[pos-1] = '=' and pos <= st._DataEnd
           case val(st.valuePtr[pos])
           of 60 orof 62                                                ! '<<' orof '>'
@@ -1339,8 +1407,8 @@ VitTokenize.FindFirstTokOnLine Procedure(LONG pLineNumber) !,LONG,virtual ! retu
   end
 
 ! ------------------------------------------------------------------------------------
-! following written late on 13Sep2023 but not used or tested - left as may be of future use
-!VitTokenize.FindLastTokOnLine Procedure(LONG pLineNumber) !,LONG,virtual ! returns tokNumber GCR 13Sep2023
+! the following is not used or tested - kept as it may be of use
+!VitTokenize.FindLastTokOnLine Procedure(LONG pLineNumber) !,LONG,virtual ! returns tokNumber
 !  code
 !  self.Tokens.lineNo = pLineNumber + 1
 !  get(self.tokens,self.Tokens.lineNo)
@@ -1374,8 +1442,8 @@ slnT0  long,auto                     ! --timing
   ! set line numbers in the queue - we check for <10> token and also in strBefore
   loop x = 1 to records(self.tokens)
     get(self.tokens,x)
-    if errorcode() then break.                                !or self.Tokens.tok &= NULL then break.  ! no more tokens !!! GCR 23Sep2023 remove check for null
-                                                              !   tok as can have null tok on last line (had a file with just a few spaces on last line)
+    if errorcode() then break.                                ! no more tokens. NOT `or self.Tokens.tok &= NULL then break`: the last line
+                                                              !   can hold a token with a NULL tok (a last line of only spaces), and it still counts
     if not self.Tokens.strBefore &= NULL
       loop slnX = 1 to size(self.Tokens.strBefore)            ! count LF bytes directly - an ST setValue+count here allocates per token on a hot post-edit pass
         if self.Tokens.strBefore[slnX] = '<10>' then ln += 1.
@@ -1398,9 +1466,9 @@ slnT0  long,auto                     ! --timing
   self.nLineNums += 1 ; self.tLineNums += slnX
 
 ! ------------------------------------------------------------------------------------
-! (S4 preview LINE MAP). lineMap holds, for every line of the text as of the
+! (the preview LINE MAP). lineMap holds, for every line of the text as of the
 ! LAST lineNo stamp, the ORIGINAL source line it descends from. MapInit sizes it as
-! identity from the current stream; MapFold composes it across an edit round: after
+! identity from the current stream; MapFold composes it across an edit pass: after
 ! rewrites the stream carries a NEW line structure (LF tokens + LF bytes inside
 ! strBefore - the SAME two carriers SetLineNumbers counts) while every surviving token
 ! still holds its OLD lineNo, so one walk yields (newLine, oldLine) pairs and
@@ -1466,9 +1534,9 @@ brk     long,auto ! lookahead hit the next line's strBefore LF
     if ln > mapped                                                              ! first token to land on new line ln
       oldLn = self.Tokens.lineNo
       if oldLn < lastOld                                                        ! zero/stale line HEAD. InsertString clears lineNo, so a rule
-        oldLn = 0                                                               ! whose match STARTS the line (rule 543 `if s = '' ==> if ~s`) left
-        lk = x                                                                  ! head tokens with lineNo 0 at fold time and the line mapped to its
-        loop                                                                    ! PREDECESSOR (the demo lhs6/lhs7 -> rhs5 field bug). The unreplaced
+        oldLn = 0                                                               ! whose match STARTS the line (`if s = '' ==> if ~s`) leaves
+        lk = x                                                                  ! head tokens with lineNo 0 at fold time, which map the line to its
+        loop                                                                    ! PREDECESSOR (the preview shows the wrong line). The unreplaced
           get(self.tokens, lk)                                                  ! tail / EOL token still carries the TRUE old line - find a SURVIVOR
           if errorcode() then break.                                            ! on the SAME new line before falling back to the carry.
           if lk > x and not self.Tokens.strBefore &= NULL
@@ -1704,10 +1772,10 @@ expDigit    long                   !        ...and at least one digit followed i
   ! Every token shares one queue record buffer, and the single-char arms RETURN early - so a
   ! '+ - * / %% ^ .' token would otherwise INHERIT the previous token's level mark - the '-'
   ! of `return -1` picking up level 'x' from the RETURN, for instance.
-  ! Today's visible cost is only a miscount, but the dangerous case is a '+' leak - `IF -x`,
+  ! A '-' leak only miscounts, but the dangerous case is a '+' leak - `IF -x`,
   ! `LOOP -n TIMES` and `CASE -x` all put a sign straight after a keyword marked '+', which
   ! would give an unmatched OPEN and put every scope below it one level too deep. That is the
-  ! same failure the OLE fix cured, arriving by a different road.
+  ! same failure a missing OLE entry gives (see ParseText), arriving by a different road.
   self.tokens.level = ' '
   if size(self.Tokens.tok) = 1
     case val(self.Tokens.tok)
@@ -1724,13 +1792,13 @@ expDigit    long                   !        ...and at least one digit followed i
       return
     end
 
-!--- GCR 27Aug2021 the following code for literal was commented out but don't know why?  reinstating it.
+!--- a quoted literal: it opens and closes with a quote
   elsif size(self.Tokens.tok) > 1 and self.Tokens.tok[1] = '''' and self.Tokens.tok[size(self.Tokens.tok)] = ''''
-    self.Tokens.type = vt:Literal                     ! note: GCR 27Aug2021 was L but changed to ' to not confuse with Long
+    self.Tokens.type = vt:Literal                     ! note: vt:Literal is ' rather than L, which reads like Long
     return
   end
 
-  self.tokens.type = ' '                              ! default    moved down to here GCR 31Oct2019 to leave type for '.' "as is" so do not lose vt:end values
+  self.tokens.type = ' '                              ! default    set here, after the '.' arm, which leaves its type "as is" so a vt:end value is not lost
   self.tokens.level = ' '                             ! (already cleared above; harmless, and keeps this block readable on its own)
   if self.TokenIsReservedWord()
     self.Tokens.type = vt:reservedWord
@@ -1738,11 +1806,11 @@ expDigit    long                   !        ...and at least one digit followed i
     ! ONLY THE CODE STRUCTURES OPEN UNCONDITIONALLY. Each is followed by an
     ! EXPRESSION - `IF ~p`, `CASE EVENT()`, `LOOP i = 1 TO 3`, `EXECUTE n` - so there is no
     ! declaration shape to test for, and none of these words is ever a variable name.
-    ! The DATA and CONTROL structures moved OUT of here, to the declaration-position test in
-    ! ParseText's walk: WINDOW QUEUE GROUP FILE RECORD CLASS MODULE ITEMIZE MENUBAR MENU
-    ! TOOLBAR SHEET TAB OPTION APPLICATION, plus the eight added later. They open only when
-    ! the next token is ',' '(' or EOL, because `Window` and `Report` are the Clarion
-    ! template's own default LABELS and `Window{PROP:Text} = 'x'` must not open anything.
+    ! The DATA and CONTROL structures are in the declaration-position test in ParseText's
+    ! walk instead: WINDOW QUEUE GROUP FILE RECORD CLASS MODULE ITEMIZE MENUBAR MENU TOOLBAR
+    ! SHEET TAB OPTION APPLICATION INTERFACE VIEW JOIN REPORT HEADER FOOTER DETAIL FORM. They
+    ! open only when the next token is ',' '(' or EOL, because `Window` and `Report` are the
+    ! Clarion template's own default LABELS and `Window{PROP:Text} = 'x'` must not open anything.
     of 'IF'   orof 'CASE' orof 'LOOP' orof 'EXECUTE' orof 'BEGIN' orof 'ACCEPT'
                               self.tokens.level = '+'
     of 'ELSE' orof 'ELSIF'  ; self.tokens.level = '/'
@@ -1763,14 +1831,14 @@ expDigit    long                   !        ...and at least one digit followed i
   ! the label test above has already run - so a leading digit is the licence to read a number.
   ! the exponent form is typed too. `1.5e3` arrives as `1` `.` `5e3` (the '.' is a
   ! delimiter), and with `5e3` falling out of this loop untyped the three could never merge, so
-  ! a rule keyed on a numeric type never saw the number at all. Round-trip was never at risk -
-  ! the bytes are the same either way - which is exactly why nothing reported it.
-  ! KNOWN LIMIT, deliberately not fixed here: the LRM's other bases - binary `1011b`, octal
-  ! `3403o`, hex `0CD1F74FH` (p496) - still fall out untyped, because their terminator letters
+  ! a rule keyed on a numeric type would never see the number at all. Round trip is not at
+  ! stake - the bytes are the same either way - so only a missed rewrite would show it.
+  ! KNOWN LIMIT: the LRM's other bases - binary `1011b`, octal
+  ! `3403o`, hex `0CD1F74FH` (p496) - fall out untyped, because their terminator letters
   ! are ambiguous with hex digits ('B' is both) and telling them apart means deciding the base
-  ! from the LAST character before validating the digits. That is a bigger change than the
-  ! flagged one, with the same silent-miss consequence and no demonstrated need; it wants its
-  ! own round and its own fixture.
+  ! from the LAST character before validating the digits. Such a number is left untyped, so a
+  ! rule keyed on a numeric type passes it by: a missed rewrite, never a wrong one.
+  ! The decimal and exponent forms are typed; see the loop below.
   loop x = 1 to size(self.tokens.tok)
     case val(self.tokens.tok[x])                      ! INDEX the character: val(tok) tests char 1 every iteration, which types 5.5/0FFh as Integer and stops FoldStr on the inconsistency
     of 48 to 57                                       ! 0 to 9
@@ -1812,7 +1880,7 @@ st          StringTheory
 !
 ! This is on EVERY WRITE PATH in the tool - nothing reaches disk, the preview panes or a
 ! report without coming through here. It is consequently the best single place to prove a
-! change is inert: if a round moves nothing in the gated round trips, JoinToks is the
+! change is inert: if a change moves nothing in a round trip, JoinToks is the
 ! reason you can believe it.
 ! ------------------------------------------------------------------------------------
 VitTokenize.JoinToks  Procedure(LONG pStart=1,LONG pEnd=0)
@@ -1854,8 +1922,8 @@ eWithComments equate(-2)
   loop x = pStart to pEnd
     Get(self.tokens, x)
     if toEOL
-    ! GCR 23Sep2023 we need to be careful because with continuations ('|') there is no <10> token but CRLF is included in strBefore
-    !               of first token on next line.
+    ! careful: with continuations ('|') there is no <10> token but CRLF is included in strBefore
+    !          of first token on next line.
       if not self.tokens.tok &= NULL and self.tokens.tok = '<10>'
         if toEOL = eWithComments and not self.tokens.strBefore &= NULL
           st.append(self.tokens.strBefore)
@@ -1899,10 +1967,10 @@ i               LONG,AUTO
   free(self.tokens)
   if not self.vars &= NULL
     free(self.vars)  ! the varType table is PER-PARSE. Left standing it survives into the next
-  end                !   ParseText on a reused tokenizer and changes LEVEL stamping of identical text - measured as a census of +392 against
-                     !   +385 on byte-identical streams. Every parse is self-contained; the backwards declaration pass rebuilds vars fresh.
+  end                !   ParseText on a reused tokenizer and changes LEVEL stamping of identical text - the level census
+                     !   differs on byte-identical streams. Every parse is self-contained; the backwards declaration pass rebuilds vars fresh.
   clear(self.tokens) ! free() leaves the RECORD BUFFER holding the last row, and firstOnLine is written only by SetLineNumbers - AddToken never assigns it. TokenIsReservedWord READS it during
-                     !   tokenising, before SetLineNumbers has run: `if firstOnLine and strBefore &= NULL then return FALSE`. So on a REUSED tokenizer (RejoinReparse after every rewrite round) a stale
+                     !   tokenising, before SetLineNumbers has run: `if firstOnLine and strBefore &= NULL then return FALSE`. So on a REUSED tokenizer (RejoinReparse after every rewrite pass) a stale
                      !   TRUE would stop every column-1 token being a reserved word for the whole pass. Same class as the per-parse vars table two lines above, so clear it for the same reason.
   self.fileSize = 0  ! reset size of file read in
 
@@ -1985,18 +2053,18 @@ VitTokenize.MoveToks      Procedure(LONG pSrc, LONG pDst, LONG pNumToMove) !,LON
 ! Does the token in the buffer stand in COLUMN 1? Either nothing is in front of it, or what
 ! is in front of it ends at a line feed. The second case is the one every "strBefore &= NULL"
 ! test misses: a plain OMIT('***') block is folded, whole, into the strBefore of the
-! token after it, so a column-1 label right after such a block carried the block in its
-! trivia, kept a keyword's type and level (`Loop LONG`), and a structure opener there got no
-! opener mark while its END still closed one. GET the token first; meaningful only for a
-! first-on-line token.
+! token after it, so a column-1 label right after such a block carries the block in its
+! trivia, and read by that test it would keep a keyword's type and level (`Loop LONG`),
+! and a structure opener there would get no opener mark while its END still closed one.
+! GET the token first; meaningful only for a first-on-line token.
 ! ------------------------------------------------------------------------------------
 VitTokenize.BufColOne Procedure() !,LONG,virtual
   code
   ! A FRAGMENT HAS NO COLUMN 1. A replacement is parsed on its own before being spliced into
   !   the middle of a line, and its first token has no trivia in front of it - which is what
   !   this test reads as column 1. Column 1 is where a LABEL goes, so `if`, `exit` or `return`
-  !   at the start of a replacement came out typed as labels and that was copied into the
-  !   stream. Harmless while the structure keywords force a re-parse straight after, which is
+  !   at the start of a replacement would come out typed as labels and be copied into the
+  !   stream. Harmless where the structure keywords force a re-parse straight after, which is
   !   not true of EXIT, RETURN or ACCEPT. The caller says which it is; a file parse never sets it.
   if self.midLine then return 0.
   if self.tokens.strBefore &= NULL then return 1.
@@ -2139,7 +2207,7 @@ VitTokenize.SetTok       Procedure(long pTokNumber,*STRING pValue,<string pStrBe
 ! that follows it, which for an end-of-line comment is the EOL token. So this is a lookup in
 ! the trivia, not a search of the stream.
 ! ------------------------------------------------------------------------------------
-VitTokenize.GetCurrLineComment   Procedure(stringTheory pSt, long pTokNumber) !virtual   GCR 22Sep2023
+VitTokenize.GetCurrLineComment   Procedure(stringTheory pSt, long pTokNumber) !virtual
 sTok long,auto                                                                ! the walk's own first token is never a continuation tail
   code
   pSt.free()
@@ -2154,8 +2222,8 @@ sTok long,auto                                                                ! 
       break
     end
 
-    ! GCR 22Sep2023 we need to be careful because with continuations ('|') there is no <10> token but CRLF is included in strBefore
-    !               of first token on next line.
+    ! careful: with continuations ('|') there is no <10> token but CRLF is included in strBefore
+    !          of first token on next line.
     if self.tokens.firstOnLine and pTokNumber > sTok            ! continuation line - CRLF is in StrBefore
       if self.tokens.strBefore &= NULL
         self.TraceIt('VitTokenize.GetCurrLineComment - expecting continuation line: line ' & self.tokens.LineNo)
@@ -2187,11 +2255,11 @@ sTok long,auto                                                                ! 
 ! If pTokNumber does not exist it appends a new trivia-only token at the end of the stream,
 ! the same way AppendStrBefore does.
 ! ------------------------------------------------------------------------------------
-VitTokenize.InsertStringAtEOL    Procedure(long pTokNumber, string pStr, byte pComment=1) !,virtual    GCR 13Sep2023 useful for adding comments at EOL
+VitTokenize.InsertStringAtEOL    Procedure(long pTokNumber, string pStr, byte pComment=1) !,virtual    useful for adding comments at EOL
 ! insert string at end of current line
 ! if pComment is 1 we make it a comment (prepend ' ! '); a line that already has a comment gets it as a SECOND one, '  ! ' in front
 ! if pComment is 2 we make it a comment (prepend ' ! ') and PREPEND to existing text
-! if pComment is 3 then NOT a comment and treat ';' and 'THEN' as logical EOL (for when line has several logical lines combined) GCR 5Dec2023
+! if pComment is 3 then NOT a comment and treat ';' and 'THEN' as logical EOL (for when line has several logical lines combined)
 isCmt byte,auto ! mode 1 or 2 = comment; mode 0 and mode 3 are not
 sTok  long,auto ! the walk's own first token is never a continuation tail
 nEol  long,auto ! NoteInOrder: the line the note lands on, as numbered now - the registry's key
@@ -2243,8 +2311,8 @@ nPos  long,auto
       break
     end
 
-    ! GCR 23Sep2023 we need to be careful because with continuations ('|') there is no <10> token but CRLF is included in strBefore
-    !               of first token on next line.
+    ! careful: with continuations ('|') there is no <10> token but CRLF is included in strBefore
+    !          of first token on next line.
     if self.tokens.firstOnLine and pTokNumber > sTok and pComment <> 3   ! continuation line - CRLF is in StrBefore
 ! self.TraceIt('InsertStringAtEOL: first on line: ' & self.tokens.tok )
       if self.tokens.strBefore &= NULL
@@ -2781,8 +2849,8 @@ L loop
     if svPEnd <> pEnd then cycle.                         ! transformations made
 
     loop
-      ! see if we can do simple evaluate
-      calc.SetValue(evaluate(self.JoinToks(pStart,pEnd)))
+      ! see if we can do simple evaluate - see EvalSpan
+      do EvalSpan
       if calc._DataEnd and calc._DataEnd < 15             ! too many digits might mean rounding
         self.SetTok(pStart,calc.valuePtr[1 : calc._DataEnd])
         loop pEnd = pEnd to pStart+1 by - 1
@@ -2805,12 +2873,12 @@ L loop
 
 
 FoldMultiplications routine                               ! includes divisions - calculate adjacent tokens eg. 4*6 or 10/2
-! note for now we are only folding positive numbers eg. 4*5 but not (yet) 4*-5
+! note only positive numbers are folded here eg. 4*5 but not 4*-5
 !
 ! A '^' AGAINST EITHER END OF THE TRIPLE STOPS THE FOLD. Exponentiation binds tighter than
 ! multiplication, division and modulus, so in  2 * 3 ^ 2  the '^' takes the 3 and  2 * 3  is
 ! not a subexpression at all: folding it to 6 turns a length of 18 into 36. The same applies
-! on the left - in  3 ^ 2 * 4  the 2 belongs to the '^'. FoldAdditions never needed this
+! on the left - in  3 ^ 2 * 4  the 2 belongs to the '^'. FoldAdditions does not need this
 ! guard because it only folds at a delimiter, and the delimiter table holds none of
 ! * / % ^ - so this walk is the one place where a tighter operator can be stepped over.
 ! A '/' OR '%' ON THE LEFT OF THE TRIPLE STOPS IT TOO. Multiplication, division and modulus
@@ -2931,7 +2999,7 @@ sgKeep        LONG,AUTO ! a ^ or % follows the bracket, so a sign inside it stay
 
   loop
     pEnd = records(self.tokens) - endOffset                                           ! adjust end position in case there have been deletions
-    ! change of policy - GCR 4Oct2019 if a token deletion has occurred, then exit and start over (is performed in a loop until unchanged)
+    ! if a token deletion has occurred, then exit and start over (is performed in a loop until unchanged)
     if svPEnd <> pEnd then break.
 
     x += 1
@@ -2972,7 +3040,7 @@ sgKeep        LONG,AUTO ! a ^ or % follows the bracket, so a sign inside it stay
     if self.tokens.type = 'p'                                                         !self.Tokens.tok = '+' or self.Tokens.tok = '-'
       currPlusMinus = TRUE
       if x=pStart and self.tokens.tok = '+'
-        ! GCR 10Oct2019: delete leading + sign
+        ! delete leading + sign
         self.DeleteTok(x)
         self.SetStrBefore(x,'')                                                       ! remove spacing before next token
         cycle
@@ -3206,6 +3274,30 @@ LooserOp routine
   if self.Tokens.type = ' ' and self.Operator[val(self.Tokens.tok[1])+1] then firstNumTok = 0.
   if inlist(upper(self.Tokens.tok), 'AND', 'OR', 'XOR', 'NOT') then firstNumTok = 0.
 
+! ---- calc: what EVALUATE makes of tokens pStart to pEnd, or nothing. EVALUATE runs any builtin
+!      call it is handed - clip('ab ') comes back as ab, upper('k') as K, today() as the day the
+!      tool ran - so a span holding a name followed by '(' is never handed to it, at any depth of
+!      the bracket walk. Nor is one holding a string literal or a '&' (39 and 38 below): the
+!      answer is text, and written back as a token it loses its quotes. Only a number is kept. ----
+EvalSpan routine
+  data
+esT long,auto
+  code
+  calc.free()
+  loop esT = pStart to pEnd
+    get(self.Tokens, esT)
+    if errorcode() or self.Tokens.tok &= NULL then exit.
+    case val(self.Tokens.tok[1])
+    of 39 orof 38
+      exit
+    of 65 to 90 orof 97 to 122 orof 95 orof 63
+      if inlist(upper(self.Tokens.tok), 'AND', 'OR', 'XOR', 'NOT') then cycle.
+      if esT < pEnd and self.GetTok(esT + 1) = '(' then exit.
+    end
+  end
+  calc.SetValue(evaluate(self.JoinToks(pStart,pEnd)))
+  if ~numeric(calc.getValue()) then calc.free().
+
 ! ------------------------------------------------------------------------------------
 ! By-value front end for InsertString - see the overload below.
 ! ------------------------------------------------------------------------------------
@@ -3245,7 +3337,7 @@ e    long,auto                                                                  
   ! nothing ever converts it back. BufColOne asks the caller to say which it is; this is how.
   tk.midLine = pMid
   if ~pMid and pPos > 1                                                                 ! the caller did not say: the token before the splice point tells - anything but a
-    get(self.tokens, pPos - 1)                                                          !   line end means the text lands mid-line, and its first word is no label (14 Sep 2026)
+    get(self.tokens, pPos - 1)                                                          !   line end means the text lands mid-line, and its first word is no label
     if ~errorcode() and not self.tokens.tok &= NULL
       if ~(size(self.tokens.tok) = 1 and self.tokens.tok = '<10>') then tk.midLine = 1. ! the EOL token is the ONE LF byte, written '<10>' - never '<<10>', four characters of text that no token equals, which would read EVERY splice as mid-line
     end
@@ -3284,8 +3376,8 @@ e    long,auto                                                                  
   ! THE FRAGMENT ENDED ON `a.b` (mergeTail): the merge its parse could not decide is decided here,
   ! against the token the text now sits in front of - joined unless that is '(', a method call,
   ! exactly as a parse of the whole line joins it. Without this, a rewrite whose new text ends on
-  ! `self.sepTxt` handed the stream three tokens, and every reader of a member as one token
-  ! refused it on every pass that was left, until the NEXT run parsed the file again.
+  ! `self.sepTxt` would hand the stream three tokens, and every reader of a member as one token
+  ! would refuse it on every pass that was left, until the NEXT run parsed the file again.
   if tk.mergeTail
     e = pPos + self.records() - recA - 1                                                ! the last token spliced in
     if e - 2 >= pPos and self.GetTok(e + 1) and self.GetTok(e + 1) <> '('
@@ -3321,7 +3413,7 @@ cb           long                                                               
     pEnd = 0                          ! indicate no matching end bracket
     return 0                          ! no parameters
   end
-  pEnd = cb                           ! added GCR 2Jan2020 at Cowes - set pEnd to closing bracket
+  pEnd = cb                           ! set pEnd to closing bracket
   self.JoinToks(pParms,pStart+1,cb-1) ! get parameters into parameter ST object
   pParms.split(',','''-(','''-)',,st:clip,st:left,'-',st:nested)
   return pParms.Records()             ! return number of parameters
@@ -3511,8 +3603,8 @@ FirstVarType string(1)
       st.SetValue(self.searchSt.GetLine(i))
       x = 1
       self.searchQ.noCase = TRUE ; self.searchQ.wsBefore = TRUE                          ! explicit init - without it an un-prefixed/1-char element inherits the previous element's QUEUE BUFFER residue (order-dependent).
-                                                                                         !   PERMISSIVE defaults: the vtxaDiff-ported patterns were verified byte-for-byte against the legacy behaviour, where inheritance made
-                                                                                         !   elements ws-tolerant + caseless in practice (strict FALSE defaults dropped 26 verified CheckCaseStatements conversions on tests.clw)
+                                                                                         !   PERMISSIVE defaults: the patterns are written for elements that are ws-tolerant + caseless unless
+                                                                                         !   their prefix says otherwise (strict FALSE defaults would drop conversions such as CheckCaseStatements')
 
       if st._DataEnd > 2                                                             and |
          ((st.valueptr[1] = self.noCaseChar   and st.valueptr[2] = self.wsBeforeChar) or |
@@ -3651,11 +3743,11 @@ FirstVarType string(1)
 
 ! ---- a failed attempt restarts one token after the token this attempt BEGAN on, not one
 !      token after the one that FAILED. Without the rewind the scan walks straight past any
-!      OVERLAPPING match: [val,(,chr,(] against `val(val(chr(65)))` found nothing, because the
-!      failure at the second `val` consumed it and the real match starting THERE was never
-!      tried. The FirstVarType arm above has always backtracked - it says `x -= state` before
-!      it resets - so this only makes the ordinary mismatch paths agree with the one that was
-!      already right. It cannot loop: seqFrom is set only where state leaves 0, so each restart
+!      OVERLAPPING match: [val,(,chr,(] against `val(val(chr(65)))` would find nothing, because
+!      the failure at the second `val` would consume it and the real match starting THERE would
+!      never be tried. The FirstVarType arm above backtracks too - it says `x -= state` before
+!      it resets - so the ordinary mismatch paths and that arm agree. It cannot loop: seqFrom
+!      is set only where state leaves 0, so each restart
 !      begins one token further along than the last and attempt starts strictly increase.
 !      seqFrom = 0 means state never left 0, and then there is nothing to rewind to.
 !      (dataless routine -> no CODE statement)
@@ -3700,16 +3792,16 @@ VitTokenize.DescribeChar Procedure(STRING pChar)
 ! Write the whole token stream to a file, one token per line, for eyeballing.
 !
 ! With no filename it invents a timestamped one in the CURRENT DIRECTORY, and that is
-! deliberate: a default under .\testdata\ names a directory that exists in this project and
-! nowhere else, so for anyone else the save fails - trace-only (both off by default), so the
-! documented level-census workflow produces nothing at all, silently. The CLI always passes an
+! deliberate: a default under a fixed folder such as .\testdata\ fails wherever that folder
+! does not exist - trace-only (both off by default), so the documented level-census
+! workflow would produce nothing at all, silently. The CLI always passes an
 ! explicit name, so this default is for embedders. This is the tool of choice
 ! when a level census does not balance: the dump shows each token's level mark, and the
 ! structure that opened without closing is visible in a way the source is not.
 ! ------------------------------------------------------------------------------------
 VitTokenize.DumpTokens Procedure(<string pFilename>) !,virtual ! dump token list to disk - optionally provide file name
 dumpST  StringTheory
-dumpSeq long,static,thread                           ! add seq number as clock resolution is such that sometimes files were overwritten if time diff < .01 secs
+dumpSeq long,static,thread                           ! add seq number as clock resolution is such that a file would be overwritten if time diff < .01 secs
 dumpFn  string(512),auto                             ! the name actually used, so the failure message can NAME it
   code
   dumpSeq += 1
@@ -3717,7 +3809,7 @@ dumpFn  string(512),auto                             ! the name actually used, s
   dumpFn = choose(~omitted(pFilename), pFilename, 'tokenize file on ' & clip(left(format(today(),@d12))) & |
            ' at ' & clip(left(format(clock(),@T05))) & format(clock()%100,@n02) & format(dumpSeq%1000,@n03) & '.txt')
   if not dumpSt.SaveFile(dumpFn)
-    self.dumpFailed = 1          ! a caller can SEE the failure now; TraceIt alone ships off
+    self.dumpFailed = 1          ! the caller can SEE the failure; TraceIt alone ships off
     self.TraceIt('save of tokenize file failed: ' & clip(dumpFn))
   else
     self.dumpFailed = 0
@@ -3776,8 +3868,8 @@ bnd     long,auto ! the boundary: last char of the unit just consumed
           ! ---- an escape GROUP is not really atomic. A long one
           !      splits at any of its commas, because two groups concatenate to the same bytes:
           !          '<0,1,2,3,4,5>'   ==   '<0,1,2>' & '<3,4,5>'
-          !      Without this a literal that IS one long group had nowhere to cut at all and the
-          !      line stayed wide. Offered as a NEGATIVE offset so SplitLongLiteral can tell the
+          !      Without this a literal that IS one long group has nowhere to cut, and the
+          !      line stays wide. Offered as a NEGATIVE offset so SplitLongLiteral can tell the
           !      two cut shapes apart: the comma is REPLACED by '>>' ... '<<', not just cut at.
           loop gz = z + 1 to gEnd - 1
             if self.Tokens.tok[gz + 1] <> ',' or          |
@@ -3829,8 +3921,8 @@ bnd     long,auto ! the boundary: last char of the unit just consumed
     ! Every branch above has already stepped z PAST its unit, so z names the first character
     ! of the NEXT one - which has not been examined yet. Offering z as the cut therefore puts
     ! the boundary one character right of the one actually verified, and the character it
-    ! lands in front of may be the first half of an atomic pair: on 'aaaa''bbbb' the cut fell
-    ! BETWEEN the two quotes of the escaped pair, ending the string early and producing source
+    ! lands in front of may be the first half of an atomic pair: on 'aaaa''bbbb' it would
+    ! fall BETWEEN the two quotes of the escaped pair, ending the string early and making source
     ! that does not compile. Keep the one closest to pWant.
     if z > inner then break.
     bnd = z - 1
@@ -3899,8 +3991,8 @@ sb      stringTheory
   ! ... joined by an '&' with ONE SPACE in front of it. The space matters: without it the
   ! output reads 'te'& | with the ampersand jammed against the quote. It is passed straight to
   ! AddTok, which guards its trivia with size() - a truthiness guard would read a lone ' ' as
-  ! BLANK and drop it. This call is what exercises that guard, so TestData\r108split.clw is its
-  ! end-to-end gate: if AddTok ever stops keeping the space, that fixture shows it.
+  ! BLANK and drop it. This call is what exercises that guard: if AddTok did not keep the
+  ! space, every literal this splits would come out as 'te'& |.
   self.AddTok(pTokNumber + 1, '&', ' ')
   return 1
 
@@ -3942,10 +4034,10 @@ sb      stringTheory
 ! line and reset at every line ending, so what is a candidate depends on breaks already made:
 ! in `packet.Append('a' & self.Make(x,y,z))` the commas sit at depth 2 and are not candidates,
 ! but once the '&' break has put `& self.Make(x,y,z)` on a line of its own they are at depth 1
-! and they are. A single sweep therefore stops holding pieces it WOULD break if it looked
-! again - which is precisely what running the tool a second time did to them, and why an
-! --style=extreme run (whose deferred slice widens lines after the fixpoint) came back changed
-! on a second run: three lines of NetWeb V1400.clw. The two phases now sweep until a
+! and they are. A single sweep would therefore stop holding pieces it WOULD break if it
+! looked again - and a second run of the tool would break them, so a run (an --style=extreme
+! one above all, whose deferred slice widens lines after the fixpoint) would not settle.
+! So the two phases sweep until a
 ! sweep breaks nothing. The cap is a runaway guard, not a budget; hitting it leaves lines long,
 ! which is the same safe outcome as having no candidate at all.
 !===============================================================================================
@@ -4055,9 +4147,9 @@ OnePass routine
         ! THE FIRST TOKEN AFTER AN EXPLICIT <10> TOKEN CARRIES THE WHOLE INDENT, and there is no
         ! newline in it to find - the newline was a token of its own, and the branch above only
         ! fires when the line end is INSIDE strBefore. Both spellings occur. Without this the
-        ! indent was never captured for the second kind, it stayed empty, and ApplyBreak wrote
+        ! indent would never be captured for the second kind, and ApplyBreak would write
         ! its continuation at column 3 - `sb.append('  ')` plus the broken token's own single
-        ! space - however deep the statement was: a statement 16 columns in would have its
+        ! space - however deep the statement is: a statement 16 columns in would have its
         ! remainder land at 3, beside the author's own continuations far to the right.
         if ~w and ~indSt._DataEnd
           indSt.setValue(self.Tokens.strBefore)
@@ -4112,7 +4204,7 @@ OnePass routine
         if dep = 1 then lq:kind = 3.                      ! the opening paren of the outermost call
       end
     else
-      ! AND / OR are the natural place to wrap a long condition, and Parser.clw is
+      ! AND / OR are the natural place to wrap a long condition, and a parser is
       ! full of them - `if (UPPER(x) = 'PROCEDURE' OR UPPER(x) = 'FUNCTION')` has no other
       ! candidate at all and would stay 102 characters wide. Break BEFORE the word, like '&', so
       ! the operator starts the continuation line and the condition reads down the page.
@@ -4136,9 +4228,9 @@ OnePass routine
   free(lineQ) ; free(cutQ)
 
   ! ---- PHASE 2: lines that are STILL over-wide because their payload is one long literal.
-  !      Phase 1 breaks only BETWEEN tokens, so a 140-character literal is indivisible to it -
-  !      observed on r108split.clw at --width=100, where OpenParen and Unsplittable came
-  !      back at 162 and 173 with no candidate left. A literal can be cut; this does it.
+  !      Phase 1 breaks only BETWEEN tokens, so a 140-character literal is indivisible to it,
+  !      and at --width=100 a line holding one has no candidate left however it is
+  !      laid out. A literal can be cut; this does it.
   !      Walk BACKWARDS: SplitLongLiteral inserts two tokens, which shifts every index AFTER
   !      the cut, so going back to front leaves the not-yet-visited part of the queue untouched.
   !      Same reason the delete loops elsewhere in this file iterate backwards.
@@ -4255,10 +4347,10 @@ lnl  long,auto
     if lq2 > lstart and not self.Tokens.strBefore &= NULL
       ! a PHYSICAL line also ends where a newline appears inside the NEXT token's
       ! trivia - that is exactly what phase 1 writes when it breaks a line (' |' + CRLF + indent).
-      ! Stopping only at an EOL token measured straight through those breaks and returned the
-      ! width of the whole LOGICAL statement, so phase 2 saw lines as over-wide that phase 1 had
-      ! already brought under the limit and split their literals for nothing. Observed:
-      ! st.Replace(...) had its commas broken correctly and then had two literals cut as well.
+      ! Stopping only at an EOL token would measure straight through those breaks and return the
+      ! width of the whole LOGICAL statement, so phase 2 would see lines as over-wide that phase 1
+      ! had already brought under the limit and split their literals for nothing: a
+      ! st.Replace(...) would have its commas broken correctly and then two literals cut as well.
       lnl = 0
       loop lz2 = 1 to size(self.Tokens.strBefore)
         if self.Tokens.strBefore[lz2] = '<10>' then lnl = lz2.
@@ -4272,8 +4364,8 @@ lnl  long,auto
     end
     if not self.Tokens.tok &= NULL then lw += size(self.Tokens.tok).
   end
-  lw += lindW                                               ! THE INDENT IS PART OF THE LINE. clip() of an all-spaces indent is empty, so measuring it that
-                                                            !   way added nothing and a line pushed over the limit by its indent alone was never split.
+  lw += lindW                                               ! THE INDENT IS PART OF THE LINE. clip() of an all-spaces indent is empty, so measured that
+                                                            !   way it adds nothing, and a line pushed over the limit by its indent alone stays whole.
 
 ! ---- the line just ended: cut it until every piece fits, or nothing more helps ----
 FinishLine routine
@@ -4286,8 +4378,8 @@ FinishLine routine
   ! character '?' debug line would come back as
   !     ?     if ~self.tokens.firstOnLine then stop('...' & |
   !        & self.tokens.tok & ...
-  ! and every token of the second line was an error. Found by BUILDING extreme-transformed
-  ! source (bootstrap.bat); no text-level check could have seen it. Leaving the line long
+  ! and every token of the second line would be an error - one that only a BUILD shows,
+  ! never a check of the text. Leaving the line long
   ! is the right trade - it is the same refusal the splitter already makes when there is
   ! nowhere sensible to break.
   if firstTok
@@ -4403,12 +4495,12 @@ ApplyBreak routine
   ! THE COLUMN IS DECIDED ONCE PER STATEMENT, by BracketPlan in FinishLine, and brB holds the
   ! answer for every break in it: the bracket column when the whole statement fits under the
   ! bracket, 0 - the indent - when any piece would not. A decision taken per break, with the
-  ! splitter cutting the widest segment again and again, answered differently as the remainder
-  ! shrank and sent one statement back with its continuations in three columns; and a bracket
-  ! column taken without asking whether the LAST piece fits left a line over the width. Both are
-  ! what the plan exists to prevent. An operator break belongs to the contop axis and is left to
-  ! it, and a line whose continuations the AUTHOR already placed still joins those, which is the
-  ! older rule and the better answer where it applies.
+  ! splitter cutting the widest segment again and again, would answer differently as the
+  ! remainder shrinks and send a statement back with its continuations in three columns; and a
+  ! bracket column taken without asking whether the LAST piece fits would leave a line over the
+  ! width. Both are what the plan exists to prevent. An operator break belongs to the contop axis
+  ! and is left to it, and a line whose continuations the AUTHOR already placed still joins
+  ! those, which is the better answer where it applies.
   brCol = brB
   if brCol
     sb.append(all(' ', brCol))                 ! under the first argument
@@ -4420,7 +4512,7 @@ ApplyBreak routine
   end                                          !   lines the operator up under the statement itself
   ! THE END FORM CUTS AFTER ITS TOKEN, INCLUDING THE OPERATOR. A concatenation or a wrapped
   ! condition ends its line with the operator and the bar - `expr & |` - and picks the next line
-  ! up with the operand. Cutting BEFORE the operator instead left it stranded at the start of the
+  ! up with the operand. Cutting BEFORE the operator instead would leave it at the start of the
   ! continuation, which is a second spelling of the same statement and reads as scrappy beside the
   ! rows the author wrote by hand.
   ! AlignComments carries a padPrev flag whose whole purpose is the pair `& |`, set for exactly
@@ -4563,7 +4655,7 @@ pFrom long,auto
 !      continuation rows back onto it while they fit. Split and join together make this a
 !      REFLOW to width n: run it again and nothing changes; move the column and it settles.
 !      The marker stays in its column and continuation text sits two characters in from the
-!      first row's text - '!' and three spaces, the passenger convention our sources use.
+!      first row's text - '!' and three spaces, the usual way a comment is continued.
 !
 !      A JOIN takes only rows at the anchor's column whose text is indented, is not blank, and
 !      does not begin like a bullet, a number or a `name = value` item. Anything else is
@@ -4577,7 +4669,7 @@ pFrom long,auto
 !      one token, and each continuation row is one more '<10>' token whose strBefore is the
 !      whole row. Splitting adds such tokens after the anchor; joining deletes them. No code
 !      token is ever touched. The row count changes, so line numbers are re-stamped after.
-!      Modelled and measured before it was built.
+!      The comment's words, and their order, never change.
 VitTokenize.WrapComments  Procedure(LONG pWidth)
 st        StringTheory ! a token's strBefore
 wt        StringTheory ! the comment text, joined
@@ -4857,8 +4949,8 @@ rfP  long,auto
 ! fixpoint has converged, and counts what it did as a change:
 !     if self.tk.ClipLines() then fileChanges += 1.        ! VitEngine, after the cosmetic stages
 ! So a file whose only defect is trailing whitespace IS rewritten. That is the point of a
-! layout-only run over source the rules have nothing to say about - a 13,415-line file with
-! every rule evaluated and nothing written is the case this exists for. Clipping IS therefore
+! layout-only run over source the rules have nothing to say about - a large file with every
+! rule evaluated and nothing else to change is the case this exists for. Clipping IS therefore
 ! a sufficient reason to rewrite a file on its own; the full reasoning is at
 ! the call site in VitEngine, above the cosmetic stages.
 !===============================================================================================
@@ -4893,9 +4985,9 @@ mk       long,auto
     ! (b) THE ORDINARY CASE, and the one that matters. A line ending is its OWN TOKEN
     !     (tok.setvalue('<10>') in the scanner) - it is not trivia. So on a normal line the trailing
     !     whitespace is simply the TAIL of the EOL token's strBefore, with no newline byte
-    !     after it for (a) to match against. Verified the hard way: with only
-    !     (a) in place, a fixture with 30 trailing-whitespace lines came back with 25 - the
-    !     five that WERE clipped being exactly the continuation line and the OMIT block.
+    !     after it for (a) to match against. With only (a), trailing whitespace would
+    !     be clipped on a continuation line and in an OMIT block and nowhere else - every
+    !     ordinary line would keep its tail.
     !     Trimming the tail is safe precisely BECAUSE this token is the newline: anything
     !     immediately before it is by definition at end of line. For any OTHER token, a
     !     trailing strBefore space is the gap between two tokens on one line (`a  =  b`) and
@@ -5126,14 +5218,14 @@ moved   long
 !      honest width to contribute. nInd counts the run whatever it is made of, and answers
 !      the only question the caller asks of it: is this label in column 1 or not?
 !
-!      COUNTING ONE WAY GOT IT WRONG, MEASURED. Breaking the loop at a tab made a
+!      COUNTING ONE WAY GETS IT WRONG. Breaking the loop at a tab would make a
 !      tab-terminated indent read as nsp = 0, and `if ~nsp` takes that for column 1 - so a
-!      tab-indented STATEMENT entered the declaration run as label-plus-type and the aligner
-!      re-spaced executable code. `<9>x = 1` came back `<9>x  = 1`, on a DEFAULT run, with
-!      the '=' pushed into a column to meet the line below it. Nothing stopped it further
-!      down: '=' is not a reserved word, so the type-token break never fired.
-!      Space-indented files could never reach it, because a real column-1 label carries a
-!      NULL strBefore - which is why every gate stayed green over it.
+!      tab-indented STATEMENT would enter the declaration run as label-plus-type and the
+!      aligner re-space executable code: `<9>x = 1` would come back `<9>x  = 1`, on a DEFAULT
+!      run, with the '=' pushed into a column to meet the line below it. Nothing would stop it
+!      further down: '=' is not a reserved word, so the type-token break would never fire.
+!      Space-indented files cannot reach it, because a real column-1 label carries a
+!      NULL strBefore - so only a tab-indented file would show it.
 DeclIndent routine
   data
 dz  long,auto
@@ -5165,7 +5257,7 @@ FlushDecl routine
   !      block that was already consistent, to suit a number it picked. The author's column is a decision,
   !      and a format-preserving rewriter has nothing to say about it. Only a RAGGED run - one
   !      whose types genuinely do not line up - gets an opinion, and then the column is one
-  !      space past the longest label, as this routine has always claimed.
+  !      space past the longest label, as this routine's banner says.
   dcCap = 0                                                    ! ONE very long NAME does not push every type in the
   dcOut = self.declOutlier                                     !   block out to clear it. OFF unless --decloutlier is
   if dcOut > 0 and records(lnQ) > 2                            !   given: a name is a different measure from a line of
@@ -5196,7 +5288,7 @@ FlushDecl routine
   ! routine claims and what the README documents. Write `wid += 2` and the longest
   ! label in every run gets TWO spaces after it - and in a run where the labels are all the same
   ! length that is every line: `i long,auto` and `n long,auto`, already perfectly aligned, come
-  ! back as `i  long,auto`. That is a file the tool changed for no gain at all, which is the one
+  ! back as `i  long,auto`. That is a file the tool would change for no gain at all, the one
   ! thing a format-preserving rewriter must not do. With +1 such a run is left exactly as
   ! written - the gap is already 1, so the "already exactly right" test below skips it.
   wid += 1                                                     ! the column every type starts in
@@ -5359,12 +5451,12 @@ moved   long
               ! a RUN is a stretch of label lines close enough together to read as one
               ! block. EVERY column aligns within one run, never across the whole CASE.
               !   - a dispatch CASE can hold dozens of branches hundreds of lines apart, and
-              !     grouping them all meant one enormous label line vetoed alignment for every
-              !     short block in the same CASE (Parser.clw: 44- and 55-character blocks
-              !     left ragged because a 183-character line lived elsewhere in that CASE)
-              !   - and column 1 keyed on the CASE meant an isolated `of 'IF'` was padded out to
+              !     grouping them all would let one enormous label line veto alignment for every
+              !     short block in the same CASE (short blocks left ragged because a very wide
+              !     line lives elsewhere in that CASE)
+              !   - and column 1 keyed on the CASE would pad an isolated `of 'IF'` out to
               !     match an `orof` 350 lines away that you cannot see from there. Keying column
-              !     1 on the run fixes that by itself: a run with no OROF in it has a column-1
+              !     1 on the run settles that by itself: a run with no OROF in it has a column-1
               !     width of 2, so the pad computes to a single space and nothing moves.
               ! TEN LINES is the gap that ends a run HERE, in this walk. The comment aligner has no
               ! window like it. It has to be a gap rather than strict adjacency, because
@@ -5399,7 +5491,7 @@ moved   long
     !     of 34;   dtype = 'STRING(32)' ; init = ''
     ! is a table, and lining the STATEMENTS up is the point of it, so collection does not stop
     ! at the ';'. What would make those lines come back absurdly wide is a run that reaches into
-    ! a DIFFERENT case whose labels were far longer, and every column was sized to suit those.
+    ! a DIFFERENT case whose labels are far longer, with every column sized to suit those.
     col += 1
     do CellGap
     ! a top-level ';' ENDS a segment and starts the next. THE ';' ITSELF BELONGS TO THE SEGMENT
@@ -5464,8 +5556,8 @@ moved   long
   ! segment mode is decided PER RUN, not for the whole file. Do NOT set one
   ! flag when ANY label line anywhere uses a ';': that switches every run over and collapses
   ! the multi-OROF tables (which have no ';') to one cell per line, so they stop aligning
-  ! internally. A file with both shapes shows it - an `of 'VIRTUAL' orof 'DERIVED' ...` block goes
-  ! ragged the moment the flag went file-wide.
+  ! internally. A file with both shapes would show it - an `of 'VIRTUAL' orof 'DERIVED' ...` block
+  ! would go ragged.
   if records(semQ)
     loop q = 1 to records(cellQ)
       get(cellQ, q)
@@ -5479,10 +5571,10 @@ moved   long
   end
 
   ! ---- a label line with only ONE cell has nothing after it to line up, so it must
-  !      not set a column width either. `else` on its own is the case: adding ELSE to the run
-  ! so that `else ; return` could line up with `of 35 ; ...` also made a bare
-  !      `else` four characters wide set column 1 for every `of` in the same CASE - and a CASE
-  !      with no OROF and no ';' started coming out as `of   'PRE'` when it should not have been
+  !      not set a column width either. `else` on its own is the case: ELSE is in the run
+  !      so that `else ; return` can line up with `of 35 ; ...`, but a bare `else`, four
+  !      characters wide, would then set column 1 for every `of` in the same CASE - and a CASE
+  !      with no OROF and no ';' would come out as `of   'PRE'` when it should not be
   !      touched at all. Counting cells says it directly: nothing
   !      follows a lone `else`, so it has no opinion about where anything goes.
   do LineShapes
@@ -5507,12 +5599,12 @@ moved   long
   end
 
   ! ---- PASS 2b: is aligning this run worth it?  One long entry sets a column's width for the
-  !      whole run, so a 23-line block containing 'CONVERTANSITOOEM' had every other line padded
-  !      out to suit it - 79 characters became 122 (Parser.clw). Refuse that.
-  !      The absolute-width clause now only applies to a run that FITS to begin with.
+  !      whole run, so a 23-line block containing 'CONVERTANSITOOEM' would have every other line
+  !      padded out to suit it - 79 characters becoming 122. Refuse that.
+  !      The absolute-width clause applies only to a run that FITS to begin with.
   !      Refusing because the result exceeds the limit is right when alignment would PUSH it
-  !      over; it is wrong for a run already wider than the limit, which was being left ragged
-  !      for a width problem alignment did not cause and could not fix. ----
+  !      over; it is wrong for a run already wider than the limit, which would be left ragged
+  !      for a width problem alignment did not cause and cannot fix. ----
   curLine = 0
   loop q = 1 to records(cellQ)
     get(cellQ, q)
@@ -5542,18 +5634,18 @@ moved   long
         pad = 1
       end
       lnW += pad + cl:wid
-      ! COLUMN 2's PAD BELONGS IN origMax, and leaving it out made this
+      ! COLUMN 2's PAD BELONGS IN origMax, and leaving it out would make this
       ! whole routine non-idempotent. PASS 3 pads column 2 WHETHER OR NOT the run is
       ! skipped - that is the pad that puts `of` under `orof`, and it is deliberate.
       ! So a run measured as written, then padded, comes back on the NEXT run two
       ! characters wider per line: origMax grows, newMax does not, and a run that
-      ! failed `newMax > origMax + 20` by a hair now passes it. Columns 3+ that were
-      ! refused on the first run are aligned on the second, and the file changes
+      ! failed `newMax > origMax + 20` by a hair would pass it. Columns 3+ refused
+      ! on the first run would be aligned on the second, and the file would change
       ! again for no reason a reader can see.
-      !   FOUND on real code, not by reading: a corpus sweep transformed 161
-      !   files and then transformed its own output, and jFiles.clw / jFilesV303.clw
-      !   moved the second time - under `optimised`, so nothing to do with the style
-      !   that found it. Minimal repro is TestData\alignidem.clw.
+      !   It shows on real code, under any style: transform a set of files, then
+      !   transform the output, and a file holding such a CASE moves the second
+      !   time. A second run must change nothing, so the pad is counted on both
+      !   sides.
       ! The cap asks what ALIGNING costs. Column 2 is not part of that cost - it is
       ! going to happen either way - so it belongs on BOTH sides of the comparison.
       if cl:col = 2
@@ -5649,7 +5741,7 @@ moved   long
   !          orof 'NAME'    orof 'DLL'     orof 'C'
   !      COLUMN 2 is always padded, even in a run that failed the test above: that padding is
   !      what puts the two spaces after `of` so it lines up under `orof`, it is never more than
-  !      a couple of characters, and leaving it out is what was spotted on Parser.clw. ----
+  !      a couple of characters, and leaving it out leaves `of` short of `orof`. ----
   prevW = 0
   loop q = 1 to records(cellQ)
     get(cellQ, q)
@@ -5699,13 +5791,13 @@ moved   long
 
 ! ---- whitespace immediately before the current token, since the last newline ----
 !      A TAB COUNTS AS ONE, and that is an approximation made on purpose. A tab has no
-!      honest width here - it depends on where the tab stops fall - but the alternative was
-!      worse: breaking the loop at a tab reported a gap of ZERO where there plainly is one,
-!      so a tab-indented CASE block measured its widths against a column that does not
-!      exist. One is wrong by an unknown amount; zero is wrong by the whole gap and claims
-!      to be exact. The sibling counter in AlignDeclTypes had the same spaces-only loop and
-!      it was worse there - it misread a tab-indented STATEMENT as a column-1 declaration
-!      and re-spaced live code, measured on a default run.
+!      honest width here - it depends on where the tab stops fall - but the alternative is
+!      worse: breaking the loop at a tab would report a gap of ZERO where there plainly is
+!      one, so a tab-indented CASE block would measure its widths against a column that does
+!      not exist. One is wrong by an unknown amount; zero is wrong by the whole gap and claims
+!      to be exact. The sibling counter in AlignDeclTypes counts the run whole for the same
+!      reason, and there it matters more - a spaces-only loop would misread a tab-indented
+!      STATEMENT as a column-1 declaration and re-space live code on a default run.
 CellGap routine
   data
 gz  long,auto
@@ -5743,9 +5835,9 @@ FlushLine routine
 !      common cell count (the most frequent; the smaller on a tie), and every line of another count
 !      is the odd one out - its columns 2+ are left as the author wrote them and feed no width.
 !      Ragged tables of one-token labels (no arm) are not touched: their short rows align to the
-!      long rows' leading columns, as before. 14 Sep 2026: a two-label line among ranges (`orof 58
-!      orof 95` under `orof 65 to 90`) had its second label padded eight spaces out - vitTokenize.clw
-!      TokenIsValidLabel - because column 2's width came from the glued `65 to 90`.
+!      long rows' leading columns. Without the odd-one-out test, a two-label line among ranges
+!      (`orof 58 orof 95` under `orof 65 to 90`) would have its second label padded eight spaces
+!      out, because column 2's width would come from the glued `65 to 90`.
 LineShapes routine
   data
 la    long,auto
@@ -5834,17 +5926,17 @@ fz  long,auto
 !      space, re-spaces any CASE arm holding an EXPRESSION:
 !          of self.Match(TK:Operator, ':')   ->   of self . Match ( TK:Operator , ':' )
 !      That is not a cosmetic fault. A lone '.' with a space either side is a BLOCK
-!      TERMINATOR, so the file comes back carrying ENDs nobody wrote - a level census of
-!      +1638 -1641 on output where the same file reads +1638 -1638 on input. The tool's own
+!      TERMINATOR, so the file would come back carrying ENDs nobody wrote - its level census
+!      unbalanced on output where the same file balances on input. The tool's own
 !      tokenizer would disagree with what the tool had just written, and the next build would
 !      be made from it.
 !      So: everything between two delimiters - `of`, `orof`, `else`, `;` - folds into ONE cell,
 !      the way MergeSegments already folds a `;` segment. Only where a cell BEGINS can move;
 !      the spacing inside an arm is the author's and is copied through untouched.
-!      This is not a restriction on the tables the feature was built for. In
+!      This is not a restriction on the tables the feature is for. In
 !          of   'VIRTUAL' orof 'DERIVED' orof 'PROC'
 !      every value is a single token with a delimiter either side, so it is its own cell
-!      exactly as before and those blocks align identically.
+!      and those blocks align as a table.
 !      A ';' run is skipped outright - MergeSegments owns it, and folding a tightly written
 !      `of 35; dtype = ...` here would swallow the ';' that mode is built on. ----
 GlueTight routine
@@ -6000,12 +6092,12 @@ fz  long,auto
 ! rule loop, and counts what it moved towards the file's change total - it must never be put
 ! INSIDE the loop, because alignment that fed back into the fixpoint could not settle.
 !
-! The hard part is not the arithmetic, it is NOT MOVING THINGS THAT ALREADY AGREE. Two separate
-! bugs here let a comment column drift right through a 2 -> 4 -> 2 reindent and never come
-! back, both with the same shape: a decision that should depend only on the CODE was keyed to
-! the state the previous pass had left behind. Group membership now forms by ADJACENCY rather
-! than by current column, and the width guard measures the line as it WOULD BE at the target
-! rather than as it stands.
+! The hard part is not the arithmetic, it is NOT MOVING THINGS THAT ALREADY AGREE. A comment
+! column drifts right through a 2 -> 4 -> 2 reindent and never comes back whenever a
+! decision that should depend only on the CODE is keyed to the state the previous pass left
+! behind. So group membership forms by ADJACENCY rather than by current column, and the
+! width guard measures the line as it WOULD BE at the target rather than as it stands.
+!
 !
 ! The non-oscillation argument for the pull-left is written out in full further down this
 ! procedure. Read it before changing anything here - it is the reasoning that keeps repeated
@@ -6027,7 +6119,7 @@ opBlkQ QUEUE,PRE(bk)               ! one row per block: KEYED, so the three pass
 bkKey    long
 bkWide   long                      ! widest opCode in the block
 bkN      long                      ! how many bar rows are in the block. Two columns only mean something when there are two bars to line up - a lone bar keeps its operator beside it and joins the COMMENT column instead.
-bkOk     byte                      ! 0 = the two columns will not fit, so the WHOLE block keeps the old form
+bkOk     byte                      ! 0 = the two columns will not fit, so the WHOLE block keeps one column
        END
 
 CmtQ queue                         ! comment queue
@@ -6043,7 +6135,7 @@ opCode   long                      ! padPrev rows only: the column the CODE ends
 opGap    long                      ! spaces to write BEFORE the operator. 0 = fall back to the one-column form (operator one space in front of the bar), used when the block cannot fit two columns.
 opBar    long                      ! spaces to write between the operator and the bar. 0 with opGap.
 opRun    long                      ! which pull-left RUN this row belongs to. THE block key for the operator column, because a run is built from source adjacency and marker kind - both the same on either leg of
-                                   !   a round trip. Keying on the resulting COLUMN instead was the earlier mistake, and it made this a no-op on exactly the ragged blocks it was written to fix.
+                                   !   a round trip. Keying on the resulting COLUMN instead would make this a no-op on exactly the ragged blocks it is there to fix.
 opSz     long                      ! width of the operator token, so the fit test can be done without re-reading the token stream.
 opener   long                      ! this line OPENS a structure (tokenizer '+' level). It never SETS a column - a CLASS header 126 characters wide would
                                    !   otherwise drag the fields under it out to match - but it may TAKE one, so it settles with the block it sits in.
@@ -6061,7 +6153,7 @@ frzKind  long                      ! WHY a row is frozen, because the two reason
                                    !       it lines up with the statements it closes instead of stranding them.
 hangFrom long                      ! the row this one HANGS from - a whole-line comment written in the comment field under a trailing comment is PART
                                    !   of that comment, so it is a PASSENGER: it takes the anchor's Adjust and sets nobody's column. 0 = not one.
-hangLen  long                      ! on the ANCHOR, the longest lineLen among its passengers. Anchor and passengers travel by the SAME delta, so a width test that measured the anchor alone would miss the wider row. NO READER YET - that test is specified and deliberately not built; the loop that sets this says why
+hangLen  long                      ! on the ANCHOR, the longest lineLen among its passengers. Anchor and passengers travel by the SAME delta, so a width test that measured the anchor alone would miss the wider row. NO READER - the width test it is kept for is not applied; the loop that sets this says why
                                    !   of the two - otherwise a run is offered a column that takes the hanging text past the limit while the row with the code on it still fits.
 blkStart long                      ! this line STARTS a new block, so a comment run never crosses it. A PROCEDURE, FUNCTION or ROUTINE written in column 1, and the CODE statement inside one.
                                    !   Both are places where the KIND of line changes wholesale, so the declarations above and the statements below have no business sharing a column.
@@ -6171,14 +6263,14 @@ pqX      long                      !   wider - or, whatever its width, when it l
        END                         !   wider than the column the commented lines set (PlainReach)
 wQ     QUEUE,PRE(wq)               ! every CODE floor in the run, so the outlier test can
 wqW      long                      !   ask how wide the MIDDLE of the block is. Comparing
-       END                         !   against the next-widest instead lets two long lines shield each other - which is how a 145-character prototype set the column for a whole .inc while a
-                                   !   142-character one sat beside it.
+       END                         !   against the next-widest instead lets two long lines shield each other - so a 145-character prototype would set the column for a whole .inc while a
+                                   !   142-character one is beside it.
 opGrp         long,auto            ! bar-group counter, stamped into CmtQ.opRun
 opPrev        long,auto            !   the previous bar row, for the adjacency test
 opGrpQ QUEUE,PRE(g)                ! one row per BAR GROUP - keyed, so every reader agrees what a group is
 gKey     long
 gCode    long                      ! widest CODE in the whole statement - every member including the row that CLOSES it, operator excluded. The OPERATOR column is two past
-                                   !   this. Preprocessor.clw 614 is a lone bar whose own code ends at 8 and whose statement runs to 22, so its operator belongs at 24.
+                                   !   this. A lone bar whose own code ends at 8 and whose statement runs to 22 has its operator at 24.
 gWide    long                      ! the widest `codeEnd + 2` any bar in the group needs
 gN       long                      ! how many bars are in it
 gBack    long                      ! the widest bar-to-comment gap any bar in the group carries, so every bar in the group steps
@@ -6186,7 +6278,7 @@ gBack    long                      ! the widest bar-to-comment gap any bar in th
 gCmt     long                      ! the NARROWEST column a comment after one of the group's bars reaches riding along behind it
 gCmtN    long                      !   ... how many such comments there are. One alone has nothing to line up with
        END
-plWhy         string(10),auto      !   ... and by which branch. The pull-left floor is the whole ratchet question, and "min 88" with no answer to "whose 88?" cost an evening.
+plWhy         string(10),auto      !   ... and by which branch. The pull-left floor is the whole ratchet question, and "min 88" is no help without "whose 88?".
 plFroze       byte
 hgX           long,auto            ! the hanging-comment passes
 hgAnc         long,auto            !   the row a passenger hangs from
@@ -6215,11 +6307,11 @@ moved         long                 ! comments actually moved - the caller counts
   ! out sorted and the line loop can walk it with a monotonic cursor.
   ! WHICH OPENERS ARE HEADERS, AND WHICH ARE JUST LINES. A structure opener keeps its own
   ! column and sets nobody else's, which is right for a DECLARATION header: a CLASS line 126
-  ! characters wide put its comment at 128 and dragged every field comment under it out to
-  ! match. It is wrong for an opener inside a procedure's CODE, where `if`, `loop` and the
+  ! characters wide would put its comment at 128 and drag every field comment under it out
+  ! to match. It is wrong for an opener inside a procedure's CODE, where `if`, `loop` and the
   ! one-line `if x then y.` are ordinary statements whose comments belong to the block around
   ! them - treating those as headers splits an evenly-aligned procedure into three columns
-  ! (VitSymbols.ArgAdmits came back at 31 / 52 / 17 where the author had one column at 52).
+  ! (31 / 52 / 17 where the author had one column at 52).
   ! So the mark is only taken OUTSIDE code. CODE opens a body; the next PROCEDURE, FUNCTION
   ! or ROUTINE header closes it, and a ROUTINE has a CODE of its own.
   free(OpenQ)
@@ -6234,8 +6326,8 @@ moved         long                 ! comments actually moved - the caller counts
       of 'PROCEDURE' orof 'FUNCTION'
         opInCode = 0
       of 'ROUTINE'                                                                       ! a routine's statements ARE its code unless a DATA section
-        opInCode = 1                                                                     !   opens first - then its own CODE re-arms this. Left at 0 for
-        opLook = opTok + 1                                                               !   every routine, each `if` and `loop` in a data-less one was
+        opInCode = 1                                                                     !   opens first - then its own CODE re-arms this. If it were 0,
+        opLook = opTok + 1                                                               !   each `if` and `loop` in a data-less routine would then be
         loop                                                                             !   marked as a header
           get(self.tokens, opLook)
           if errorcode() then break.
@@ -6382,14 +6474,14 @@ moved         long                 ! comments actually moved - the caller counts
   ! its anchor moves off without it. Nothing reports that, so it is not visible from the output of
   ! one file - only from reading two columns where there should be one.
   !
-  ! *** hangLen HAS NO READER, and that is not an oversight to tidy away. *** It was put here for
-  ! the WIDTH TEST specified further down, at the `plTgt = plMin` site: measure the anchor against
+  ! *** hangLen HAS NO READER, and that is not an oversight to tidy away. *** It is here for
+  ! the WIDTH TEST described further down, at the `plTgt = plMin` site: measure the anchor against
   ! its WIDEST passenger, so a run is never offered a column that carries the hanging text past the
-  ! limit while the row holding the code still fits. That test was worked out, written down, and
-  ! never built. LEAVE THE FIELD - deleting it throws away half of a design that is still wanted.
-  ! It is not simply built because it is a layout change wearing a bug's clothes: the width arrives
-  ! as 240, and sources this tool is run over hold many lines longer than that, so honouring it would
-  ! re-wrap them - and that wants a ruling before a keyboard.
+  ! limit while the row holding the code still fits. That test is not applied. LEAVE THE FIELD -
+  ! deleting it throws away half of a design that is still wanted.
+  ! The test is a layout change, not a fix: the width arrives as 240, and sources this tool is
+  ! run over hold many lines longer than that, so honouring it would re-wrap them, which is a
+  ! change of layout to be decided on its own.
   !
   ! WHAT THIS REFUSES, and it is a real case rather than a hypothetical one: when a RULE has
   ! rewritten the code on the anchor's line, that code can grow out PAST the hanging row's
@@ -6420,8 +6512,8 @@ moved         long                 ! comments actually moved - the caller counts
     ! A whole-line comment whose text is INDENTED after the marker is the
     ! continuation of the comment above it wherever its marker sits. The position test
     ! alone misses every continuation written under an OUTLIER at the block's column,
-    ! and then freezes it there as an anchor. Measured over our own sources it catches
-    ! two rows and spares all 79 margin comments, every one of which has ONE space.
+    ! and then freezes it there as an anchor. A margin comment is written with ONE
+    ! space after its marker, so this test leaves margin comments alone.
     if CmtQ.Pos <= hgEnd and (~CmtQ.txtInd or self.cmtContNone)                     ! --cmtcont=none: an indented text is a comment of its own
       hgAnc = 0                                                                     ! at the MARGIN, not in the comment field -
       cycle                                                                         !   a comment of its own, and it ends the chain
@@ -6460,11 +6552,11 @@ moved         long                 ! comments actually moved - the caller counts
   !      Two bars belong together when they are on CONSECUTIVE lines - that is what a wrapped
   !      statement looks like, and it is the only relationship the eye reads as "these line up".
   !
-  !      The comment RUN is far too coarse for this. VitEngine.clw's run 212-292 is eighty lines
-  !      long, because a run ends only at a PROCEDURE, ROUTINE or CODE line - a gap of any size
-  !      does not end one - and that region holds no such line. Grouping bars by the run pulled
-  !      the bar on line 244 out to column 114 to match bars on 283-285 THIRTY LINES AWAY, when
-  !      the comments either side of it sit at 102.
+  !      The comment RUN is far too coarse for this. A run can be eighty lines long, because a
+  !      run ends only at a PROCEDURE, ROUTINE or CODE line - a gap of any size does not end
+  !      one. Grouping bars by the run would pull a bar out to column 114 to match bars THIRTY
+  !      LINES AWAY, when the comments either side of it sit at 102.
+  !
   !      Adjacency is a property of the source, so it is the same on both legs of a round trip -
   !      the test every rule in this procedure has to pass.
   !
@@ -6477,17 +6569,17 @@ moved         long                 ! comments actually moved - the caller counts
     get(CmtQ, x)
     if errorcode() then break.
     ! EVERY BAR, not only the ones with an operator in front. A `|` after a
-    ! string literal is just as much a wrapped line as one after `or` - VitEngine.clw
-    ! 745/746 are two `orof` rows of one CASE and their bars sat at 71 and 69, each
-    ! past its own code, because neither is padPrev and the grouping only looked at
-    ! padPrev rows. padPrev decides whether the OPERATOR gets a column of its own;
+    ! string literal is just as much a wrapped line as one after `or` - two `orof`
+    ! rows of one CASE would leave their bars at 71 and 69, each past its own
+    ! code, if the grouping looked only at padPrev rows, because neither is
+    ! padPrev. padPrev decides whether the OPERATOR gets a column of its own;
     ! it has nothing to do with where the BAR goes.
     if CmtQ.kind <> 2
       ! THE LAST LINE OF A CONTINUED STATEMENT CARRIES ITS COMMENT INTO THE
       ! SAME COLUMN AS THE BARS ABOVE IT. A row that directly follows a bar IS the closing
-      ! physical line of that statement - VitEngine.clw 747 ends the CASE label list that
-      ! 745 and 746 continue - so its trailing comment belongs where their bars are, not
-      ! wherever its own run happens to settle. It was at 48 against bars at 71.
+      ! physical line of that statement - the last row of a CASE label list ends what
+      ! the rows above it continue - so its comment belongs where their bars are, not
+      ! wherever its own run happens to settle, at 48, say, against bars at 71.
       !
       ! This is NOT a bar dragging unrelated comments out, which is forbidden:
       ! it is one statement finishing its own layout. Only the row IMMEDIATELY after a bar
@@ -6542,7 +6634,7 @@ moved         long                 ! comments actually moved - the caller counts
   ! THE OPERATORS LINE UP TWO PAST THE WIDEST LINE THAT CARRIES ONE. A member with no
   ! operator - the line that closes the statement, or a bar after a literal - sets the operator
   ! column only when it is no more than self.cmtReach (--cmtreach=) wider than that, so a slightly longer closing
-  ! line still keeps the operators clear of its text while a much longer one no longer drags
+  ! line still keeps the operators clear of its text while a much longer one does not drag
   ! them to its end. Second
   ! pass, because the closing line comes after the bars whose widest it is measured against.
   loop x = 1 to records(CmtQ)
@@ -6562,8 +6654,8 @@ moved         long                 ! comments actually moved - the caller counts
   ! THE GROUP STEPS BACK TOGETHER - ruled 10 Sep, per RUN not per row. A bar carrying a comment gives
   ! the column to the '!' and sits in front of it; a bar with nothing after it has no reason to move at
   ! all. Stepping each row back by its OWN gap would leave those two kinds of bar in DIFFERENT columns:
-  ! VitEngine.clw 13638-13650 is thirteen bars in one column, five of them commented, and per-row
-  ! stepping splits it in two and moves eight bars for no reason a reader would see. So the widest gap
+  ! thirteen bars in one column, five of them commented, would be split in two by per-row
+  ! stepping, eight bars moving for no reason a reader would see. So the widest gap
   ! in the run is what every bar in it steps back by, and a run with no comment on any bar steps back
   ! by nothing - which is exactly where it already was.
   loop x = 1 to records(CmtQ)
@@ -6621,7 +6713,7 @@ moved         long                 ! comments actually moved - the caller counts
     ! LOOK BACK FIRST. A frozen row is an anchor: it cannot move, so the column belongs to it and
     ! a run sitting just BELOW one at the same column must not be tightened away from it. Scanning
     ! FORWARD only leaves an anchor behind the cursor invisible: three CASE arms written at column
-    ! 57 to match a frozen comment seven lines above get pulled back to 55 on their own, out of
+    ! 57 to match a frozen comment seven lines above would be pulled back to 55 on their own, out of
     ! step with the block they belong to.
     do PullLookBack                                                                 ! may set plFroze
     loop while plEnd + 1 <= records(CmtQ)                                           ! how far does this column run?
@@ -6671,15 +6763,15 @@ moved         long                 ! comments actually moved - the caller counts
       !     if CmtQ.Pos + CmtQ.Adjust <> plCol then break.
       ! and that one line is a ratchet: membership decides the run's floor (the widest
       ! member's code), the floor decides the column, and membership would be keyed on the very
-      ! thing the previous pass just changed - so the answer depends on where the comments came
-      ! in, not on the code. Measured on Parser.clw, the SAME rows at indent 2:
+      ! thing the previous pass just changed - so the answer would depend on where the comments
+      ! came in, not on the code. The SAME rows at indent 2, read on two legs of a round trip:
       !     leg 1  PL run 1019-1021  col 32 min 29  -> PULL 3   -> column 29
       !     leg 3  PL run 1019-1033  col 31 min 31  -> stay     -> column 31
       !     leg 1  PL run 1293-1305  col 76 min 76  -> stay     -> column 76
       !     leg 3  PL run 1293-1306  col 95 min 89  -> PULL 6   -> column 89
-      ! Same code, same floors, different RUN BOUNDARIES, so different answers - and 70 of the
-      ! 77 markers that differ across such a round trip sit at exactly the column the previous
-      ! leg left them in. So a group has to be decided by the SOURCE and not by where the last leg
+      ! Same code, same floors, different RUN BOUNDARIES, so different answers - and the markers
+      ! that differ across such a round trip sit at exactly the column the previous leg left
+      ! them in. So a group has to be decided by the SOURCE and not by where the last leg
       ! put the comments. It is: a run spans from one PROCEDURE, ROUTINE or CODE line to the next
       ! and takes either marker, and a gap of any size does not end it. That is a property of the
       ! source, so both legs build the same groups and compute the same column.
@@ -6693,20 +6785,20 @@ moved         long                 ! comments actually moved - the caller counts
       ! PullLookBack, which declines to LAND on a block of a different marker, and to --acdiag.
       ! WHAT LIMITS THE TIGHTENING IS THE WIDEST MEMBER'S CODE, not the kind of marker it carries.
       ! A continuation sits at the end of a long statement and a comment at the end of a short
-      ! declaration, and the run can only tighten as far as its widest member allows. On ParserV2
-      ! two declaration comments at column 80 could move back only THREE characters, because a
-      ! wrapped `if` two lines below happened to put its '|' in the same column and its code ran
-      ! to 75 - the member, not the mechanism, is what to look at when --acdiag reports a small
+      ! declaration, and the run can only tighten as far as its widest member allows. Two
+      ! declaration comments at column 80 can move back only THREE characters when a wrapped
+      ! `if` two lines below puts its '|' in the same column and its code runs to 75 - the
+      ! member, not the mechanism, is what to look at when --acdiag reports a small
       ! adjustment where a large one is due.
       ! a frozen row is an anchor for the WHOLE block, so it is INCLUDED in the run
       ! and does not end it. Break here and the rows after the anchor start a fresh run with no
-      ! anchor in it, and that one gets pulled left on its own - which is how three CASE arms
+      ! anchor in it, and that one gets pulled left on its own - so three CASE arms would
       ! land at column 56 while the commented lines above and below them stay at 58.
       ! AN ANCHOR RAISES THE GROUP'S FLOOR; IT DOES NOT VETO THE GROUP. A frozen row cannot
       ! move, so the group simply cannot tighten past it - which is a floor, and says so. A
       ! veto is too blunt: it also stops a group that has merely been PUSHED onto an anchor's
-      ! column from ever coming back, and that is one of the two shapes the
-      ! ratchet took. Treating it as a floor keeps every case the veto was protecting (the group
+      ! column from ever coming back, and that is one of the two shapes a
+      ! ratchet takes. Treating it as a floor keeps every case a veto would protect (the group
       ! still cannot leave its anchor) while letting everything else settle where the code says.
       if CmtQ.freeze and CmtQ.frzKind <> 2                                          ! an `end ! text` row raises NO floor - its own one word of code says nothing about where the block's comments belong
         if CmtQ.Pos + CmtQ.Adjust + CmtQ.cmtBack > plNonCode
@@ -6739,9 +6831,9 @@ moved         long                 ! comments actually moved - the caller counts
     if plNbr > acLimit then plNbr = 0.                                              ! nor does the block above, past it
     if plNbr and plNbr > plMin then plMin = plNbr ; plWho = 0 ; plWhy = 'nbr'.      ! the block above is a floor too, not a ceiling
     ! --acdiag REPORTS THE PULL-LEFT DECISION, which is the one that decides whether a block
-    ! can give space back - i.e. whether 2 -> 4 -> 2 returns. Measured on Parser.clw: of 77
-    ! markers that differ across the round trip, 70 sit at EXACTLY the column out4 left them
-    ! in, so the pull is declining 70 times and nothing said why.
+    ! can give space back - i.e. whether 2 -> 4 -> 2 returns. A marker that differs across
+    ! the round trip mostly sits at EXACTLY the column the previous leg left it in, so the pull
+    ! is declining there, and without this line nothing would say why.
     if self.acDiag
       self.TraceIt('PL run ' & pl & '-' & plEnd & ': col-in ' & plCol & ' min ' & plMin       & |
                    ' kind ' & plKind & ' nbr ' & plNbr                                        & |
@@ -6760,9 +6852,9 @@ moved         long                 ! comments actually moved - the caller counts
         end
                                                                 !   An `end ! text` row set no floor, so it is free to
                                                                 !   be SET to the block's column HERE - and only here.
-                                                                !   Nothing may move it afterwards: when that was
-                                                                !   tried the 2-4-2 round trip stopped returning on 8
-                                                                !   files, not 3. THERE IS NO CAP ON A TOTAL MOVE
+                                                                !   Nothing may move it afterwards: a later move
+                                                                !   would stop the 2-4-2 round trip returning on
+                                                                !   more files. THERE IS NO CAP ON A TOTAL MOVE
                                                                 !   anywhere in this procedure - do not reason from one.
                                                                 !   `end ! text` is not one: it sets no floor, so
                                                                 !   it is free to land on the block's column.
@@ -6809,8 +6901,8 @@ moved         long                 ! comments actually moved - the caller counts
         ! come back. A RUN DOES NOT REACH ACROSS A PROCEDURE: it ends at a PROCEDURE, FUNCTION
         ! or ROUTINE line in column 1 and at the CODE statement inside one, and a gap of any
         ! size does not end one.
-        ! NO ROW EVER COMES LEFT OF ITS OWN CODE. Written for a header, which may take the
-        ! block's column but never set it; it now covers ANY row for the same reason, because the
+        ! NO ROW EVER COMES LEFT OF ITS OWN CODE. A header may take the block's column but
+        ! never set it; this covers ANY row for the same reason, because the
         ! bar rule above creates a second kind of non-voting row. Both need the identical
         ! treatment - take the block's column when it clears your code, your own floor when it
         ! does not - so they get one rule rather than two. Without this a wide bar that did not
@@ -6827,19 +6919,19 @@ moved         long                 ! comments actually moved - the caller counts
   end
 
   ! ---- THE PASSENGERS TRAVEL ----------------------------------------------
-  ! Every column has now been decided - each run has been put where its code says it goes -
-  ! so a passenger can now be told where its anchor went.
-  ! It lands on the anchor's COLUMN, and the first cut of this took the anchor's ADJUST instead -
-  ! on the argument that a hanging row written one character left of the row above (36 under
-  ! 37, in one real file) is the author's own offset and should survive. The fixture
-  ! refused that: AlignDeclTypes runs BEFORE this routine and had re-columned the declaration,
-  ! moving the anchor's marker one right, so the delta preserved a stagger the author never
-  ! wrote - anchor at 73, its own two rows at 72. Landing on the column cannot do that, and the
-  ! real files agree it is what authors mean: VitRules.inc 178-185 and VitEngine.inc 155-159 both
-  ! have anchor and hanging rows written at exactly the same column. The indentation INSIDE a
+  ! Every column has been decided by here - each run has been put where its code says it goes -
+  ! so a passenger can be told where its anchor went.
+  ! It lands on the anchor's COLUMN, not by the anchor's ADJUST. Taking the ADJUST would keep a
+  ! hanging row written one character left of the row above (36 under 37) as the author's own
+  ! offset - but AlignDeclTypes runs BEFORE this routine and may have re-columned the
+  ! declaration, moving the anchor's marker one right, so the delta would preserve a stagger
+  ! the author never wrote - anchor at 73, its own two rows at 72. Landing on the column cannot
+  ! do that, and it is what authors mean: a comment continued under itself is written with
+  ! anchor and hanging rows at exactly the same column. The indentation INSIDE a
   ! hanging comment ('!   this one') is text after the marker and survives either way.
   ! It works whichever way the anchor moved, which matters - both directions are real, and the
   ! pull-left one only shows up on files whose comments sit far right of short code.
+  !
   !
   ! This runs BEFORE the --acdiag block on purpose, so the diagnostic reports the columns that
   ! actually reach the file rather than the state one pass earlier.
@@ -6862,10 +6954,10 @@ moved         long                 ! comments actually moved - the caller counts
 
   ! ---- DIAGNOSTIC, --acdiag only. Transforms nothing. Runs LAST, after the pull-left
   !      pass, so it reports the state that actually reaches the file. Placed BEFORE the
-  !      pull-left it reports everything as fine - true at that point, and useless, because the
-  !      lines it stays silent about are exactly the ones moved afterwards.
-  !      Three times now this arithmetic has been read as correct and three times the output has
-  !      disagreed, so this reports what it actually decided per line instead of what it looks
+  !      pull-left it would report everything as fine - true at that point, and useless, because
+  !      the lines it stays silent about are exactly the ones moved afterwards.
+  !      This arithmetic reads as correct more easily than it is, so this reports what it
+  !      actually decided per line instead of what it looks
   !      like it should decide. For every row that ends up at a DIFFERENT column from the row
   !      above it, print both, and the reason it could not be moved. Read the two columns and
   !      the reason together - a row that says `frozen` when it plainly has code before its
@@ -6897,13 +6989,13 @@ moved         long                 ! comments actually moved - the caller counts
   ! now adjust comment positions in tokens Q
   ! ---- GIVE THE TRAILING OPERATOR A COLUMN OF ITS OWN. ----
   !
-  ! Until now the operator had no column. It was placed FROM the bar - `Pos + Adjust - codeEnd - 1`
-  ! - so it landed at whatever "three left of the bar" happened to be, and moved whenever the
-  ! COMMENT column moved. Two things sat in one column and only one of them meant anything.
+  ! Placed FROM the bar - `Pos + Adjust - codeEnd - 1` - an operator lands at whatever "three
+  ! left of the bar" happens to be, and moves whenever the COMMENT column moves: two things in
+  ! one column and only one of them meaning anything.
   !
-  ! Now there are two columns and each is decided by something real:
+  ! So there are two columns and each is decided by something real:
   !     the OPERATOR column comes from the CODE  - two past the widest code in the block
-  !     the BAR column stays the COMMENT column  - where it always was
+  !     the BAR column stays the COMMENT column  - where it already is
   !
   !     if param.FindChars(' --batch ')    or |          code ends at 33, so `or` sits at 35
   !        param.EndsWith(' --batch')      or |          and the bars stay where they were
@@ -6913,19 +7005,19 @@ moved         long                 ! comments actually moved - the caller counts
   ! whole procedure lives or dies by. opCode is the code end WITHOUT the operator - if the
   ! operator were included, a run holding both `and` and `or` would give itself a different
   ! column depending on which row was widest, and the answer would depend on the operators
-  ! rather than on the code. A whole round was once spent recovering this property after
-  ! the comment aligner keyed a decision on the thing the previous pass had just written. ***
+  ! rather than on the code. Lose this property - key a decision on the thing the previous
+  ! pass has just written - and repeated runs stop agreeing. ***
   !
   ! A BLOCK IS A PULL-LEFT RUN - CmtQ.opRun, stamped where the runs are formed. A run is built
   ! from source ADJACENCY and marker KIND, so it is the same on both legs of a round trip.
   !
-  ! *** THE FIRST CUT KEYED ON `Pos + Adjust` - the column the rows had ALREADY been given - and
-  ! that is that mistake verbatim. Rows whose bars were ragged (VitEngine.clw 283/284 at
-  ! column 102, 285 at 109) landed in three separate blocks, each computed its own operator
-  ! column, and NOTHING MOVED. The pass was a no-op on precisely the blocks it exists to fix.
+  ! *** KEYING ON `Pos + Adjust` - the column the rows have ALREADY been given - would be
+  ! that mistake verbatim. Rows whose bars are ragged (two at column 102, one at 109) would
+  ! land in three separate blocks, each compute its own operator column, and NOTHING would
+  ! MOVE: a no-op on precisely the blocks the pass exists to fix.
   ! A ragged answer can never be the key that groups the rows which are to be un-ragged. ***
   !
-  ! IF THE TWO COLUMNS WILL NOT FIT, THE WHOLE BLOCK KEEPS THE OLD FORM. Falling back per-ROW
+  ! IF THE TWO COLUMNS WILL NOT FIT, THE WHOLE BLOCK KEEPS ONE COLUMN. Falling back per-ROW
   ! would leave one row placed from the code and its neighbour placed from the bar, which reads
   ! worse than either rule applied consistently. opGap = 0 is that fallback and the apply below
   ! reads it.
@@ -6964,9 +7056,9 @@ moved         long                 ! comments actually moved - the caller counts
     get(opBlkQ, opBlkQ.bkKey)
     if errorcode() then cycle.
     ! THE OPERATOR IS ANCHORED TO THE CODE, NOT TO THE BAR - that is --cmtop=code, the default. Two past the
-    ! widest code in the BLOCK - Preprocessor.clw 614 is a lone bar whose own code ends at
-    ! 8, in a block that runs to 22, and the operator belongs at 24. An earlier form switched this
-    ! off for a lone bar, and another measured it over the bar group; both were too narrow.
+    ! widest code in the BLOCK - a lone bar whose own code ends at 8, in a block that runs
+    ! to 22, has its operator at 24. Switching this off for a lone bar, or measuring it over
+    ! the bar group alone, would both be too narrow.
     ! --cmtop=bar anchors it to the BAR instead: the operator ends one space before the bar, whatever
     ! column the code stops at. The fit test below refuses the block either way when the code crowds it.
     opGrpQ.gKey = opKey                                                             ! FETCH the group before reading gCode -
@@ -7025,17 +7117,17 @@ moved         long                 ! comments actually moved - the caller counts
     if ~CmtQ.Pos then self.TraceIt('VitTokenize.AlignComments: unexpected lack of comment pos on line ' & x);cycle.
     acShift = 0 ; acCounted = 0 ; acBarTok = 0
 
-! vers1: following code did not allow for breaks in line numbers where there is a complete comment line
+! not this: a keyed get alone does not allow for breaks in line numbers where there is a complete comment line
 !    self.Tokens.lineNo = x+1  ! get first token of line after
 !    get(self.tokens,self.Tokens.lineNo)
 
-! vers2: following code mucked up other things - perhaps because the sort is not "stable"
+! nor this: re-sorting upsets other things - the sort is not "stable"
 !    sort(self.tokens, +self.Tokens.lineNo)
 !    clear(self.tokens)
 !    self.Tokens.lineNo = x+1  ! get first token of line after
 !    get(self.tokens,position(self.tokens))  ! do this to allow for breaks in line numbers where there is a complete comment line
 
-! vers3: first try vers 1 then if fails start at current line number and read forward until line number changes
+! so: first try the keyed get, then if it fails start at current line number and read forward until line number changes
     self.Tokens.lineNo = x+1                                                        ! get first token of line after
     get(self.tokens,self.Tokens.lineNo)
     if errorcode()
@@ -7173,17 +7265,17 @@ ngFire long,auto
       if self.Tokens.strBefore[ngZ] <> ' ' then break.
       ngSp += 1
     end
-    ! the gap between the operator and the bar was always squeezed to ONE space,
-    ! which is what locked the two into a single column. With opBar set they are two
+    ! squeezing the gap between the operator and the bar to ONE space locks the
+    ! two into a single column. With opBar set they are two
     ! separate columns - the operator on the code, the bar on the comments - so the gap
-    ! between them is whatever carries the bar out to where it already was. opBar is 0
-    ! when the block could not fit two columns, and then this is the old one-space rule.
+    ! between them is whatever carries the bar out to where it already is. opBar is 0
+    ! when the block could not fit two columns, and then this is the one-space rule.
     ! EXACT placement only where this actually gave this row a column. Where it
     ! did not (opBar = 0) the one-column rule stands - squeeze a gap of more than one
-    ! space, and leave a gap of none alone. Firing on ngSp <> 1 instead made the pass INSERT
-    ! a space into `&|`, which is a spelling change on rows the operator pass never touched, and it
-    ! showed up as the tool rewriting its own reservedWords list. Widening a rule
-    ! past the thing it was written for is how a layout round grows a second, unasked change.
+    ! space, and leave a gap of none alone. Firing on ngSp <> 1 instead would make the pass
+    ! INSERT a space into `&|`, a spelling change on rows the operator pass never touched -
+    ! a long `&|` list of words would come back respaced. Widening a rule past the
+    ! thing it is for is how a layout pass grows a second, unasked change.
     ngWant = 1
     ngFire = 0
     if CmtQ.opBar > 0
@@ -7360,7 +7452,7 @@ CbEndLine routine
     ! Freezing it here as an ANCHOR would leave an odd one out odd for ever: a frozen row
     ! may not move, so three rows at 82 and one at 83 could never be brought into line.
     !
-    ! Removing them was tried and WITHDRAWN - some banners carry a `!` on the right-hand
+    ! They are not removed - some banners carry a `!` on the right-hand
     ! side as a border, and a pass that deletes an empty trailing marker would take those
     ! with it. There is no way to tell a leftover from a border by looking at the marker,
     ! so the tool does not try: it lines them up and leaves the judgement to the author.
@@ -7427,19 +7519,19 @@ CbEndLine routine
 !      not past the limit (90); a line whose code ends past it keeps its comment at its own end,
 !      which the apply loop's "never left of your own code" rule does on its own. A block with
 !      no line under the limit at all takes the widest floor within --cmtslack (60) of its
-!      narrowest. The limit is stated from the reader's side - "comments went out to the right"
-!      was the complaint that started all of this - and it reproduces the author's own layout
-!      wherever that layout was good. Two other definitions were built and withdrawn first: a
-!      percentile ("at most 15% may be outliers") let the six widest rows of one procedure sit
-!      out although every one was within reach and turned one column into four; a budget from
-!      the narrowest row let one `cycle ! why` at indent 4 make outliers of everything wider
-!      than 70. Modelled and measured before it was built, and again before each change.
+!      narrowest. The limit is stated from the reader's side - comments must not go out to the
+!      right - and it reproduces the author's own layout wherever that layout is good. Two
+!      other definitions fail: a percentile ("at most 15% may be outliers") lets the six
+!      widest rows of a procedure sit out although every one is within reach, and turns one
+!      column into four; a budget from the narrowest row lets one `cycle ! why` at indent 4
+!      make outliers of everything wider than 70.
+!
 !      AND, IF YOU ASK FOR IT, ONE VERY WIDE LINE DOES NOT DRAG ITS BLOCK OUT. Give --cmtoutlier
 !      a number and a floor more than that past the MIDDLE of the block stops setting the column:
 !      it keeps its own comment at its own end and the rest stay where they were. OFF unless
 !      asked for. The MIDDLE, not the next line down: comparing against the next-widest lets
-!      two long lines shield each other - a 145-character prototype beside a 142 took a whole
-!      file out to 148 while the declarations around them were 27 wide.
+!      two long lines shield each other - a 145-character prototype beside a 142 would take a
+!      whole file out to 148 while the declarations around them are 27 wide.
 BulkColumn routine
   data
 bcN    long,auto
@@ -7476,11 +7568,11 @@ bcAst  long,auto ! --acdiag only: rows STRANDED above the column
   ! bulk past it and one narrow line under it - it does the opposite: the narrow line sets a
   ! column none of the others can reach without landing on their own code, so each keeps its own
   ! end and one column becomes as many columns as there are lines. Four prototypes sharing column
-  ! 106, floors 81, 99, 95 and 103, came back at 83, 99, 95 and 103. So when the cap leaves a column
+  ! 106, floors 81, 99, 95 and 103, would come back at 83, 99, 95 and 103. So when the cap leaves a column
   ! exactly ONE row can use, it is set aside and the run is measured the way a run ENTIRELY past the
   ! limit already is - the budget from the narrowest - which puts those four in one column at 103.
   ! ONE row, not a minority: the limit is still what stops a long line dragging a block out to meet
-  ! it, and a column two rows share is a column. Found 15 Sep 2026.
+  ! it, and a column two rows share is a column.
   if bcCol and bcSrv = 1 and bcN > 2
     bcCol = 0 ; plWhy = 'straddle'
   end
@@ -7531,11 +7623,11 @@ bcAst  long,auto ! --acdiag only: rows STRANDED above the column
 ! ---- --cmtkeep=aligned: A RUN THAT IS ALREADY IN ONE COLUMN NEEDS NOTHING, SO NOTHING IS
 !      DONE TO IT. The aligner exists to put ragged comments in one column; a run whose
 !      comments are ALREADY in one column, and whose column still clears every one of them,
-!      has nothing wrong with it, and every move from there is damage. Two shapes brought it:
-!      four prototypes sharing a column their code STRADDLES the limit on, which came back in
-!      four columns because only the narrowest floor was under the limit and the other three
-!      could not reach it; and a statement run whose shared column cleared a wide plain line
-!      in the middle of it, which came back tightened to the left of that line.
+!      has nothing wrong with it, and every move from there is damage. Two shapes need it:
+!      four prototypes sharing a column their code STRADDLES the limit on, which would come back
+!      in four columns because only the narrowest floor is under the limit and the other three
+!      cannot reach it; and a statement run whose shared column clears a wide plain line
+!      in the middle of it, which would come back tightened to the left of that line.
 !
 !      TWO OR MORE ROWS, because one row is not aligned with anything, and no BAR in the run,
 !      because a bar takes its column from the other bars rather than from the comments and
@@ -7543,24 +7635,24 @@ bcAst  long,auto ! --acdiag only: rows STRANDED above the column
 !
 !      IT LOOKS AT WHERE THE COMMENTS ALREADY ARE, which every other arm here refuses to do,
 !      because computing the column from the CODE is what makes 2 -> 4 -> 2 come back. So the
-!      ratchet was the thing to check, and it was measured rather than argued: indent 2 -> 4 -> 2
-!      over VitMatch.clw with it on every leg brings out2a back identical to out2, and so does the
-!      same round trip with it off. The reason is that a reindent moves a line WHOLE - the comment
+!      ratchet is the thing to check, and it does not arise: indent 2 -> 4 -> 2 with this on
+!      every leg brings the file back identical, and so does the same round trip with it off.
+!      The reason is that a reindent moves a line WHOLE - the comment
 !      travels with the code in front of it - so a run that was already in one column is still in
 !      one column at the other indent, and the column it is held at tracks the code after all.
 !
 !      IT IS THE DEFAULT, AND THE SCOPE IT JUDGES OVER IS WHAT MAKES THAT SAFE. Weighed over a whole
-!      RUN it could not be a default, for two reasons that were measured rather than argued: a file
-!      stops round-tripping, because whether a run is already aligned is a property of the INPUT and
+!      RUN it could not be a default, for two reasons, both measured: a file would stop
+!      round-tripping, because whether a run is already aligned is a property of the INPUT and
 !      the input differs between the source and a reindented copy of it (one run held at 44 on one
-!      leg and at 42 on the other); and --cmtreach, --cmtfloor=all and --cmtrun go INERT on their
-!      own specimens, which are written tidily, because a rule holding the whole run holds them too.
+!      leg and at 42 on the other); and --cmtreach, --cmtfloor=all and --cmtrun would go INERT on
+!      any tidily written block, because a rule holding the whole run holds them too.
 !      SO EACH GROUP OF NEIGHBOURING COMMENTS IS WEIGHED ON ITS OWN. A ragged comment anywhere in a
 !      long block cannot switch the rule off for the tidy groups in it, and a group being held
-!      cannot switch every other rule off for the rows outside it. The fixture specimens for those
-!      switches are cut RAGGED so each switch proves itself, and the two round-trip legs run
-!      --cmtkeep=off, because they exist to prove the ALIGNER computes its column from the CODE
-!      while this is a REFUSAL layer above it. A second 2 -> 4 -> 2 cycle comes back
+!      cannot switch every other rule off for the rows outside it. Those switches show only on
+!      a RAGGED block, and a reindent round trip run with --cmtkeep=off shows the ALIGNER
+!      itself computing its column from the CODE, while this is a REFUSAL layer above it. A
+!      second 2 -> 4 -> 2 cycle comes back
 !      byte-identical, so the tool settles after one pass and does not drift.
 KeepAligned routine
   data
@@ -7611,10 +7703,10 @@ kaX    long,auto
   ! actually SAW the whole run. The walk stops at the first `opRun` row - a '|' continuation,
   ! whose column the bar rules own - and `kaSeen` then counts only the rows ABOVE that bar. Without
   ! `kaWhole` a tidy pair of comments followed later in the same procedure by a wrapped statement
-  ! made kaKept = kaSeen vacuously and turned AlignComments OFF for every row past the bar. The
+  ! would make kaKept = kaSeen vacuously and turn AlignComments OFF for every row past the bar. The
   ! per-row `keepRow` marks are what actually hold a kept group; this flag is only the shortcut for
   ! the case where they cover everything, and a shortcut that fires when the walk stopped early is
-  ! not a shortcut. Found by review, 16 Sep 2026; it was live on a default run.
+  ! not a shortcut - on a default run it would switch the aligner off.
   if kaWhole and kaKept and kaKept = kaSeen then plKeep = 1.
 
 ! ---- bank the group that just ended: if its comments already share ONE column and that column
@@ -7642,9 +7734,9 @@ kbSv long,auto
 ! ---- THE REACH: a plain line that touches a commented one lifts the column when it is no more
 !      than self.cmtReach (--cmtreach=, 3 as shipped) wider than the column BulkColumn set,
 !      never past the limit.
-!      Modelled before it was built: on our own sources 611
-!      comment rows move, by one or two columns, whole blocks at a time; counting a plain line
-!      ANYWHERE in the block would have moved 1,156, most of them for a line nowhere near them.
+!      So comment rows move by one or two columns, whole
+!      blocks at a time; counting a plain line ANYWHERE in the block would move about twice
+!      as many, most of them for a line nowhere near them.
 PlainReach routine
   data
 prN    long,auto
@@ -7662,11 +7754,11 @@ prBase long,auto
       ! OUT OF REACH, AND THAT SETTLES IT ONLY FOR A LINE AT THE EDGE OF THE RUN. A plain line
       ! lying BETWEEN two commented rows is INSIDE the column those rows share, and a column that
       ! comes left of code in its own run is a stagger, not alignment: a statement run sharing
-      ! column 49 came back at 37, left of a line in the middle of it whose code runs to 44. The
+      ! column 49 would land at 37, left of a line in the middle of it whose code runs to 44. The
       ! reach is there to stop a line NEAR the run voting from too far away, which is still what
       ! it does at the edges. An inner line gets its OWN reach, --cmtinner, and not the limit:
-      ! unbounded it re-columned 1,460 lines of our own eighteen sources, whole blocks at a time,
-      ! because a wide statement between two comments dragged the column out to meet it. Found 15 Sep 2026.
+      ! unbounded it would re-column whole blocks at a time across a code base, because a wide
+      ! statement between two comments would drag the column out to meet it.
       if ~self.cmtInner then cycle.                  ! --cmtinner=0: the inner rule is off
       if ~pQ.pqX or pQ.pqX >= plLast then cycle.
       if pQ.pqW > prBase + self.cmtInner then cycle. ! inside the run, but too far out even for that
@@ -7704,9 +7796,9 @@ sv  long,auto
     ! but it is answered by --cmtlimit, not by withholding the vote: the widest floor UNDER THE
     ! LIMIT sets the column, and a row past the limit simply keeps its own end.
     ! The marker test below is this walk's own and decides only what to LAND on, never membership.
-    ! Landing is a different power. Breaking here as well made a single '|' row a WALL: the rows
-    ! below it could not see the column established above it, so one comment continued across a
-    ! wrapped condition came out in three columns - the heading and its first rows on the block's
+    ! Landing is a different power. Breaking here as well would make a single '|' row a WALL: the
+    ! rows below it could not see the column established above it, so one comment continued across
+    ! a wrapped condition would come out in three columns - the heading and its first rows on the block's
     ! column, the wrapped row on its own, and every row after it tightened to its own code as
     ! though nothing preceded it. Skipping instead is the same treatment a passenger gets above,
     ! and for the same reason: this row is not the thing to land on, so look past it.
@@ -7722,9 +7814,9 @@ sv  long,auto
       break
     end
                                                               !   a header, not the block we should land on. Letting a
-                                                              !   CLASS/QUEUE header be the floor candidate is how the
-                                                              !   fields under it kept its column even after the run
-                                                              !   itself stopped including it.
+                                                              !   CLASS/QUEUE header be the floor candidate lets the
+                                                              !   fields under it keep its column though the run
+                                                              !   itself does not include it.
     ! THIS is the block above us, and it is where we should land. Tightening a group
     ! to its own narrowest fit is right when it stands alone, but wrong when there is a column
     ! established immediately above it - it leaves the group one or two characters adrift, which
@@ -7744,7 +7836,7 @@ sv  long,auto
 
 !==================
 VitTokenize.FindNotInLiteralOrComment PROCEDURE  (stringTheory pSt, string pNeedle,long pStartCol, long pNoCase) !,long ! Declare Procedure
-! added here from vtxadiff GCR 23Sep2023
+! finds pNeedle on the line outside any literal or comment
 x        long,auto
 inQuotes long
   code

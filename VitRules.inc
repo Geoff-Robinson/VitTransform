@@ -15,9 +15,9 @@
 vr:maxName            EQUATE(50)
 vr:maxType            EQUATE(255)                                                     ! a TYPESET member is a Clarion type name, so it gets the tokenizer's own identifier width, not the rule language's 50
 vr:nfCharName         EQUATE(1)                                                       ! NOTE(charname(mv)) - print <line feed> rather than '<10>'
-vr:version            EQUATE('2.0.0')                                                 ! the release, as every report prints it. THREE PARTS, and it must match the git tag on GitHub exactly - a release that calls
+vr:version            EQUATE('2.0.1')                                                 ! the release, as every report prints it. THREE PARTS, and it must match the git tag on GitHub exactly - a release that calls
                                                                                       !   itself one thing in its reports and another on its download page gives a bug reporter two names for the same build
-vr:buildNo            EQUATE(359)                                                     ! this engine's build number, compared against a rule file's NEEDBUILD line. KEEP IT MOVING WITH THE RELEASE:
+vr:buildNo            EQUATE(360)                                                     ! this engine's build number, compared against a rule file's NEEDBUILD line. KEEP IT MOVING WITH THE RELEASE:
                                                                                       !   a build number that stands still while the engine changes makes NEEDBUILD refuse rule files this engine could
                                                                                       !   in fact run, and it does that SILENTLY - only a rule file asking for a build in the gap ever notices.
 vr:maxMsg             EQUATE(512)
@@ -83,6 +83,7 @@ vr:ctNotNumber        EQUATE(15)                                                
 vr:ctPlain            EQUATE(16)                                                      ! isPlain(mv) - the binding is a plain StringTheory local: only the code around it can reach it, and nothing there marks, streams or hands it on. The in-place respellings of setValue keep the base64 and encoding marks setValue clears, so they need it
 vr:ctMarksSafe        EQUATE(17)                                                      ! marksSafe(mv) - the binding is safe to treat without its base64 and encoding marks: under --ignoremarks any binding, else as isPlain(mv). For a respelling whose only difference from the original is those marks
 vr:ctNoConcat         EQUATE(18)                                                      ! noConcat(mv) - the binding has no & outside brackets: & binds looser than + and -, so a binding holding one regroups wherever it lands next to them
+vr:ctWhole            EQUATE(19)                                                      ! isWhole(mv) - every operand of the binding is a whole number: integer literals, names declared with a whole-number type, + - * % and brackets. A LONG parameter truncates a sum's fraction once, so a rule that splits the sum needs it
 vr:ctBoolExpr         EQUATE(8)                                                       ! isBoolExpr(mv) - the binding HAS a depth-0 logical operator, so it is a LOGICAL expression and its value is 1 or 0. The exact
                                                                                       !   complement of isSimple, and both are SpanHasBoolOp: isSimple asks "is the comparator still the root", this asks "is the root
                                                                                       !   a logical operator". WHERE has no negation, so the complement has to be its own name rather than `not isSimple(mv)`.
@@ -325,6 +326,7 @@ PosOutsideQuotes       Procedure(StringTheory pSt, STRING pNeedle, LONG pStart=1
 FindOptionStart        Procedure(StringTheory pSt),LONG,virtual                       ! pos of the first WHERE/NOTE/ONCE/SKIP/EXPRSTART/EXPREND/INPARENS/NAME at depth 0, else 0
 TakesOperand           Procedure(STRING pWord),LONG,virtual                           ! true for a statement head the language follows with an operand (RETURN, DO, GOTO, IF, ...) - the loader uses it to catch a lost one
 QuoteCount             Procedure(StringTheory pSt),LONG,virtual                       ! quote-byte count; callers test PARITY (odd = a quote is unterminated - doubled '' counts 2, so the test is escape-blind)
+TabsOutsideQuotes      Procedure(StringTheory pSt),virtual                            ! a tab outside quotes becomes a space; a tab inside a literal is part of it and is kept
 MatchingParen          Procedure(StringTheory pSt, LONG pOpenPos),LONG,virtual        ! pos of matching ')' resp. quotes
 IsLabelToken           Procedure(STRING pTok),LONG,virtual
 IsLabelChar            Procedure(STRING pCh),LONG,virtual                             ! single-CHAR class test (letters/digits/_/:) - IsLabelToken on one char rejects digits, which made digits word boundaries

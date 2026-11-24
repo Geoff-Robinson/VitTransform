@@ -316,6 +316,7 @@ CcRecvText             Procedure(LONG pIx),STRING,virtual                       
 BuiltinDirectReadEquals Procedure(StringTheory pLog),LONG,virtual                      ! a compare of two StringTheorys with a side read straight from the buffer becomes equals(), as st-equals writes the getValue() one
                                                                                        !   moves to the read and the store line goes. MOVES CODE: opt-in, own group, OFF
 IsuSpanText            Procedure(LONG pS, LONG pE, StringTheory pOut),virtual          ! a token span rendered with its ORIGINAL spacing (strBefore), unlike MgSpanText which joins with one space
+IsuNearMark            Procedure(LONG pFrom, LONG pTo),BYTE,virtual                    ! 1 = a store or its reads sit beside or inside code the always-true test marked
 IsuStmtEnd             Procedure(LONG pFirst),LONG,virtual                             ! last token of the statement starting at pFirst, or 0 if it is continued with '|' or runs off the end
 IsuNextStmt            Procedure(LONG pAfter),LONG,virtual                             ! first token of the next statement after pAfter, skipping EOLs; 0 = none
 IsuIsWrite             Procedure(LONG pTok),LONG,virtual                               ! is pTok WRITTEN - next token '=' - rather than read? A write KILLS an earlier store
@@ -377,6 +378,7 @@ InstrOneChar           Procedure(LONG pS, LONG pE),BYTE,virtual                 
 ValuePtrPick           Procedure(STRING pNameU, LONG pAt),LONG,virtual                 ! 1 = pNameU is a StringTheory's valuePtr, so a single-index pick of it is one character
 ArmOfExecute           Procedure(LONG pTok),LONG,virtual                               ! the EXECUTE whose ARM the statement at pTok is (innermost block only), or 0
 UsedInLocalMethods     Procedure(STRING pNameU, LONG pProcStart, LONG pProcEnd),LONG,virtual ! the name is used in a method of a class the procedure declares - they share its locals
+UlmFill                Procedure(LONG pProcStart, LONG pProcEnd),virtual
 ObjEscapes             Procedure(STRING pNameU, LONG pAtTok),BYTE,virtual              ! 1 = the object can be read without being named: a parameter, a reference, a local class's method, handed whole to a call
 NameHolds              Procedure(STRING pOuterU, STRING pNameU),LONG,virtual           ! 1 = pNameU is a member of pOuterU, at any depth: SELF holds SELF.BUF
 ObjReach               Procedure(STRING pNameU, LONG pAt, BYTE pWhat),STRING,virtual   ! why the object can be reached unseen, or blank: 1 a reference or a call that may keep one, 2 its Stream(), 4 the summaries are built, 8 only its lines matter
@@ -399,6 +401,7 @@ TryStartHoist          Procedure(LONG pIfTok, LONG pElseTok, LONG pEndTok, Strin
 StartMove              Procedure(LONG pSrc, LONG pDst, LONG pNum),virtual              ! backward block relocation (pDst<pSrc), order-preserving, via per-token MoveTok
 MoveLinesAbove         Procedure(LONG pSrc, LONG pDst, LONG pNum),virtual              ! StartMove of whole lines in front of the line at pDst; a folded OMIT block stays above them
 FirstEolAfter          Procedure(LONG pTok),LONG,virtual                               ! first <10> token after pTok (0 if none)
+FirstEolOrEnd          Procedure(LONG pTok),LONG,virtual                               ! the same, or one past the last token
 SpanHasParen           Procedure(LONG pS, LONG pE),LONG,virtual                        ! a '(' anywhere in the span (call/grouping)
 OpLevel                Procedure(LONG pTok),LONG,virtual                               ! how tightly an operator binds: 4 '^' .. 8 a comparison, 9 NOT, 10 AND, 11 OR/XOR; 0 = not one
 SpanTopLevel           Procedure(LONG pS, LONG pE),LONG,virtual                        ! the loosest operator outside every bracket, as OpLevel numbers it; 0 = one term
@@ -465,6 +468,8 @@ SummaryOfCallAt        Procedure(LONG pFirst, LONG pLast, STRING pSelfClassU, *S
 ArgReadsOnly           Procedure(LONG pArgTok, STRING pSelfClassU),BYTE,virtual        ! 1 = the bare argument at pArgTok goes to a body of this file whose summary says it only READS that parameter (ruled 14 Sep 2026)
 StCopyRecv             Procedure(LONG pRecvTok, LONG pArgTok),BYTE,virtual             ! 1 = the receiver at pRecvTok is a plain StringTheory local, whose setValue or append only copies the argument
 ArgFact                Procedure(LONG pArgTok, STRING pSelfClassU),STRING,virtual      ! what the call around the bare argument at pArgTok does with it: R reads, W writes, . may keep it, P pure call, F copies it and its flags, blank no answer (ruled 28 Oct 2026)
+ArgMayKeep             Procedure(LONG pArgTok, STRING pSelfClassU),LONG,virtual        ! 1 = the call around the argument at pArgTok may keep its address: a second name for it that outlives the call
+ParamErrRead           Procedure(LONG pArgTok),LONG,virtual                            ! 1 = the call around the bare argument at pArgTok may read that object's lastError or winErrorCode
 ArgMayWrite            Procedure(LONG pS, LONG pE, STRING pRd, *BYTE pSm),BYTE,virtual ! 1 = a call around the whole argument pS..pE - a buffer, a slice of it, its _DataEnd - may write through it
 ReadOnlyCallAt         Procedure(LONG pParen),BYTE,virtual                             ! 1 = the call whose '(' is at pParen only reads what it is handed: MESSAGE and the like, or a StringTheory method on a short list
 LinesOptAt             Procedure(LONG pAt),BYTE,virtual                                ! the setValue, append or prepend at pAt (its '(', name or receiver): 1 = it is given st:lines, 2 = an option not read here may hold it
@@ -516,10 +521,15 @@ CodeTokOfScope         Procedure(LONG pStart, LONG pEnd),LONG,virtual           
 
 ScopeIsConditional     Procedure(LONG pFromTok, LONG pToTok),LONG,virtual              ! OMIT/COMPILE in the range - the code there may not be part of THIS build at all
 InCondBlock            Procedure(LONG pTok),LONG,virtual                               ! pTok lies in a COMPILE or conditional OMIT block some build leaves out
+CondBlockAt            Procedure(LONG pTok, LONG pFrom=0),LONG,virtual                 ! the COMPILE or OMIT token of the innermost such block open at pTok, 0 = none
+CondLeavesOut          Procedure(LONG pTok, LONG pRef),LONG,virtual                    ! some build leaves pTok out and keeps pRef: pTok is in a COMPILE or OMIT block pRef is not in
+DeclIsSure             Procedure(LONG pSymRow, LONG pRef),LONG,virtual                 ! 1 = that row is the one declaration pRef reads in every build: declared once, in no block pRef is not in
 MarkSetterAt           Procedure(STRING pNameU, LONG pFirst, LONG pLast, *BYTE pEnc),LONG,virtual ! the first mention that can set the object's base64 flag or encoding, or 0
-NameShared             Procedure(LONG pTok, STRING pNameU),LONG,virtual                ! the storage has a second name: OVER either way, a &= on it, a PRE spelling
+NameShared             Procedure(LONG pTok, STRING pNameU),LONG,virtual                ! the storage has a second name: OVER, a &= on it, a field, a by-address parameter
+ParamByAddr            Procedure(LONG pEnd),LONG,virtual                               ! the header parameter that ends at pEnd is passed by address
+AddrParamsOf           Procedure(LONG pScope, LONG pSkip),LONG,virtual                 ! how many of the scope's parameters pass by address, pSkip's left out
 MgRhsShared            Procedure(LONG pS, LONG pE),LONG,virtual                        ! MergeGuardChain: a right-hand side reads storage with a second name
-PreOf                  Procedure(STRING pNameU),STRING,virtual                         ! the label of the structure a prefixed name's PRE belongs to, or blank
+PreOf                  Procedure(STRING pNameU, LONG pTok),STRING,virtual              ! the label of the structure a prefixed name's PRE belongs to, or blank
 TriviaHasContinuation  Procedure(STRING pTrivia),LONG,virtual                          ! a '|' in leading trivia that is NOT inside a comment
 LevelSpanBalanced      Procedure(LONG pS, LONG pE),LONG,virtual                        ! 0 = opens outlive the span - refuse the walk
 SpanTriviaHasComment   Procedure(LONG pFromTok, LONG pToTok),LONG,virtual              ! a comment - a '!', or words after a '|' - in any of those tokens' leading trivia
@@ -576,6 +586,7 @@ CommentLineStart       Procedure(LONG pTok, STRING pHeader),virtual             
 AutoOutArgWrite        Procedure(LONG pTok, STRING pPrevU),LONG,virtual                ! 9b: 1 = a builtin writes V via an output arg here (CLEAR(V..)/GETPOSITION(feq,V..))
 ProtoParamIsRef        Procedure(LONG pProtoTok, LONG pPos, VitTokenize pTk),LONG,virtual ! 1 = parameter pPos of that prototype is declared BY REFERENCE
 AutoArgIsRefParam      Procedure(LONG pTok, BYTE pUnknown=0),LONG,virtual              ! 1 = the name at pTok is an argument in a BY-REFERENCE slot
+RuntimeSlotByValue     Procedure(STRING pU, LONG pOpen, LONG pSlot),LONG,virtual       ! 1 = the Clarion runtime's prototypes of pU take that slot of the call at pOpen by value
 AutoAddrTaken          Procedure(LONG pTok, STRING pPrevU),LONG,virtual                ! 1 = V's ADDRESS is taken here, so the storage escapes and nothing is known
 AutoSizeOnly           Procedure(LONG pTok, STRING pPrevU),LONG,virtual                ! 1 = V is the whole argument of SIZE(), which reads no byte of it - neither a read nor a write
 AutoTokIsWrite         Procedure(LONG pTok),LONG,virtual                               ! 1 = the name token at pTok is an assignment TARGET. Used for the ZERO GUARD, where the question is asked about a name other than the one being walked

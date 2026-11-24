@@ -1,4 +1,4 @@
-! Vitesse Tokenize Class 29Sep2019
+! Vitesse Tokenize Class
 !
 ! (c) 2019-2026 Geoffrey C. Robinson.
 ! Released under the MIT License - see LICENSE.
@@ -6,12 +6,12 @@
 ! scans Clarion source and breaks into tokens in a queue
 ! requires StringTheory from Capesoft
 !
-vt:maxVarLen          EQUATE(255)                                                      ! was 50, which TRUNCATED longer labels - and since the vars queue is
-                                                                                       ! KEYED on varName, two labels sharing their first 50 chars merged into one row
-                                                                                       ! and the second one's type was filed against the first. 255 is past Clarion's limit.
+vt:maxVarLen          EQUATE(255)                                                      ! a lower value TRUNCATES longer labels - and since the vars queue is
+                                                                                       ! KEYED on varName, two labels sharing their first n chars merge into one row
+                                                                                       ! and the second one's type is filed against the first. 255 is past Clarion's limit.
 
 vt:label              EQUATE('b')
-vt:literal            EQUATE('''')                                                     ! was L but changed to ' 27Aug2021 so no confusion with Long
+vt:literal            EQUATE('''')                                                     ! a quote, not L, so no confusion with Long
 vt:decPoint           EQUATE('d')
 vt:plusMinus          EQUATE('p')
 vt:multiplication     EQUATE('m')
@@ -28,8 +28,8 @@ vt:CString            EQUATE('C')
 vt:PString            EQUATE('P')
 vt:AString            EQUATE('A')
 vt:Any                EQUATE('a')
-vt:PDecimal           EQUATE('n')                                                      ! was 'p', which COLLIDED with vt:Procedure - a PDECIMAL variable and a
-                                                                                       ! PROCEDURE label were indistinguishable downstream. 'n' was free ('D' is vt:Decimal).
+vt:PDecimal           EQUATE('n')                                                      ! not 'p', which is vt:Procedure - a PDECIMAL variable and a
+                                                                                       ! PROCEDURE label would be indistinguishable downstream ('D' is vt:Decimal).
 vt:Decimal            EQUATE('D')
 vt:StringTheory       EQUATE('s')
 vt:Long               EQUATE('L')
@@ -38,7 +38,7 @@ vt:Byte               EQUATE('B')
 vt:Real               EQUATE('R')
 vt:Short              EQUATE('H')
 vt:UShort             EQUATE('h')
-vt:Procedure          EQUATE('p')                                                      ! keeps 'p'; vt:PDecimal moved instead (fewer sites to disturb)
+vt:Procedure          EQUATE('p')                                                      ! 'p'; vt:PDecimal is 'n' so the two never meet
 vt:Routine            EQUATE('r')
 vt:Map                EQUATE('M')
 vt:Group              EQUATE('g')
@@ -133,7 +133,7 @@ cmtSplitOnly           BYTE                                                     
 contOp                 BYTE                                                            ! BUILTIN ContOp - 0 keep, 1 end, 2 front, 3 flush. The splitter and the aligner must know which side of a break the AND/OR/& sits on, or they spell it the other way from the pass
 LogFn                  STRING(256)
 dumpFailed             BYTE                                                            ! the last DumpTokens save FAILED. TraceIt and the log both ship OFF, so without
-                                                                                       !   this a caller had no way to know the dump it asked for was never written.
+                                                                                       !   this a caller has no way to know the dump it asked for was never written.
 
 lineMap                &TokLineMapQType                                                ! current-text line -> ORIGINAL source line; maintained only while mapOn (preview)
 lineMap2               &TokLineMapQType                                                ! MapFold compose scratch (owned)
@@ -184,7 +184,7 @@ GetTokStartPos         Procedure(LONG pTokNumber), LONG,virtual                 
 SetTok                 Procedure(long pTokNumber,STRING pValue,<string pStrBefore>),virtual
 SetTok                 Procedure(long pTokNumber,*STRING pValue,<string pStrBefore>),virtual
 InsertStringAtEOL      Procedure(long pTokNumber, string pStr, byte pComment=true),virtual
-AlignComments          Procedure(LONG pMaxWidth),LONG,proc,virtual                     ! returns comments moved. pMaxWidth is NOT honoured - the width test is specified at plTgt = plMin and never built - a layout change, not a bug, so it waits for a ruling
+AlignComments          Procedure(LONG pMaxWidth),LONG,proc,virtual                     ! returns comments moved. pMaxWidth is NOT honoured - the width test at plTgt = plMin is not applied: it is a layout change, not a fix
 AlignCaseLabels        Procedure(LONG pMaxWidth),LONG,proc,virtual                     ! column-align CASE labels. Returns tokens moved.
 AlignDeclTypes         Procedure(LONG pMaxWidth),LONG,proc,virtual                     ! line up the TYPE column of a run of declarations. Returns lines moved.
 WrapComments           Procedure(LONG pWidth),LONG,proc,virtual                        ! --cmtwrap=<n>: split a trailing comment that passes column n onto rows at its own column, join rows that fit. Returns lines changed.

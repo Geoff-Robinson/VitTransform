@@ -35,7 +35,7 @@ isu:cmpdOps  EQUATE(' += -= *= /= ^= %= &= :=: ') ! the compound assignments: a 
 fl:writers   EQUATE(                                                                                                                 |
   ' ADDBOM ASNDECODE BASE64DECODE BASE64ENCODE BIGENDIAN ENCODEDWORDDECODE ENCODEDWORDENCODE GUNZIP GZIP JSONDECODE LITTLEENDIAN ' & |
     'LOADFILE NORMALIZE SETENCODINGFROMBOM SETVALUEBYCSTRINGADDRESS TOANSI TOUNICODE ENCODING BASE64 GZIPPED ENDIAN CODEPAGE SETVALUEW _STEALVALUE ')
-fl:state     EQUATE(' BASE64NOWRAP BASE64URLSAFE ENDOFLASTLINE BYTES LASTERROR WINERRORCODE EOF ') ! the rest of an object's state a by-value copy leaves behind (the final sweep, V5-3)
+fl:state     EQUATE(' BASE64NOWRAP BASE64URLSAFE ENDOFLASTLINE BYTES LASTERROR WINERRORCODE EOF ') ! the rest of an object's state that a by-value copy leaves behind
 
 ! ====================================================================================
 VitEngine.Construct Procedure()
@@ -1811,6 +1811,8 @@ nmU    string(vs:maxName),auto
     end
   end
   if ~bestR then exit.
+  ! declared once, in every build the CASE is in: the arms of a COMPILE and an OMIT may give it two sizes
+  if ~self.DeclIsSure(bestR, startTok) then exit.
   get(self.syms.syms, bestR)
   if self.syms.syms.isRef or self.syms.syms.isLike or                                   |   ! &STRING / LIKE: size not provable here
      self.syms.syms.typeU <> 'STRING'
@@ -3353,13 +3355,6 @@ ind      StringTheory
 Block routine
   ifEol = self.FirstEolAfter(ifTok)
   if ifEol <> condEnd + 1 then exit.                                     ! more on the line than the condition
-  if self.SpanHasNL(ifTok + 1, condEnd)
-    pLog.append('BUILTIN AlwaysTrueTest line ' & self.LogLineOf(ifTok) & ': REFUSED - its test is carried over'           & |
-                ' more than one line, and the rows after the first would be left as code. Its test is ' & what.getValue() & |
-                ': clip() or left() of a number is never blank.<13,10>')
-    i = endTok
-    exit
-  end
   if sepTok
     get(self.tk.tokens, sepTok)
     if ~self.tk.tokens.firstOnLine
@@ -3381,6 +3376,15 @@ Block routine
   end
   if endTok < records(self.tk.tokens) and ~self.IsEolTok(endTok + 1) then do TailRefused ; exit.
   if never then do NeverBlock ; exit.
+  ! The IF that is always true has only its first row commented, so a test carried over more rows
+  ! is refused. NeverBlock comments every row of what it takes out, so the IF that is never true is not.
+  if self.SpanHasNL(ifTok + 1, condEnd)
+    pLog.append('BUILTIN AlwaysTrueTest line ' & self.LogLineOf(ifTok) & ': REFUSED - its test is carried over'           & |
+                ' more than one line, and the rows after the first would be left as code. Its test is ' & what.getValue() & |
+                ': clip() or left() of a number is never blank.<13,10>')
+    i = endTok
+    exit
+  end
   if sepTok
     lbFrom = sepTok + 1 ; lbTo = endTok - 1 ; do LabelRefused
     if lbHit then exit.
@@ -3528,7 +3532,8 @@ TailRefused routine
 !     declares included - but in its declaration, the store, the test and the line straight
 !     after the test, which runs only on the path that does not jump - unless that line closes a
 !     structure or opens a branch of one - `end ; message(v)` closes the LOOP a BREAK leaves, and `of 2 ;
-!     message(v)` runs on a later pass after a CYCLE - and runs on that path too;
+!     message(v)` runs on a later pass after a CYCLE - and runs on that path too; or unless it
+!     starts with a label, which a GOTO can reach on the path that jumped;
 !     and nothing is INCLUDEd
 !     there, since included code is not in this file and may mention v.
 ! The literal must decode to bytes with no letter, and nothing above 127, which upper() may
@@ -3540,6 +3545,12 @@ TailRefused routine
 ! and the value does not read v: whatever else stands there runs when the test does not jump,
 ! and after the move it would run before the store. v is not declared OVER another variable:
 ! the store writes that variable too, under a name none of the three rules can follow.
+! The store, the test and the test's line end are in the same COMPILE or conditional OMIT block,
+! or in none: a terminator on the store's line would put the moved test into the block, and one on
+! the test's line would take the store out of it (ruled 21 Nov 2026: both lines in one block are
+! moved as usual).
+! v is declared once, in every build the store is in: the two arms of a COMPILE and an OMIT can
+! declare it twice, and the tests above read one declaration.
 ! =============================================================================================
 VitEngine.BuiltinHoistNeutralTest Procedure(StringTheory pLog)
 x       long,auto
@@ -3559,6 +3570,7 @@ decl    long,auto
 hnN     long,auto ! the folded variable's declared width
 hnW     long,auto !   and its source's
 hnL     long,auto
+hnB     long,auto ! the COMPILE or OMIT block the store is in
 ok      byte,auto
 jw      string(8),auto
 vU      string(vs:maxName),auto
@@ -3643,6 +3655,7 @@ ln        LONG
       l3s = e2 + 1
       l3e = self.FirstEolAfter(e2)
       if ~l3e then cycle.
+      if self.syms.IsColOneLabel(l3s) then l3e = l3s - 1.                       ! a label: a GOTO enters the line on any path
       loop k = l3s to l3e                                                       ! a line that closes or branches a structure
         get(self.tk.tokens, k)                                                  !   runs on a jumping path too: nothing on it is excused
         if ~errorcode() and inlist(self.tk.tokens.level, '-', '/') then l3e = l3s - 1 ; break.
@@ -3665,6 +3678,10 @@ ln        LONG
     hnN = self.syms.DeclaredStrLen(self.syms.syms.nameU, self.syms.syms.declTok)
     hnW = 0 ; hnL = 0
     if self.IsuExprType(s1 + 4, s1 + 4, hnW, hnL) <> 'STRING' or ~hnW or ~hnN or hnW > hnN then cycle.
+    hnB = self.CondBlockAt(s1)
+    if hnB <> self.CondBlockAt(s2) then cycle.
+    if hnB <> self.CondBlockAt(e2) then cycle.
+    if ~self.DeclIsSure(row, s1) then cycle.
     clear(HnQ)
     hn:s1 = s1 ; hn:s2 = s2 ; hn:e2 = e2 ; hn:ln = self.LogLineOf(s1)
     add(HnQ)
@@ -3676,7 +3693,7 @@ ln        LONG
     self.tk.SetTok(hn:s2 + 1, self.tk.GetTok(hn:s1 + 4))                        ! the test reads w, not v
     self.MoveLinesAbove(hn:s2, hn:s1, hn:e2 - hn:s2 + 1)                        ! and its line goes above the store
     changes += 1
-    pLog.append('BUILTIN HoistNeutralTest: line ' & hn:ln & ' the test of a literal with no letters moved above the fold<13,10>')
+    pLog.append('BUILTIN HoistNeutralTest line ' & hn:ln & ': the test of a literal with no letters moved above the fold<13,10>')
   end
   free(HnQ)
   if changes
@@ -3894,6 +3911,8 @@ lo  long,auto
 !     reference on it or on its buffer, hands it whole to a call, or gives it another object's value with
 !     setValue, append or prepend, which copies that object's marks, or a USTRING's with a
 !     one-argument setValue, which marks it UTF-16.
+! Under --ignoremarks the marks are the user's own risk: the members that set them, and those copies,
+! are not asked about.
 ! ------------------------------------------------------------------------------------
 VitEngine.IsPlainAt Procedure(LONG pTok)
 nm    STRING(vs:maxName)
@@ -3962,7 +3981,7 @@ a     long ! no AUTO: may be read before it is set
     if self.tk.GetTok(k - 1) = '&=' then return 0.      ! a reference on its buffer
     if m = 'STREAM' or m = '_STEALVALUE' then return 0.
     if ~self.ignoreMarks and instring(' ' & clip(m) & ' ', fl:writers, 1, 1) then return 0. ! --ignoremarks
-    if m <> 'SETVALUE' and m <> 'APPEND' and m <> 'PREPEND' then cycle.
+    if self.ignoreMarks or (m <> 'SETVALUE' and m <> 'APPEND' and m <> 'PREPEND') then cycle.
     if self.tk.GetTok(a) <> '(' then cycle.
     if self.tk.GetTok(a + 2) <> ')' and self.tk.GetTok(a + 2) <> ',' then cycle.
     get(self.tk.tokens, a + 1)
@@ -4047,8 +4066,22 @@ tT   STRING(vs:maxName)
 ! its fields looked unused there, and UnusedVars commented out a declaration still in use.
 ! A method that INCLUDEs a file after its CODE may use any of the procedure's data in the
 ! text this stream does not have, so then every name counts as used.
+! Such a method shares the procedure's ROUTINEs too, and a `DO r` in it runs routine r of the
+! procedure: the names r uses count as used in the method, and so do those of every routine r
+! DOes in turn, and an INCLUDE after a routine's CODE counts as one in the method.
 ! ------------------------------------------------------------------------------------
 VitEngine.UsedInLocalMethods Procedure(STRING pNameU, LONG pProcStart, LONG pProcEnd)
+  code
+  if pProcStart <> self.lmProcS or pProcEnd <> self.lmProcE then self.UlmFill(pProcStart, pProcEnd).
+  if self.lmInc then return 1.
+  return self.lmNames.findChars(' ' & clip(pNameU) & ' ')
+
+!===============================================================================================
+! UsedInLocalMethods' fill, on a cache miss only: the names every local class method of the
+! procedure pProcStart..pProcEnd reads or writes, and the routines those methods DO. Kept apart
+! so a call answered from the cache builds none of these locals.
+!===============================================================================================
+VitEngine.UlmFill Procedure(LONG pProcStart, LONG pProcEnd)
 r       long,auto
 i       long,auto
 nextP   long,auto
@@ -4057,51 +4090,108 @@ mEnd    long,auto
 mCls    string(vs:maxName),auto
 dotP    long,auto
 colP    long,auto
+ulDo    byte,auto
+ulK     long,auto
+ulJ     long,auto
 fileCls StringTheory
+UlmDoQ  QUEUE,PRE(ulq)
+nm        string(vs:maxName)
+        END
   code
-  if pProcStart <> self.lmProcS or pProcEnd <> self.lmProcE
-    self.lmProcS = pProcStart
-    self.lmProcE = pProcEnd
-    self.lmNames.setValue(' ')
-    self.lmInc = 0
-    self.FileClassList(fileCls)
-    nextP = self.tk.records() + 1
-    loop r = 1 to records(self.syms.scopes)
-      get(self.syms.scopes, r)
-      if errorcode() then break.
-      if self.syms.scopes.kind = vs:scProc and self.syms.scopes.startTok > pProcEnd and self.syms.scopes.startTok < nextP
-        nextP = self.syms.scopes.startTok
-      end
-    end
-    loop r = 1 to records(self.syms.scopes)
-      get(self.syms.scopes, r)
-      if errorcode() then break.
-      if self.syms.scopes.kind <> vs:scMethod then cycle.
-      mStart = self.syms.scopes.startTok
-      mEnd   = self.syms.scopes.endTok
-      mCls   = self.syms.scopes.selfClass
-      if mStart <= pProcEnd or mStart >= nextP or mEnd < mStart then cycle.
-      if ~self.LocalClassDeclared(mCls, pProcStart, pProcEnd)
-        if fileCls.findChars(' ' & clip(mCls) & ' ') then cycle.
-      end
-      if self.ProcIncludes(mStart, mEnd) then self.lmInc = 1.
-      loop i = mStart to mEnd
-        get(self.tk.tokens, i)
-        if errorcode() then break.
-        if self.tk.tokens.tok &= NULL then cycle.
-        case upper(self.tk.tokens.tok[1])
-        of 'A' to 'Z' orof '_'
-          self.lmNames.append(upper(self.tk.tokens.tok) & ' ')
-          dotP = fileCls.findByte(46, 1,, self.tk.tokens.tok)
-          colP = fileCls.findByte(58, 1,, self.tk.tokens.tok)
-          if colP and (~dotP or colP < dotP) then dotP = colP.
-          if dotP > 1 then self.lmNames.append(upper(self.tk.tokens.tok[1 : dotP - 1]) & ' ').
-        end
-      end
+  self.lmProcS = pProcStart
+  self.lmProcE = pProcEnd
+  self.lmNames.setValue(' ')
+  self.lmInc = 0
+  free(UlmDoQ)
+  self.FileClassList(fileCls)
+  nextP = self.tk.records() + 1
+  loop r = 1 to records(self.syms.scopes)
+    get(self.syms.scopes, r)
+    if errorcode() then break.
+    if self.syms.scopes.kind = vs:scProc and self.syms.scopes.startTok > pProcEnd and self.syms.scopes.startTok < nextP
+      nextP = self.syms.scopes.startTok
     end
   end
-  if self.lmInc then return 1.
-  return self.lmNames.findChars(' ' & clip(pNameU) & ' ')
+  loop r = 1 to records(self.syms.scopes)
+    get(self.syms.scopes, r)
+    if errorcode() then break.
+    if self.syms.scopes.kind <> vs:scMethod then cycle.
+    mStart = self.syms.scopes.startTok
+    mEnd   = self.syms.scopes.endTok
+    mCls   = self.syms.scopes.selfClass
+    if mStart <= pProcEnd or mStart >= nextP or mEnd < mStart then cycle.
+    if ~self.LocalClassDeclared(mCls, pProcStart, pProcEnd)
+      if fileCls.findChars(' ' & clip(mCls) & ' ') then cycle.
+    end
+    if self.ProcIncludes(mStart, mEnd) then self.lmInc = 1.
+    ulDo = 0
+    loop i = mStart to mEnd
+      do UlmToken
+    end
+  end
+  ulK = 0
+  loop
+    ulK += 1
+    if ulK > records(UlmDoQ) then break.
+    get(UlmDoQ, ulK)
+    if errorcode() then break.
+    do UlmRoutine
+  end
+
+! ---- one token of a method's or a DOne routine's body: a name is listed, and the name after a
+!      DO is queued as a routine to read (UlmDoQ, each name once) ----
+UlmToken routine
+  get(self.tk.tokens, i)
+  if errorcode() then exit.
+  if self.tk.tokens.tok &= NULL then exit.
+  if self.tk.tokens.tok[1] = '<10>' then exit.
+  if ulDo
+    ulDo = 0
+    loop ulJ = 1 to records(UlmDoQ)
+      get(UlmDoQ, ulJ)
+      if ulq:nm = upper(self.tk.tokens.tok) then break.
+    end
+    if ulJ > records(UlmDoQ)
+      ulq:nm = upper(self.tk.tokens.tok)
+      add(UlmDoQ)
+    end
+  elsif upper(self.tk.tokens.tok) = 'DO'
+    ulDo = 1
+  end
+  case upper(self.tk.tokens.tok[1])
+  of 'A' to 'Z' orof '_'
+    self.lmNames.append(upper(self.tk.tokens.tok) & ' ')
+    dotP = fileCls.findByte(46, 1,, self.tk.tokens.tok)
+    colP = fileCls.findByte(58, 1,, self.tk.tokens.tok)
+    if colP and (~dotP or colP < dotP) then dotP = colP.
+    if dotP > 1 then self.lmNames.append(upper(self.tk.tokens.tok[1 : dotP - 1]) & ' ').
+  end
+
+! ---- the routine of the procedure named ulq:nm: its tokens are read as the method's own. A
+!      routine of the procedure lies inside the procedure's span; one this file does not hold
+!      is read nowhere, as a DO in the procedure's own code would find nothing either ----
+UlmRoutine routine
+  data
+rr  long,auto
+rs  long,auto
+re  long,auto
+  code
+  loop rr = 1 to records(self.syms.scopes)
+    get(self.syms.scopes, rr)
+    if errorcode() then break.
+    if self.syms.scopes.kind <> vs:scRoutine then cycle.
+    rs = self.syms.scopes.startTok
+    re = self.syms.scopes.endTok
+    if rs <= pProcStart or rs > pProcEnd or re < rs then cycle.
+    if upper(self.tk.GetTok(rs)) <> ulq:nm then cycle.
+    if self.ProcIncludes(rs, re) then self.lmInc = 1.
+    ulDo = 0
+    loop i = rs to re
+      do UlmToken
+    end
+    get(UlmDoQ, ulK)
+    break
+  end
 
 ! ------------------------------------------------------------------------------------
 ! Every column-1 `<label> CLASS` in the file, as ' A B C ' - one scan, for the tests above.
@@ -4882,6 +4972,8 @@ wtok      long
        END
   code
   self.lmProcS = -1
+  ! the summaries: which calls of this file keep no reference to a local handed to them (ArgMayKeep)
+  self.BuildSummaries()
   loop s = 1 to records(self.syms.syms)
     get(self.syms.syms, s)
     if errorcode() then break.
@@ -5610,6 +5702,7 @@ firstTxt  string(vs:maxName),AUTO
 hoCmtA    StringTheory ! the two lines' comment TEXT - identical is allowed, different is not
 hoCmtB    StringTheory
 endIndent StringTheory
+hoCut     long,auto
   code
   ! ELSE and END must each begin their own physical line
   if ~self.IsFirstOnLine(pElseTok) then return 0.
@@ -5664,6 +5757,16 @@ endIndent StringTheory
     pLog.append('BUILTIN HoistCommonBranchCode END-hoist REFUSED line ' & self.LogLineOf(sFirst) & ': an OMIT block sits in front of a copy<13,10>')
     return 0
   end
+  ! a COMPILE or conditional OMIT block that holds a copy, the ELSE or the END and not the IF, or
+  ! the IF and not the line after the END, where the moved copy goes, is left out by some build
+  ! that keeps the rest: the hoist would run a line that build leaves out, or cut the block in two.
+  hoCut = self.CondLeavesOut(tFirst, pIfTok) + self.CondLeavesOut(sFirst, pIfTok)
+  hoCut += self.CondLeavesOut(pElseTok, pIfTok) + self.CondLeavesOut(pEndTok, pIfTok)
+  hoCut += self.CondLeavesOut(pIfTok, pEndTok + 1)
+  if hoCut
+    pLog.append('BUILTIN HoistCommonBranchCode END-hoist REFUSED line ' & self.LogLineOf(sFirst) & ': a COMPILE or OMIT block holds part of the IF and not the rest, and some build leaves it out<13,10>')
+    return 0
+  end
 
   ! ---- capture what we need BEFORE the edits clobber the token buffer ----
   self.IndentOf(pEndTok, endIndent)                                  ! indent of the END line = the IF's level: the trivia after its last line feed, so a block folded in front of END stays with END
@@ -5692,8 +5795,7 @@ DbgReindentE routine
   ! ASSERT the author confined to debug builds runs in every build. So the '?' keeps its own place -
   ! being in column one, its strBefore already holds the line break and nothing else - and the indent
   ! goes on the token AFTER it, one column shorter because the '?' occupies the first. The statement
-  ! then lands in the column it would have had without the marker. wbhits.clw is the one site in the
-  ! 1,400-file corpus where this arises, found by the review of all 414 hoists.
+  ! then lands in the column it would have had without the marker.
   if self.HoistDbgMarker(sFirst)
     self.tk.SetStrBefore(sFirst + 1, self.HoistDbgPad(endIndent))
   else
@@ -5727,6 +5829,7 @@ hoCmtB   StringTheory
 tLine    long,auto
 hx       long,auto    ! scan index over the IF header line
 ifIndent StringTheory
+hoCut    long,auto
   code
   ! the IF line and the ELSE line each end at their own EOL (single physical line)
   ifEol   = self.FirstEolAfter(pIfTok)
@@ -5781,6 +5884,15 @@ ifIndent StringTheory
     pLog.append('BUILTIN HoistCommonBranchCode START-hoist REFUSED line ' & self.LogLineOf(tFirst) & ': an OMIT block sits in front of a copy<13,10>')
     return 0
   end
+  ! as TryEndHoist: a COMPILE or conditional OMIT block that holds a copy, the ELSE or the END and
+  ! not the IF is left out by some build that keeps the IF. The moved copy goes in front of the IF,
+  ! in every build the IF is in.
+  hoCut = self.CondLeavesOut(tFirst, pIfTok) + self.CondLeavesOut(fFirst, pIfTok)
+  hoCut += self.CondLeavesOut(pElseTok, pIfTok) + self.CondLeavesOut(pEndTok, pIfTok)
+  if hoCut
+    pLog.append('BUILTIN HoistCommonBranchCode START-hoist REFUSED line ' & self.LogLineOf(tFirst) & ': a COMPILE or OMIT block holds part of the IF and not the rest, and some build leaves it out<13,10>')
+    return 0
+  end
   self.IndentOf(pIfTok, ifIndent)                                              ! the IF's own indent: the trivia after its last line feed
   tLine = self.LogLineOf(tFirst)                                               ! log-only var - source coords in preview
 
@@ -5813,6 +5925,10 @@ DbgReindentS routine
 ! this call, but it may be anything else - so such a target refuses when the condition reads
 ! a parameter, a name from outside the procedure, or a STATIC or THREAD local. A STATIC or
 ! THREAD target refuses when the condition reads a parameter, which may point at it.
+! A FIELD of a structure, spelt `pg:a` or, under PRE(), by its own label, is also the structure's
+! bytes: the structure's label, an OVER of it or a field of a structure OVER it reads them under
+! a name of its own. So a field target refuses when the condition reads a name NameShared finds
+! a second name for. A target that is not a field has no such second name the checks above miss.
 VitEngine.HoistTargetsClear Procedure(LONG pFirst, LONG pCEnd, LONG pCS, LONG pCE)
 j    long,auto
 open long,auto
@@ -5825,6 +5941,9 @@ row  long,auto
 root string(vs:maxName),AUTO
 tU   string(vs:maxName)
 rf   byte,auto
+fld  long,auto
+cShr byte
+q    long,auto
   code
   if self.syms &= NULL then return 0.
   sc = self.syms.ScopeContaining(pCS, vs:scProc, vs:scMethod)
@@ -5890,18 +6009,40 @@ rf   byte,auto
       if self.tk.tokens.tok &= NULL or self.tk.tokens.tok <> '&=' then cycle.
       if upper(self.tk.GetTok(k + 1)) = lhsU then return 0.
     end
+    fld = instring(':', lhsU, 1, 1)
+    if ~fld and self.syms.Visible(root, j, row) = vs:visSym
+      get(self.syms.syms, row)
+      if ~errorcode() then fld = self.syms.syms.isField.
+    end
+    if fld then do CondShared.
+    if cShr = 2 then return 0.
     open = 0
   end
   return 1
+
+! ---- does the condition read a name with a second name for its storage? Asked once, for the
+!      first field target; cShr 1 = no, 2 = yes ----
+CondShared routine
+  if cShr then exit.
+  cShr = 1
+  loop k = pCS to pCE
+    get(self.tk.tokens, k)
+    if errorcode() then cShr = 2 ; break.
+    if self.tk.tokens.tok &= NULL or self.tk.tokens.type <> vt:label then cycle.
+    tU = upper(self.tk.tokens.tok)
+    q = instring('.', tU, 1, 1)
+    if q > 1 then tU = tU[1 : q - 1].
+    if self.NameShared(k, tU) then cShr = 2 ; break.
+  end
+  self.syms.scopes.scopeId = sc
+  get(self.syms.scopes, self.syms.scopes.scopeId)
 
 ! 1 = the line starting at pTok begins with a '?' of its own - Clarion's DEBUG marker. The LRM gives
 ! a '?' alone in column one as "execute the statement that follows in DEBUG mode only", so the marker
 ! IS its column. A hoist relocates the line and re-indents it to the IF's level, which puts the '?'
 ! somewhere in the middle of the indent and stops it being a marker at all: either the module will not
 ! compile, or an ASSERT the author confined to debug builds starts running in every build. Reindent
-! makes this same refusal (its firstDbg); the hoist has to make it too. Found by the review of all 414
-! corpus hoists - wbhits.clw is the single site in 1,400 files where a hoist meets one, so the refusal
-! costs exactly one hoist and buys back a line the tool was silently rewriting the meaning of.
+! makes this same refusal (its firstDbg); the hoist has to make it too.
 VitEngine.HoistDbgMarker Procedure(LONG pTok)
   code
   get(self.tk.tokens, pTok)
@@ -6247,6 +6388,15 @@ x long,auto
   end
   return 0
 
+! The end of pTok's line: its first <10> (EOL) token, or one past the last token when the line is
+! the file's last and has no line break - a walk to it, less one, then covers the whole line.
+VitEngine.FirstEolOrEnd Procedure(LONG pTok)
+x long,auto
+  code
+  x = self.FirstEolAfter(pTok)
+  if ~x then x = records(self.tk.tokens) + 1.
+  return x
+
 ! 1 = a '(' token appears anywhere in [pS..pE] (a call or grouping - conservatively a skip).
 VitEngine.SpanHasParen Procedure(LONG pS, LONG pE)
 i long,auto
@@ -6467,6 +6617,9 @@ d   long,auto
 ! teaching this the storage model.
 VitEngine.SpanHasName Procedure(STRING pNameU, LONG pS, LONG pE)
 i    long,auto
+tU   string(vs:maxName),auto
+pA   string(vs:maxName),auto
+pB   string(vs:maxName),auto
   code
   if pE < pS then return 0.
   loop i = pS to pE
@@ -6476,25 +6629,49 @@ i    long,auto
        self.tk.tokens.tok &= NULL
       cycle
     end
-    if self.NameRoot(self.tk.tokens.tok) = self.NameRoot(pNameU) then return 1.
-    if self.PreOf(self.tk.tokens.tok) = self.NameRoot(pNameU) or self.PreOf(pNameU) = self.NameRoot(self.tk.tokens.tok) then return 1.
+    ! PreOf reads the token queue and moves its buffer, so the token is copied first
+    tU = upper(self.tk.tokens.tok)
+    if self.NameRoot(tU) = self.NameRoot(pNameU) then return 1.
+    pA = self.PreOf(tU, i)
+    pB = self.PreOf(pNameU, i)
+    if pA = vs:unknownType or pB = vs:unknownType then return 1.
+    if pA = self.NameRoot(pNameU) or pB = self.NameRoot(tU) then return 1.
   end
   return 0
 
 ! The label of the structure whose PRE a prefixed name carries - `pg:a` to G - or blank. A GROUP
 ! reads as a string over its fields, so a write to `pg:a` is a write to g, which NameRoot cannot
-! see: PG and G are two roots for one storage. The label is read from the declaration that
-! carries `PRE(pg)`, in this scope or above it.
+! see: PG and G are two roots for one storage. The name is looked up from pTok, as the compiler
+! binds it, and the label is read from the nearest `PRE(pg)` above the field's own declaration:
+! two procedures may each declare a structure with the same prefix. A name with no one declaration in
+! every build - one declared inside a COMPILE or OMIT block the use is not in, say - answers
+! vs:unknownType, which SpanHasName counts as the same storage.
 !===============================================================================================
-VitEngine.PreOf Procedure(STRING pNameU)
+VitEngine.PreOf Procedure(STRING pNameU, LONG pTok)
 p    long,auto
 k    long,auto
+row  long,auto
+nmU  string(vs:maxName),auto
 preU string(vs:maxName),auto
   code
   p = instring(':', pNameU, 1, 1)
   if p < 2 then return ''.
+  if self.syms &= NULL then return ''.
   preU = upper(pNameU[1 : p - 1])
-  loop k = 1 to records(self.tk.tokens)
+  nmU = upper(pNameU)
+  k = instring('.', nmU, 1, 1)
+  if k > p then nmU = nmU[1 : k - 1].
+  row = 0
+  case self.syms.Visible(nmU, pTok, row)
+  of vs:visUnknown
+    return vs:unknownType
+  of vs:visSym
+  else
+    return ''
+  end
+  get(self.syms.syms, row)
+  if errorcode() then return ''.
+  loop k = self.syms.syms.declTok - 1 to 1 by -1
     get(self.tk.tokens, k)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL or upper(self.tk.tokens.tok) <> 'PRE' then cycle.
@@ -6987,7 +7164,8 @@ lit byte,auto    ! token A is a string literal, so its case is data and must mat
 ! above; a longer separator such as '<<13,10>' gives a short loop that strips WHOLE separators
 ! off the end, never characters, so a lone trailing carriage return stays as the walk keeps it
 ! (14 Sep 2026; proved on 21 shapes by looplim\LoopEq2.clw) - and G4 sees that nothing touches
-! the object between the split and the loop). The st:clip lands on the split later, from ClipAtSplit, once every
+! the object between the split and the loop, and that the split is not inside a COMPILE or conditional
+! OMIT block the loop is not in, which a build may leave out). The st:clip lands on the split later, from ClipAtSplit, once every
 ! read of the lines is proved to clip. The read line has a second, scratch-free spelling that
 ! an author may write directly and that DropLineBuffer writes when it makes the scratch the
 ! object itself (14 Sep 2026):
@@ -7390,6 +7568,7 @@ G0Own routine
   end
   get(self.syms.syms, lbOwn)
   if errorcode() then why = 'the declaration of ' & clip(sName) & ' could not be read' ; exit.
+  if ~self.DeclIsSure(lbOwn, loopTok) then why = clip(sName) & ' is declared twice, or inside a COMPILE or OMIT block the loop is not in' ; exit.
   if self.syms.syms.declTok > scFirst and self.syms.syms.declTok <= scCode
     why = clip(sName) & ' is a PARAMETER, and its value and records are the caller''s to read as they were'
     exit
@@ -7423,6 +7602,7 @@ G0Buf routine
   end
   get(self.syms.syms, lbOwn)
   if errorcode() then why = 'the declaration of ' & clip(bName) & ' could not be read' ; exit.
+  if ~self.DeclIsSure(lbOwn, loopTok) then why = clip(bName) & ' is declared twice, or inside a COMPILE or OMIT block the loop is not in' ; exit.
   if self.syms.syms.declTok > scFirst and self.syms.syms.declTok <= scCode
     why = clip(bName) & ' is a PARAMETER, and the caller reads the line the loop leaves in it'
     exit
@@ -7484,9 +7664,18 @@ G1Separator routine
 !      The rewrite re-splits it, so anything done in between lands on a different string, or
 !      happens twice. Deliberately blunt - ANY mention refuses. A precise version needs a
 !      write-versus-read classifier and is not worth it for the handful of sites this costs.
+!      A DO joined to the split's own line by ';' after the split is between them too.
 G4Between routine
   gFrom = splitTok
   lbFrom = gFrom ; do LbFill
+  loop gHit = 1 to records(lbQ)
+    get(lbQ, gHit)
+    if lbQ.tx = 'DO' and lbQ.tk > gArg
+      why = 'a routine is called on line ' & self.LogLineOf(gFrom) & ', after the split of ' & clip(sName) & |
+            ', and what it does to ' & clip(sName) & ' is not read here'
+      exit
+    end
+  end
   gFrom = lbNext
   loop while gFrom > 0 and gFrom < cntTok
     lbFrom = gFrom ; do LbFill
@@ -7516,7 +7705,26 @@ G4Between routine
 !      the walk below cannot see that a split one arm above the count did not run when the count did;
 !      and the edit takes the loop out and puts the clip in front of the split, which would make every
 !      later arm answer to a different value.
+!      Nor may the split be inside a COMPILE or conditional OMIT block the loop is not in: a build may
+!      leave it out, and the loop then serves another split, or none, which the clip put in front of
+!      this one never reaches (ruled 9 Nov 2026). A split in the loop's own block, or in one that holds
+!      it, runs in every build that has the loop, and the clip goes in front of it there. A loop inside
+!      a block the split is not in is no concern: the loop only counts, the count line stays where it
+!      is, and the guards below prove that no other read can tell the rewrite from the loop - which
+!      holds as well in a build that leaves the loop out. But the count line must be in every build
+!      that has the loop: a block that ends on the count line leaves the loop to run on a count from
+!      before, and the rewrite takes that loop out.
 G4Dom routine
+  if self.CondLeavesOut(splitTok, loopTok)
+    why = 'the split of ' & clip(sName) & ' on line ' & self.LogLineOf(splitTok) & ' is inside a COMPILE or OMIT block the loop is not in'
+    why = clip(why) & ' - the loop may then serve another split, or none'
+    exit
+  end
+  if self.CondLeavesOut(cntTok, loopTok)
+    why = 'the count on line ' & self.LogLineOf(cntTok) & ' is inside a COMPILE or OMIT block the loop is not in'
+    why = clip(why) & ', so a build may run the loop on a count from before'
+    exit
+  end
   gHit = self.ArmOfExecute(splitTok)
   if gHit
     why = 'the split of ' & clip(sName) & ' is one arm of the EXECUTE on line ' & self.LogLineOf(gHit) & |
@@ -8137,8 +8345,9 @@ kept   long,auto
 ! arguments wrapped onto the next line are read with the rest. scOpen and scClose are the two
 ! brackets, scArgN the number of arguments (0 for `()`), scSepTok the first argument's token
 ! when it is a single token, scQrm the fourth (pRemoveQuotes) given and not 0 or false, scClip
-! st:clip as the fifth (pClip), scSpace a lone space - ' ' or '<<32>' - as any argument. 1 =
-! read; 0 = no '(' after the name, or a line end before its ')'.
+! the fifth (pClip) being st:clip alone - an expression such as `f * st:clip` may give 0 and not
+! clip -, scSpace a lone space - ' ' or '<<32>' - as any argument. 1 = read; 0 = no '(' after the
+! name, or a line end before its ')'.
 ! ------------------------------------------------------------------------------------
 VitEngine.SplitOwnArgs Procedure(LONG pTail)
 x     long,auto
@@ -8178,7 +8387,7 @@ tU    STRING(96),AUTO
     if tU = ''' ''' or tU = '''<<32>''' then self.scSpace = 1.
     if arg = 2 and tU <> '''''' and tU <> ''' ''' and tU <> '''<<32>''' then self.scQuo = 1.
     if arg = 4 and tU <> '0' and tU <> 'FALSE' then self.scQrm = 1.
-    if arg = 5 and tU = 'ST:CLIP' then self.scClip = 1.
+    if arg = 5 then self.scClip = choose(cnt = 1 and tU = 'ST:CLIP').
   end
   if dp then return 0.
   self.scClose = x
@@ -8351,7 +8560,10 @@ triv   StringTheory
 ! that label run again after pAt's - the back edge a LOOP around pAt makes, spelled another way.
 ! The answer is a FIXED POINT: from each new start, the outermost LOOP or ACCEPT around it and any
 ! GOTO from it to pLast that names a label above it move it again - a GOTO between the start and
-! pAt that jumps higher still runs those lines after pAt too. Answers the first token of the line
+! pAt that jumps higher still runs those lines after pAt too. A GOTO after the start that names a
+! label between that LOOP's top and the start runs the lines from the label again as well: when
+! nothing reaches higher, that label is the answer (ChangeBeforeSplit walks from it, and the
+! others take the earlier of it and their own LOOP). Answers the first token of the line
 ! the earliest start reached lies on, 0 = no GOTO reaches above pAt (a LOOP alone the callers find
 ! themselves). A label is looked for from pFirst, a GOTO up to pLast.
 ! ------------------------------------------------------------------------------------
@@ -8361,10 +8573,11 @@ y     long,auto
 top   long,auto
 at    long,auto
 lv    long,auto
+st    long,auto
 via   byte
 nm    STRING(vs:maxName),AUTO
   code
-  at = pAt
+  at = pAt ; st = pAt
   loop
     lv = 0                              ! the outermost LOOP or ACCEPT around the start
     loop x = at - 1 to pFirst by -1
@@ -8391,8 +8604,9 @@ nm    STRING(vs:maxName),AUTO
       if upper(self.tk.tokens.tok) <> 'GOTO' then cycle.
       nm = upper(self.tk.GetTok(x + 1))
       if ~nm then cycle.
-      loop y = pFirst to at
+      loop y = pFirst to st
         if top and y >= top then break.
+        if x <= st and y > at then break.
         if ~self.syms.IsColOneLabel(y) then cycle.
         if upper(self.tk.GetTok(y)) = nm then top = y ; break.
       end
@@ -8401,7 +8615,7 @@ nm    STRING(vs:maxName),AUTO
     if via and top >= at then break.
     via = 1
     if top >= at then at = top ; break.                    ! a label on the start's own line: no higher
-    at = top
+    at = top ; st = top
   end
   if ~via then return 0.
   loop x = at to pFirst by -1                              ! the first token of its line
@@ -8461,6 +8675,11 @@ nm    STRING(vs:maxName),AUTO
 ! there that reads the lines refuses: it would see the previous pass's lines clipped. Whatever
 ! else is done to the object before the split remakes its lines is no concern of the flag.
 !
+! A SPLIT INSIDE A COMPILE OR CONDITIONAL OMIT BLOCK IS LEFT ALONE: a build may leave it out, and
+! the reads are then served by another split, or by none (ruled 9 Nov 2026). So is a
+! setValueFromLine inside one whose clip line would go: where the block is left out, that clip
+! line clips the object's value.
+!
 ! ONE EDIT PER PASS, IN A DELIBERATE ORDER. The clip goes ONTO the split first; only once it is
 ! there does a pass start taking ', st:clip' off the reads. A run stopped at any point then has
 ! clipped lines read with a redundant clip, which is correct, and never unclipped lines read
@@ -8500,6 +8719,7 @@ caRecvTxt  STRING(vs:maxName) ! the same name AS THE AUTHOR SPELLED IT, for the 
 caSplitHas byte,auto          ! the split already carries st:clip
 caLine1    long               ! the first token of the line in hand - NOT caD, which CaHead and CaFind both use as scratch, and NOT caY for the same reason
 caReads    long               ! clipping reads seen
+caInBlk    long               ! the COMPILE or OMIT block the split is in, 0 = none: every read must be in it too
 caWhy      STRING(200)
 caRpt      byte               ! the report-only scan
 caEdited   byte               ! the editing scan converted a site
@@ -8581,6 +8801,15 @@ CaScan routine
     if ~caScFirst then cycle.
     caWhy = '' ; caReads = 0 ; caHitTok = 0 ; caHitKind = 0
     do CaOwn
+    caInBlk = self.CondBlockAt(caSplitTok)                                      ! a read in the same block runs in exactly the builds the split does
+    ! An EXECUTE's arms carry no mark between them, so the path walk cannot see that a read in a
+    ! later arm runs when the split's arm does not: a split that is an arm is left alone.
+    caX = 0
+    if ~caWhy then caX = self.ArmOfExecute(caSplitTok).
+    if caX
+      caWhy = 'the split is one arm of the EXECUTE on line ' & self.LogLineOf(caX)
+      caWhy = clip(caWhy) & ', and a read in another arm runs when it does not'
+    end
     if ~caWhy and ~caLnKind then caWhy = self.slWhy.
     if ~caWhy then do CaGuard.
     if caWhy
@@ -8735,6 +8964,7 @@ CaOwn routine
   end
   get(self.syms.syms, caX)
   if errorcode() then caWhy = 'the declaration of ' & clip(caRecv) & ' could not be read' ; exit.
+  if ~self.DeclIsSure(caX, caSplitTok) then caWhy = clip(caRecv) & ' is declared twice, or inside a COMPILE or OMIT block the split is not in' ; exit.
   if self.syms.syms.declTok > caScFirst and self.syms.syms.declTok <= caScCode
     caWhy = clip(caRecv) & ' is a PARAMETER, and its lines are the caller''s to read as they were'
     exit
@@ -8829,6 +9059,7 @@ CaGuard routine
         if caWhy then break.
         if caClipA
           do CaOffPath ; if caWhy then break.
+          if caInBlk and self.CondLeavesOut(caSplitTok, caLine1) then do CaBlkWhy ; break.
           caReads += 1
           if ~caHitTok then caHitTok = caLine1 ; caHitKind = 2 ; caHitCm = caClipA ; caHitCl = caClipB.
           caFrom = caNext ; cycle                                                 !   past the clip line
@@ -8862,10 +9093,18 @@ CaGuard routine
     do CaReader
     if caWhy then break.
     do CaOffPath ; if caWhy then break.
+    if caInBlk and self.CondLeavesOut(caSplitTok, caLine1) then do CaBlkWhy ; break.
     caReads += 1
     if ~caHitTok then do CaMarkClip.
     caFrom = caNext
   end
+
+! ---- a split inside a COMPILE or OMIT block, and a read of its lines outside that block: in a build that leaves the
+!      block out, another split, or none, serves the read. A read in the same block, or in one inside it, runs only
+!      in builds that have the split
+CaBlkWhy routine
+  caWhy = 'the split is inside a COMPILE or OMIT block, which a build may leave out, and the read on line ' & self.LogLineOf(caLine1) & |
+          ' is not - another split, or none, would then serve it'
 
 ! ---- the path: a read the clip is taken off must be one the split runs before on every way to it. Past the end
 !      of the structure that holds the split, past another branch of it, or past a label a GOTO may jump to, the
@@ -9114,7 +9353,16 @@ CaClipLine routine
   ! A CLIP LINE THAT IS THE NEXT ARM OF AN EXECUTE does not clip the read one arm above it - the
   ! two never run together - and taking it out would make every later arm answer to a different
   ! value. caWhy says so, and the caller stops there.
+  ! A LOAD INSIDE A COMPILE OR CONDITIONAL OMIT BLOCK THE CLIP LINE IS NOT IN may be left out, and
+  ! the clip then clips the value, which taking it out would change. A clip line in the load's own
+  ! block, or in one inside it, runs only where the load does. (A clip line in a block the load is not
+  ! in has the block's COMPILE or OMIT line between them, and is not the next line.)
   if ~caClipA then exit.
+  if self.CondLeavesOut(caLine1, caClipA)
+    caWhy = 'the setValueFromLine on line ' & self.LogLineOf(caLine1) & ' is inside a COMPILE or OMIT block the clip after it is not in'
+    caWhy = clip(caWhy) & ', which a build may leave out, and the clip would then clip the value'
+    exit
+  end
   caX = self.ArmOfExecute(caClipA)
   if ~caX then exit.
   caWhy = 'the clip after the setValueFromLine on line ' & self.LogLineOf(caLine1) & ' is another' & |
@@ -9147,7 +9395,8 @@ CaClipLine routine
 ! which never runs with the load. Anything else - a getLines, a join, a read
 ! of the lines queue, a pass to a call - refuses, because it would see different bytes. The
 ! receiver must be this procedure's own: a parameter's lines are the caller's, who would see
-! them trimmed. The split takes one argument, as ClipAtSplit asks. One edit per pass; the
+! them trimmed. The split takes one argument, as ClipAtSplit asks, and is not inside a COMPILE or
+! conditional OMIT block, which a build may leave out, as ClipAtSplit asks too. One edit per pass; the
 ! report-only scan on pass 1 says why each site refused.
 !===============================================================================================
 VitEngine.BuiltinTrimAtSplit Procedure(StringTheory pLog)
@@ -9193,6 +9442,7 @@ taValReads EQUATE(            |
 taLineUse  EQUATE(' GETLINE GETLINES SETVALUEFROMLINE INLINE JOIN SORT LINES ')
 taLine1    long
 taReads    long               ! trimmed loads seen
+taInBlk    long               ! the COMPILE or OMIT block the split is in, 0 = none: every load must be in it too
 taKind     STRING(8)          ! 'TRIM' or 'CLIP' - what every reader does; '' until the first
 taWhy      STRING(200)
 taRpt      byte               ! the report-only scan
@@ -9244,6 +9494,8 @@ TaScan routine
     if ~taScFirst then cycle.
     taWhy = '' ; taReads = 0 ; taKind = ''
     do TaOwn
+    ! a load in the same block runs in exactly the builds the split does
+    taInBlk = self.CondBlockAt(taSplitTok)
     if ~taWhy and ~taLnKind then taWhy = self.slWhy.
     if ~taWhy then do TaGuard.
     if taWhy
@@ -9425,6 +9677,7 @@ TaOwn routine
   end
   get(self.syms.syms, taX)
   if errorcode() then taWhy = 'the declaration of ' & clip(taRecv) & ' could not be read' ; exit.
+  if ~self.DeclIsSure(taX, taSplitTok) then taWhy = clip(taRecv) & ' is declared twice, or inside a COMPILE or OMIT block the split is not in' ; exit.
   if self.syms.syms.declTok > taScFirst and self.syms.syms.declTok <= taScCode
     taWhy = clip(taRecv) & ' is a PARAMETER, and its lines are the caller''s to read as they were'
     exit
@@ -9524,6 +9777,7 @@ TaGuard routine
           taWhy = 'the loads do not agree - one trims and one clips - and a split can do only one thing to every line'
           break
         end
+        if taInBlk and (self.CondLeavesOut(taSplitTok, taLine1) or self.CondLeavesOut(taSplitTok, taFrom)) then do TaBlkWhy ; break.
         taReads += 1
         taFrom = taNext
         cycle
@@ -9573,9 +9827,17 @@ TaGuard routine
       taWhy = 'the loads do not agree - one trims and one clips - and a split can do only one thing to every line'
       break
     end
+    if taInBlk and (self.CondLeavesOut(taSplitTok, taLine1) or self.CondLeavesOut(taSplitTok, taFrom)) then do TaBlkWhy ; break.
     taReads += 1
     taFrom = taNext
   end
+
+! ---- a split inside a COMPILE or OMIT block, and a load of its lines outside that block: in a build that leaves the
+!      block out, another split, or none, serves the load. A load in the same block, or in one inside it, runs only
+!      in builds that have the split
+TaBlkWhy routine
+  taWhy = 'the split is inside a COMPILE or OMIT block, which a build may leave out, and the load on line ' & self.LogLineOf(taLine1) & |
+          ' is not - another split, or none, would then serve it'
 
 ! ---- the load in hand fills taBuf, and the trim or clip on the line after it is taBuf's: moving it to
 !      the split keeps the line taBuf ends with the same only when taBuf is a StringTheory, whose
@@ -9799,6 +10061,9 @@ dbSpOk     byte                !   this one does
 dbSpI      long                !   its rows, bracket depth and commas
 dbSpD      long
 dbSpC      long
+dbSpWr     long
+dbSpWrLn   long
+dbSpT      STRING(96)
   code
   if self.syms &= NULL then return 0.
   self.syms.EnsureFresh()
@@ -9889,6 +10154,10 @@ DbScan routine
     dbTail = choose(~dbReadClips, '', choose(dbSplitClip = 1,                  |
              ' - its split clips already, so the st:clip on the load went',    |
              ' - clipped after the load, since its split does not clip'))
+    if dbReadClips and ~dbSplitClip and dbSpWrLn
+      dbTail = ' - clipped after the load, since line ' & dbSpWrLn
+      dbTail = clip(dbTail) & ' may write a line its split did not make'
+    end
     pLog.append('BUILTIN DropLineBuffer line ' & self.LogLineOf(dbSetTok) &    |
                 ': ' & clip(dbBufTxt) & ' only ever held one line of '    &    |
                 clip(dbRecvTxt) & ', so ' & clip(dbRecvTxt)               &    |
@@ -10046,6 +10315,7 @@ DbParamCheck routine
   end
   get(self.syms.syms, dbZ)
   if errorcode() then dbWhy = clip(dbRecv) & ' is not declared in this procedure' ; exit.
+  if ~self.DeclIsSure(dbZ, dbLine1) then dbWhy = clip(dbRecvTxt) & ' is declared twice, or inside a COMPILE or OMIT block the load is not in' ; exit.
   if self.syms.syms.declTok > dbScFirst and self.syms.syms.declTok <= dbScCode
     dbWhy = clip(dbRecvTxt) & ' is a parameter, and the caller may have given it Stream() - then its file would receive each line the drop loads into it'
     exit
@@ -10075,6 +10345,7 @@ DbParamCheck routine
     exit
   end
   if self.syms.syms.typeU <> 'STRINGTHEORY' then dbWhy = clip(dbBufTxt) & ' is not a StringTheory' ; exit.
+  if ~self.DeclIsSure(dbZ, dbLine1) then dbWhy = clip(dbBufTxt) & ' is declared twice, or inside a COMPILE or OMIT block the load is not in' ; exit.
   if self.syms.syms.isRef then dbWhy = clip(dbBufTxt) & ' is a reference - what it points at is not this procedure''s to leave unloaded'.
   if ~dbWhy and self.MayHaveLocalMethods(dbSc) and self.UsedInLocalMethods(upper(dbBuf), dbScFirst, dbScLast)
     dbWhy = clip(dbBufTxt) & ' is used in a method of a class this procedure declares, which would find it never loaded'
@@ -10217,6 +10488,7 @@ DbBufTail routine
       exit
     end
     if dbQ.tx <> dbBuf then cycle.                    ! neither dotted nor bare
+    if self.DgIsMemberDot(dbQ.tk - 1) then cycle.
     get(dbQ, dbX + 1)
     if ~errorcode() and dbQ.tx = '.' then cycle.      ! the head of a split dotted form - its tail is judged above
     if ~errorcode() and dbQ.tx = '&='
@@ -10294,12 +10566,18 @@ DbStoreBack routine
 ! ---- does the source's split carry st:clip? Then its lines sit clipped in the queue already, and a
 !      clipping read's own st:clip was doing nothing. EVERY split of the source must clip, and each
 !      by its OWN fifth argument, pClip: in split(',', '"', '"', st:clip) it is pRemoveQuotes, and a
-!      st:clip after a ';' on the split's line belongs to another statement.
+!      st:clip after a ';' on the split's line belongs to another statement. And nothing but those
+!      splits may write the source's lines: addLine, setLine, insertLine, setLineFromValue, swap,
+!      wrapText and the other splits store a line as they are given it, trailing spaces kept, and so
+!      do the lines queue named directly, a setValue, append or prepend given st:lines or an option
+!      that may hold it, and a call the source is handed to whole that may do more than read it. Any
+!      of these anywhere in the procedure, its routines included, and the clip stays.
 DbSplitClips routine
-  dbSplitClip = 0 ; dbSpAny = 0 ; dbSpAll = 1
+  dbSplitClip = 0 ; dbSpAny = 0 ; dbSpAll = 1 ; dbSpWr = 0 ; dbSpWrLn = 0
   dbFrom = dbScFirst
   loop while dbFrom > 0 and dbFrom < dbScLast
     do DbFill
+    if ~dbSpWr then do DbSpWrites.
     dbWant = 'SPLIT' ; do DbFind
     if dbFound
       dbHeadIx = dbFound ; do DbHead
@@ -10325,7 +10603,36 @@ DbSplitClips routine
     end
     dbFrom = dbNext
   end
-  dbSplitClip = choose(dbSpAny = 1 and dbSpAll = 1)
+  dbSplitClip = choose(dbSpAny = 1 and dbSpAll = 1 and dbSpWr = 0)
+  if dbSpAny and dbSpAll and dbSpWr then dbSpWrLn = self.LogLineOf(dbSpWr).
+
+! ---- dbSpWr = the first token on the line in dbQ that writes a line of the source another way
+DbSpWrites routine
+  loop dbSpI = 1 to records(dbQ)
+    dbHeadIx = dbSpI ; do DbHead
+    get(dbQ, dbSpI)
+    if errorcode() then break.
+    if dbHead = dbRecv
+      dbN = len(clip(dbQ.tx))
+      dbD = instring('.', dbQ.tx[1 : dbN], 1, 1)
+      if dbD and dbD < dbN then dbSpT = dbQ.tx[dbD + 1 : dbN] else dbSpT = dbQ.tx.
+      if dbSpT[1 : 5] = 'SPLIT' and dbSpT <> 'SPLIT' then dbSpWr = dbQ.tk.
+      if inlist(dbSpT, 'ADDLINE', 'SETLINE', 'INSERTLINE', 'SETLINEFROMVALUE', 'SWAP', 'WRAPTEXT')
+        dbSpWr = dbQ.tk
+      end
+      if dbSpT = 'LINES' or dbSpT[1 : 6] = 'LINES.' then dbSpWr = dbQ.tk.
+      if inlist(dbSpT, 'SETVALUE', 'APPEND', 'PREPEND') and self.LinesOptAt(dbQ.tk)
+        dbSpWr = dbQ.tk
+      end
+    elsif dbQ.tx = dbRecv and self.tk.GetTok(dbQ.tk + 1) <> '.'
+      dbSpT = self.tk.GetTok(dbQ.tk - 1)
+      case dbSpT
+      of '(' orof ','
+        if ~inlist(self.ArgFact(dbQ.tk, dbSelfU), 'R', 'P', 'F') then dbSpWr = dbQ.tk.
+      end
+    end
+    if dbSpWr then break.
+  end
 
 ! ---- RULE 3: the source's VALUE must be dead from here on, OR rebuilt by a later join(). A join
 !      the later reads rely on must be sure to run: at the procedure's top level, not in a routine,
@@ -10367,6 +10674,7 @@ DbValueCheck routine
           exit
         end
         do DbRtRead ; if dbWhy then exit.
+        do DbJoinCover ; if dbWhy then exit.
         dbJoinUsed = 1
         cycle
       end
@@ -10400,6 +10708,7 @@ DbValueCheck routine
           exit
         end
         do DbRtRead ; if dbWhy then exit.
+        do DbJoinCover ; if dbWhy then exit.
         dbJoinUsed = 1
       end
     end
@@ -10432,6 +10741,18 @@ DbValueCheck routine
     break
   end
 
+! ---- a read that the join rebuilds the value for must not run in a build without the join: the join
+!      is in no COMPILE or conditional OMIT block that the read is not in (a join and its reads in one
+!      block stay allowed, ruled 21 Nov 2026). A read in a routine runs at its DO, which DbRtRead has
+!      asked about already ----
+DbJoinCover routine
+  if dbRt then exit.
+  get(dbQ, dbX)
+  if errorcode() then exit.
+  if ~self.CondLeavesOut(dbJoinTk, dbQ.tk) then exit.
+  dbWhy = 'the join of ' & clip(dbRecvTxt) & ' on line ' & self.LogLineOf(dbJoinAt) & ' is inside a COMPILE or OMIT block' & |
+          ' that the read on line ' & self.LogLineOf(dbFrom) & ' is not in'
+
 ! ---- a value read in a routine runs where the routine's DO is, not where its body lies: it is after the join only
 !      when every DO of that routine is past the join and in no routine itself (a routine DOne from another one runs
 !      wherever that one's DO is)
@@ -10451,6 +10772,11 @@ DbRtRead routine
     if dbRtX < dbJoinTk or self.syms.ScopeContaining(dbRtX, vs:scRoutine, vs:scRoutine)
       dbWhy = clip(dbRecvTxt) & '''s value is read on line ' & self.LogLineOf(dbFrom) & ' in ' & clip(dbRtN) &                        |
               ', DOne on line ' & self.LogLineOf(dbRtX) & ', where it may run before the join; after the drop it would read one line'
+      exit
+    end
+    if self.CondLeavesOut(dbJoinTk, dbRtX)
+      dbWhy = 'the join of ' & clip(dbRecvTxt) & ' on line ' & self.LogLineOf(dbJoinAt) & ' is inside a COMPILE or OMIT block' &      |
+              ' that the DO on line ' & self.LogLineOf(dbRtX) & ' is not in'
       exit
     end
   end
@@ -10511,7 +10837,12 @@ DbNextLoop routine
 
 ! ---- the load at dbZ runs before the read at dbWalk: same routine, its block never ends between, no other
 !      branch begins, no label offers a way in - and the load is not one arm of an EXECUTE, whose next
-!      arm carries no mark the walk could see and runs without it
+!      arm carries no mark the walk could see and runs without it, nor inside a COMPILE or conditional
+!      OMIT block that the read is not in, which a build may leave out while it keeps the read (a load
+!      and its read in one block, or the read in a block inside the load's, stay allowed, ruled
+!      21 Nov 2026). A load on a row that a '|' carries on from
+!      the rows above is in an IF, CASE or LOOP opened there and not closed before it, as much as in one
+!      opened on its own row
 DbNextDom routine
   if self.syms.ScopeContaining(dbZ, vs:scRoutine, vs:scRoutine) <> self.syms.ScopeContaining(dbWalk, vs:scRoutine, vs:scRoutine)
     dbWhy = clip(dbBufTxt) & ' is read on line ' & self.LogLineOf(dbWalk) & ' in another routine from its load on line ' & self.LogLineOf(dbZ)
@@ -10523,18 +10854,36 @@ DbNextDom routine
             ' is one arm of the EXECUTE on line ' & self.LogLineOf(dbX) & ', so the read may run without it'
     exit
   end
+  if self.CondLeavesOut(dbZ, dbWalk)
+    dbWhy = clip(dbBufTxt) & ' is read on line ' & self.LogLineOf(dbWalk) & ', and the load on line ' & self.LogLineOf(dbZ)
+    dbWhy = clip(dbWhy) & ' is inside a COMPILE or OMIT block the read is not in, which a build may leave out'
+    exit
+  end
   dbDepth = 0                                   ! the load's own line first: dbZ is its
-  loop dbX = dbZ to self.FirstEolAfter(dbZ) - 1 !   first token, and an IF, CASE or LOOP
+  loop dbX = dbZ to self.FirstEolOrEnd(dbZ) - 1 !   first token, and an IF, CASE or LOOP
     get(self.tk.tokens, dbX)                    !   opened on it is a one-line structure
     if errorcode() then break.                  !   the load may sit in
     if self.tk.tokens.level = '+' then dbDepth = 1 ; break.
+  end
+  if ~dbDepth
+    loop dbX = dbZ - 1 to 1 by -1
+      if self.IsEolTok(dbX) then break.
+      get(self.tk.tokens, dbX)
+      if errorcode() then break.
+      case self.tk.tokens.level
+      of '+'
+        dbDepth += 1
+      of '-'
+        dbDepth -= 1
+      end
+    end
   end
   if dbDepth > 0
     dbWhy = clip(dbBufTxt) & ' is read on line ' & self.LogLineOf(dbWalk) & ', and the load on line ' & self.LogLineOf(dbZ) & ' is inside a one-line IF, CASE or LOOP, so it may not run'
     exit
   end
   dbDepth = 0
-  loop dbX = self.FirstEolAfter(dbZ) + 1 to dbWalk - 1
+  loop dbX = self.FirstEolOrEnd(dbZ) + 1 to dbWalk - 1
     get(self.tk.tokens, dbX)
     if errorcode() then break.
     if self.tk.tokens.level = '+'
@@ -10576,7 +10925,11 @@ DbLoopSpan routine
 !      from the site to it, the structure holding the site never ends, no other branch of it begins, no
 !      column-1 label offers a way in, and no `do` calls a routine that could change the source (a DO
 !      anywhere on a line - after THEN, ELSE or a ';' as well as at its start, the load's own line
-!      included); and the site is not itself one arm of an EXECUTE. Without this a load inside an IF
+!      included); and the site is not itself one arm of an EXECUTE, nor inside a COMPILE or conditional
+!      OMIT block that the last read is not in. The reads lie between the site and the last one, and a
+!      block is one stretch of lines, so when the last read is in the load's block, or in a block inside
+!      it, every read is, and no build has a read without the load (ruled 21 Nov 2026). Without this a
+!      load inside an IF
 !      with the read after the END converted, and the read then saw the source where it had seen an
 !      empty buffer.
 DbRuns routine
@@ -10598,6 +10951,11 @@ DbRuns routine
   end
   if self.syms.ScopeContaining(dbLine1, vs:scRoutine, vs:scRoutine) <> self.syms.ScopeContaining(dbLastRd, vs:scRoutine, vs:scRoutine)
     dbWhy = clip(dbBufTxt) & ' is read on line ' & self.LogLineOf(dbLastRd) & ' in a different routine from the load, so the read may run first'
+    exit
+  end
+  if self.CondLeavesOut(dbLine1, dbLastRd)
+    dbWhy = clip(dbBufTxt) & ' is read on line ' & self.LogLineOf(dbLastRd) & ', and the load is inside a COMPILE or OMIT block'
+    dbWhy = clip(dbWhy) & ' the read is not in, which a build may leave out - the read would then run without it'
     exit
   end
   dbDepth = 0
@@ -10741,9 +11099,11 @@ DbRename routine
   ! FROM THE SITE TO THE NEXT LOAD, not the whole procedure: a buffer loaded in two loops is two
   ! sites, and renaming the second load's line made it `src.setValue(src.getLine(x))` - a shape
   ! nothing converts. Mentions before the site belong to the site before it, which renamed them.
+  ! A name after a joining '.' is another object's member that shares the name, and stays.
   loop dbX = dbLine1 to choose(~dbNextLd, dbScLast, dbNextLd - 1)
     if dbX = dbBufDecl then cycle.                   ! the declaration stays for UnusedVars
     if dbX >= dbLine1 and dbX <= dbClose then cycle. ! the line being rewritten
+    if self.DgIsMemberDot(dbX - 1) then cycle.
     get(self.tk.tokens, dbX)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -10787,7 +11147,8 @@ DbRename routine
 ! split it again); it is not
 ! declared in this procedure, or is a parameter (the caller's object, which a call can reach under
 ! another name); the source or the buffer is not a StringTheory (a class of the author's own may
-! give those method names another meaning); or the trim's alphabet is not the space. A quote of
+! give those method names another meaning); the load is inside a COMPILE or conditional OMIT block
+! the strip is not in, which a build may leave out; or the trim's alphabet is not the space. A quote of
 ! spaces alone, or an empty one, is no quote at all, as Split reads it. A split on anything but
 ! the lone space is a site only when it carries st:clip or st:left. The line is commented out
 ! where it stands, never deleted.
@@ -10936,6 +11297,13 @@ dtSelfU    STRING(vs:maxName)  ! the scope's class when it is a method, for the 
     ! NOT ONE ARM OF AN EXECUTE - the same rule again: the load above is an ALTERNATIVE to this
     ! strip, so the strip is not working on a line that load made, and commenting it out
     ! RENUMBERS every arm below it. Found 15 Sep 2026.
+    ! NOR MAY THE LOAD BE INSIDE A COMPILE OR CONDITIONAL OMIT BLOCK THE STRIP IS NOT IN: a build may
+    ! leave the load out, and a strip below the block then works on whatever the buffer held before
+    ! (ruled 9 Nov 2026). A strip in the same block, or in one inside it, runs only in builds that have the load.
+    if ~dtWhy and self.CondLeavesOut(dtLine1, dtLine2)
+      dtWhy = 'the load on line ' & self.LogLineOf(dtLine1) & ' is inside a COMPILE or OMIT block the strip is not in, which a build may leave out'
+      dtWhy = clip(dtWhy) & ', and the strip would then work on another value'
+    end
     if ~dtWhy
       dtExec = self.InExecute(dtLine2, dtScFirst)
       if dtExec
@@ -11110,6 +11478,7 @@ DtScope routine
     get(self.syms.syms, dtX)
     if ~errorcode() then dtDecl = self.syms.syms.declTok ; dtSrcRef = self.syms.syms.isRef.
     if dtDecl and self.syms.syms.typeU <> 'STRINGTHEORY' then dtWhy = clip(dtSrcTxt) & ' is not a StringTheory'.
+    if dtDecl and ~dtWhy and ~self.DeclIsSure(dtX, dtLine1) then dtWhy = clip(dtSrcTxt) & ' is declared twice, or inside a COMPILE or OMIT block the load is not in'.
   end
   if ~dtWhy and self.RecvIsOtherClass(dtBufTk)
     dtWhy = clip(dtBufTxt) & ' cannot be shown to be a StringTheory, whose trim, clip, setLeft and setRight strip spaces alone'
@@ -11234,6 +11603,11 @@ DtSplitDom routine
 DtDomTo routine
   if dtSplitAt > dtTo
     dtWhy = 'the split of ' & clip(dtSrcTxt) & ' is on line ' & self.LogLineOf(dtSplitAt) & ', after the load, so the lines the load reads came from somewhere else'
+    exit
+  end
+  if self.CondLeavesOut(dtSplitAt, dtTo)
+    dtWhy = 'the split of ' & clip(dtSrcTxt) & ' on line ' & self.LogLineOf(dtSplitAt) & ' is inside a COMPILE or OMIT block the load is not in'
+    dtWhy = clip(dtWhy) & ', which a build may leave out'
     exit
   end
   dtDepth = 0                                                                   ! the split's own line first: an IF, CASE
@@ -11464,9 +11838,10 @@ own  StringTheory
 ! ------------------------------------------------------------------------------------
 ! The object named at pTok stands whole as an argument: what may the call it is handed to do with its
 ! LINES? A StringTheory setValue, append or prepend - `<recv>.setValue(<obj>, ...)` - copies them only
-! with st:lines, which LinesOptAt reads: its answer. Any other call, a procedure of the file or not, may
-! read them, and so may a mention in no call at all: 2. The call is the nearest bracket the object stands
-! inside, read back across a '|' continuation to the start of the line.
+! with st:lines, which LinesOptAt reads: its answer. The receiver must be declared StringTheory: a class
+! of the program's own may have a method of the same name that reads them. Any other call, a procedure of
+! the file or not, may read them, and so may a mention in no call at all: 2. The call is the nearest
+! bracket the object stands inside, read back across a '|' continuation to the start of the line.
 ! ------------------------------------------------------------------------------------
 VitEngine.BareArgLines Procedure(LONG pTok)
 x    long,auto
@@ -11492,6 +11867,14 @@ nm   STRING(vs:maxName),auto
   if dp = len(clip(t)) then return 2.
   if dp then nm = t[dp + 1 : len(clip(t))] else nm = t.
   if nm <> 'SETVALUE' and nm <> 'APPEND' and nm <> 'PREPEND' then return 2.
+  if dp > 1
+    nm = t[1 : dp - 1]
+  elsif dp or self.tk.GetTok(x - 4) = '.'
+    return 2
+  else
+    nm = upper(self.tk.GetTok(x - 3))
+  end
+  if self.syms &= NULL or self.HayType(nm, x) <> 'STRINGTHEORY' then return 2.
   return self.LinesOptAt(x)
 
 ! ------------------------------------------------------------------------------------
@@ -11664,6 +12047,7 @@ csInRtn     byte               ! CsUses: the walk is in a routine after the cut
 csRtnChg    byte               !   and one of those routines changes x
 csDoAt      long               ! the line after the cut that calls a routine, the one counting first
 csDoEff     long               !   and where it counts from
+csBack      long               ! CsUses: the top of a loop or a GOTO back that runs the cut again, 0 = none
 csTxt       StringTheory       ! the replacement text
 csSb        StringTheory       ! the strBefore carried across a replacement
 csReads     EQUATE(' _DATAEND VALUEPTR GETVALUE GETVALUEPTR LENGTH LEN SLICE SUB CONTAINSCHAR CONTAINSBYTE FINDBYTE FINDCHAR FINDCHARS INSTRING STARTSWITH ENDSWITH EQUALS COUNT CLIPLENGTH ')
@@ -11811,12 +12195,15 @@ CsScope routine
   end
   if ~csScCode then csScCode = csScFirst.
 
-! ---- x a StringTheory LOCAL, not a reference; p an integer LOCAL, not a reference
+! ---- x a StringTheory LOCAL, not a reference; p an integer LOCAL, not a reference, not a field of a
+!      structure and with no other name for its storage (NameShared); each declared once, in every build
+!      the cut is in (DeclIsSure): the arms of a COMPILE and an OMIT can give a name two types
 CsDeclCheck routine
   csZ = self.syms.FindOwn(csX0, csSc)
   if ~csZ then csP = '' ; exit.
   get(self.syms.syms, csZ)
   if errorcode() or self.syms.syms.typeU <> 'STRINGTHEORY' then csP = '' ; exit.
+  if ~self.DeclIsSure(csZ, csLine1) then csWhy = clip(csXTxt) & ' is declared twice, or inside a COMPILE or OMIT block the cut is not in' ; exit.
   csXDecl = self.syms.syms.declTok
   if (self.syms.syms.declTok > csScFirst and self.syms.syms.declTok <= csScCode)
     csWhy = clip(csXTxt) & ' is a PARAMETER - its lines are the caller''s, and a split would write them'
@@ -11831,6 +12218,7 @@ CsDeclCheck routine
   if ~csZ then csP = '' ; exit.
   get(self.syms.syms, csZ)
   if errorcode() then csP = '' ; exit.
+  if ~self.DeclIsSure(csZ, csLine1) then csWhy = clip(csPTxt) & ' is declared twice, or inside a COMPILE or OMIT block the cut is not in' ; exit.
   case self.syms.syms.typeU
   of 'LONG'  orof 'ULONG'  orof 'SIGNED' orof 'UNSIGNED'
   of 'SHORT' orof 'USHORT' orof 'BYTE'
@@ -11846,6 +12234,9 @@ CsDeclCheck routine
   end
   if csP and (band(self.DeclAttrBits(csPDecl), ab:over) or self.HasSiblingOver(csZ, csP))
     csWhy = clip(csPTxt) & ' shares its storage with another variable through OVER, so it can change under the other name'
+  end
+  if csP and ~csWhy and self.NameShared(csLine1, csP)
+    csWhy = clip(csPTxt) & ' is a field of a structure, or has another name - a store under that name changes it unseen'
   end
 
 ! ---- every line of the procedure: p's mentions are the tests and the two reads and nothing
@@ -11872,6 +12263,26 @@ CsUses routine
   end
   if ~csWhy then csWhy = self.ObjReach(csX0, csLine1, 1).
   if csWhy then exit.
+  ! A hand-off of x above the cut runs again after it when a LOOP or ACCEPT around the cut, or a GOTO
+  ! back over it, brings control round, so from csBack on it is judged as one after the cut
+  csBack = 0 ; csZ = 0
+  loop csY = csLine1 - 1 to csScFirst by -1
+    get(self.tk.tokens, csY)
+    if errorcode() then break.
+    if self.tk.tokens.tok &= NULL then cycle.
+    case self.tk.tokens.level
+    of '-'
+      csZ += 1
+    of '+'
+      if csZ
+        csZ -= 1
+      elsif upper(self.tk.tokens.tok) = 'LOOP' or upper(self.tk.tokens.tok) = 'ACCEPT'
+        csBack = csY
+      end
+    end
+  end
+  csY = self.GotoBackTop(csLine1, csScFirst, csScLast)
+  if csY and (~csBack or csY < csBack) then csBack = csY.
   csFrom = csScFirst
   loop while csFrom > 0 and csFrom < csScLast
     do CsFill
@@ -11925,7 +12336,7 @@ CsUses routine
         get(csQ, csX + 1)
         if errorcode() or csQ.tx <> '.'
           get(csQ, csX)
-          if (csFrom > csLine1 or csInRtn) and self.BareArgLines(csQ.tk)
+          if (csFrom > csLine1 or csInRtn or (csBack and csFrom >= csBack)) and self.BareArgLines(csQ.tk)
             csWhy = clip(csXTxt) & ' is handed whole on line ' & self.LogLineOf(csFrom) & ' to a call that may read its lines, which the split gives it'
             exit
           end
@@ -12499,7 +12910,10 @@ CsHead routine
 ! freeLines, free(true), setValue with st:lines or an option that may hold it, swap), is handed
 ! whole to a call, or assigned
 ! by reference; a reference is taken on the scratch or its buffer, or the buffer is handed to a
-! call that may keep one; the split is not plain; the copy could run more than once, or a later mention
+! call that may keep one; the split is not plain; the copy is inside a COMPILE or conditional OMIT
+! block that a later use of the scratch, or the join, is not in, so a build may leave the copy out
+! and keep them (the copy, its uses and the join in one block stay allowed, ruled 21 Nov 2026);
+! the join would go inside a block the copy is not in; the copy could run more than once, or a later mention
 ! could run without it (TakeOverValue's walks); with a join, a GOTO between the copy and the
 ! join (it would jump past the join), or a label a GOTO names between the scratch's last use
 ! and the join (the jump would reach the join without the copy).
@@ -12725,6 +13139,7 @@ SpDeclCheck routine
     spWhy = clip(spSrcTxt) & ' is a PARAMETER - its lines and its value are the caller''s'
     exit
   end
+  if ~self.DeclIsSure(spZ, spLine1) then spWhy = clip(spSrcTxt) & ' is declared twice, or inside a COMPILE or OMIT block the copy is not in' ; exit.
   if self.syms.syms.isRef then spWhy = clip(spSrcTxt) & ' is a reference - what it points at is not this procedure''s to split' ; exit.
   if self.DeclHasAttr(self.syms.syms.declTok, 'STATIC') or self.DeclHasAttr(self.syms.syms.declTok, 'THREAD')
     spWhy = clip(spSrcTxt) & ' is STATIC or THREAD - its value lasts to the next call, which would find it split'
@@ -12745,6 +13160,7 @@ SpDeclCheck routine
     exit
   end
   if self.syms.syms.typeU <> 'STRINGTHEORY' then spWhy = clip(spBufTxt) & ' is not a StringTheory' ; exit.
+  if ~self.DeclIsSure(spZ, spLine1) then spWhy = clip(spBufTxt) & ' is declared twice, or inside a COMPILE or OMIT block the copy is not in' ; exit.
   if self.syms.syms.isRef then spWhy = clip(spBufTxt) & ' is a reference - what it points at is not this procedure''s to rename'.
   if ~spWhy and self.MayHaveLocalMethods(spSc) and self.UsedInLocalMethods(upper(spBuf), spScFirst, spScLast)
     spWhy = clip(spBufTxt) & ' is used in a method of a class this procedure declares, which the rename would not reach'
@@ -12893,8 +13309,17 @@ t    STRING(vs:maxName),auto
   end
   if self.ArgMayWrite(s, e, spReads, spSums) then spValWr = 1.
 
-! ---- the copy runs at most once per call
+! ---- the copy runs at most once per call, and in every build its split and the scratch's uses are
+!      in. They lie between the copy and the last use (the split alone when nothing follows it), and
+!      a block is one stretch of lines, so when the last of them is in the copy's COMPILE or
+!      conditional OMIT block, or in a block inside it, every one is (ruled 21 Nov 2026)
 SpOnce routine
+  spX = choose(~spLast, spLine2, spLast)
+  if self.CondLeavesOut(spLine1, spX)
+    spWhy = 'the copy is inside a COMPILE or OMIT block that the use of ' & clip(spBufTxt) & ' on line ' & self.LogLineOf(spX) & ' is not in'
+    spWhy = clip(spWhy) & ' - the split below would then split ' & clip(spBufTxt) & ' as it was, not a copy of ' & spSrcTxt
+    exit
+  end
   if self.syms.ScopeContaining(spLine1, vs:scRoutine, vs:scRoutine)
     spWhy = 'the copy is in a routine, which may run more than once'
     exit
@@ -13012,6 +13437,17 @@ SpJoinPoint routine
   if spSrcAfter < spJoinAt
     spWhy = clip(spSrcTxt) & ' is read on line ' & self.LogLineOf(spSrcAfter) & ', inside the structure that holds ' & clip(spBufTxt) & '''s last use - the join would come too late'
   end
+  ! the join goes after the line before spJoinAt - in front of a comment-only line, when that is
+  ! the one found - so it is in the builds that line end is in, which must be every build the copy is
+  ! and no other: a join in a build without the copy would join lines the source was never split into
+  if ~spWhy and self.CondLeavesOut(spJoinAt - 1, spLine1)
+    spWhy = 'the join would go inside a COMPILE or OMIT block on line ' & self.LogLineOf(spJoinAt) & ', which a build may leave out'
+    spWhy = clip(spWhy) & ' - ' & clip(spSrcTxt) & ' would then be read with the last line loaded into it'
+  end
+  if ~spWhy and self.CondLeavesOut(spLine1, spJoinAt - 1)
+    spWhy = 'the join would go outside the COMPILE or OMIT block that holds the copy, on line ' & self.LogLineOf(spJoinAt)
+    spWhy = clip(spWhy) & ' - a build without the block would join ' & clip(spSrcTxt) & ', which it never split'
+  end
 
 ! ---- the join gives the source its value back, so every path from the copy must pass it, and no
 !      path may reach it without the copy. No label lies between the copy and the scratch's last use
@@ -13097,11 +13533,13 @@ SpEdit routine
   if spEol then spKept = self.DropLinesKeepCmts(spLine1, spEol).
   if not self.syms &= NULL then self.syms.dirty = 1.
 
-! ---- every mention of the scratch after the copy line names the source
+! ---- every mention of the scratch after the copy line names the source - but not a name after a joining
+!      '.', another object's member that shares the name
 SpRename routine
   spEol = self.FirstEolAfter(spLine1)
   loop spX = spEol + 1 to spScLast
     if spX = spBufDecl then cycle.
+    if self.DgIsMemberDot(spX - 1) then cycle.
     get(self.tk.tokens, spX)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -13220,9 +13658,9 @@ SpHead routine
 ! a numbered range, which would shift under its own feet (13 Sep 2026).
 !
 ! WHAT IT REFUSES, each with its reason: the range not running to the end; the object's lines not
-! made by a plain split on the separator that runs on every path to the copy, with nothing writing
-! them after it; for a range from line 1 with no trim, the object's value changed after that split,
-! so that it is no longer its lines joined; the object's value changed between the copy and the
+! made by a plain split on the separator that runs on every path to the copy in every build, with
+! nothing writing them after it; for a range from line 1 with no trim, the object's value changed after
+! that split, so that it is no longer its lines joined; the object's value changed between the copy and the
 ! split (a store through its buffer, or the buffer handed to a call that may write it, is a change);
 ! the object STATIC or THREAD, or reachable without its name (a reference, a method
 ! of a class the procedure declares, a call it is handed to); the copy named in such a method;
@@ -13314,6 +13752,7 @@ tk            long
   code
   if self.syms &= NULL then return 0.
   self.syms.EnsureFresh()
+  self.BuildSummaries()
   rsEdited = 0
   if self.curPass = 1
     rsRpt = 1 ; do RsScan
@@ -13446,6 +13885,7 @@ RsDeclCheck routine
     rsWhy = clip(rsSrcTxt) & ' is a PARAMETER - its lines are the caller''s, and the fold deletes one'
     exit
   end
+  if ~self.DeclIsSure(rsZ, rsLine1) then rsWhy = clip(rsSrcTxt) & ' is declared twice, or inside a COMPILE or OMIT block the copy is not in' ; exit.
   if self.syms.syms.isRef then rsWhy = clip(rsSrcTxt) & ' is a reference - what it points at is not this procedure''s' ; exit.
   if self.DeclHasAttr(self.syms.syms.declTok, 'STATIC') or self.DeclHasAttr(self.syms.syms.declTok, 'THREAD')
     rsWhy = clip(rsSrcTxt) & ' is STATIC or THREAD - its lines last to the next call, which would find line 1 gone'
@@ -13465,6 +13905,7 @@ RsDeclCheck routine
     exit
   end
   if self.syms.syms.typeU <> 'STRINGTHEORY' then rsWhy = clip(rsBufTxt) & ' is not a StringTheory' ; exit.
+  if ~self.DeclIsSure(rsZ, rsLine1) then rsWhy = clip(rsBufTxt) & ' is declared twice, or inside a COMPILE or OMIT block the copy is not in' ; exit.
   if self.syms.syms.isRef then rsWhy = clip(rsBufTxt) & ' is a reference - what it points at is not this procedure''s to fold away'.
   if ~rsWhy and self.MayHaveLocalMethods(rsSc) and self.UsedInLocalMethods(upper(rsBuf), rsScFirst, rsScLast)
     rsWhy = clip(rsBufTxt) & ' is used in a method of a class this procedure declares, which the fold would not reach'
@@ -13475,7 +13916,10 @@ RsDeclCheck routine
 !      when it does not hold the separator, and that is known only of the pieces of a plain split on
 !      that same separator. So such a split of the object must run on every path to the copy: in
 !      the main code above it, at its level or an enclosing one - not in an arm of an IF, CASE or
-!      EXECUTE that has closed - with no label after it, and nothing after it writing the object's
+!      EXECUTE that has closed, and not inside a COMPILE or conditional OMIT block that the copy is not
+!      in, which a build may leave out while it keeps the copy (the split and the copy in one block, or
+!      the copy in a block inside the split's, stay allowed, ruled 21 Nov 2026) - with no label after
+!      it, and nothing after it writing the object's
 !      lines, handing the object whole to a call, or calling a routine.
 !      THE VALUE. Right after a plain split the object's value is its lines joined on the separator,
 !      and a range from line 1 with no trim folds on that alone: the copy's value reads become the
@@ -13530,7 +13974,7 @@ sdVal   long
     end
     if sdWr
       sdAt = 0 ; sdVal = 0
-      if records(rsQ) = 4 and ~self.ArmOfExecute(rsFrom)
+      if records(rsQ) = 4 and ~self.ArmOfExecute(rsFrom) and ~self.CondLeavesOut(rsFrom, rsLine1)
         get(rsQ, 1) ; rsTail = rsQ.tx
         get(rsQ, 3)
         if rsTail = clip(rsSrc) & '.SPLIT' and self.tk.GetTok(rsQ.tk) = rsSep then sdAt = rsFrom ; sdDepth = sdLevel.
@@ -14102,6 +14546,22 @@ RsRuns routine
             ', and every later arm would answer to a different value'
     exit
   end
+  ! The copy, the trim and the split are in the same builds - none in a COMPILE or conditional OMIT
+  ! block another is not in - and the copy is in every build its last use is: in a build that left
+  ! them out, the copy's uses read an empty copy, where the fold would have them read the object's
+  ! lines. The trim written after the join is in the copy's builds too.
+  rsX = self.CondLeavesOut(rsLine1, rsLine3) + self.CondLeavesOut(rsLine3, rsLine1)
+  if rsLine2 then rsX += self.CondLeavesOut(rsLine1, rsLine2) + self.CondLeavesOut(rsLine2, rsLine1).
+  if rsLast then rsX += self.CondLeavesOut(rsLine1, rsLast).
+  if rsTrimCall and rsJoinLine and rsValAfter
+    rsY = self.FirstEolAfter(rsJoinLine)
+    if rsY then rsX += self.CondLeavesOut(rsLine1, rsY) + self.CondLeavesOut(rsY, rsLine1).
+  end
+  if rsX
+    rsWhy = 'a line the fold takes out is inside a COMPILE or OMIT block that ' & clip(rsBufTxt) & '''s uses are not all in'
+    rsWhy = clip(rsWhy) & ', so a build may leave it out'
+    exit
+  end
   if self.syms.ScopeContaining(rsLast, vs:scRoutine, vs:scRoutine)
     rsWhy = clip(rsBufTxt) & ' is used on line ' & self.LogLineOf(rsLast) & ' in a routine, which may run before the copy'
     exit
@@ -14205,11 +14665,13 @@ RsEdit routine
   end
   if not self.syms &= NULL then self.syms.dirty = 1.
 
-! ---- every mention of the copy after the split line names the object
+! ---- every mention of the copy after the split line names the object - but not a name after a
+!      joining '.', another object's member that shares the name
 RsRename routine
   rsEol = self.FirstEolAfter(rsLine3)
   loop rsX = rsEol + 1 to rsScLast
     if rsX = rsBufDecl then cycle.
+    if self.DgIsMemberDot(rsX - 1) then cycle.
     get(self.tk.tokens, rsX)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -14511,6 +14973,8 @@ McTryOne routine
   if ~records(ArmQ) then exit.
   do McNext                                          ! the statement after the END: a CASE or an IF on the same expression
   if bail then exit.
+  do McBlk
+  if bail then exit.
   do McSafe                                          ! every arm jumps, or shares no value with the second test and leaves the selector alone
   if bail then exit.
   do McIndent
@@ -14601,8 +15065,11 @@ d     long,auto
 
 ! ---- the heads of the selector's variables, ' NT SELF ', for the mention test. A callee is not one.
 !      mcLocal: every one is a plain local of this procedure, which no call can reach. mcAlias is set
-!      too when the procedure INCLUDEs a file: the included code, not in this file, may write the
-!      selector in an arm or name it in a declaration ----
+!      when one has a second name an arm may write it through (NameShared: an OVER, a reference, a
+!      structure or a field of one), for a local and for any other name the file declares. SELF and a
+!      name nothing declares are left to the arm test, which takes any SELF or undeclared name in an
+!      arm for a mention. It is set too when the procedure INCLUDEs a file: the included code, not in
+!      this file, may write the selector in an arm or name it in a declaration ----
 McNames routine
   data
 z2     long,auto
@@ -14634,17 +15101,25 @@ row    long,auto
     end
     if h < 1 then cycle.
     namesU.append(nm[1 : h] & ' ')
-    if ~self.DgRecvIsLocal(nm[1 : h], z2) then mcLocal = 0 ; cycle.
-    sc = self.syms.ScopeContaining(z2, vs:scProc, vs:scMethod)      ! a local can still change through another name: an
-    if ~sc then mcLocal = 0 ; cycle.                                !   OVER, a reference taken on it, a method of a class
-    row = self.syms.FindOwn(nm[1 : h], sc)                          !   the procedure declares
+    if ~self.DgRecvIsLocal(nm[1 : h], z2)
+      mcLocal = 0
+      if nm[1 : h] = 'SELF' or self.syms &= NULL then cycle.
+      row = 0
+      if self.syms.Visible(nm[1 : h], z2, row) = vs:visNone then cycle.
+      if self.NameShared(z2, nm[1 : h]) then mcAlias = 1.
+      cycle
+    end
+    sc = self.syms.ScopeContaining(z2, vs:scProc, vs:scMethod)    ! a local can still change through another name: an
+    if ~sc then mcLocal = 0 ; cycle.                              !   OVER, a reference taken on it, a method of a class
+    row = self.syms.FindOwn(nm[1 : h], sc)                        !   the procedure declares
     if ~row then mcLocal = 0 ; cycle.
     get(self.syms.syms, row)
     if errorcode() or self.syms.syms.isRef or self.NameShared(z2, nm[1 : h]) then mcAlias = 1 ; cycle. ! an OVER either way or a reference writes it unseen
+    if ~self.DeclIsSure(row, z2) then mcAlias = 1 ; cycle.
     self.syms.scopes.scopeId = sc
     get(self.syms.scopes, self.syms.scopes.scopeId)
     if errorcode() then mcLocal = 0 ; cycle.
-    loop d = self.syms.scopes.startTok to self.syms.scopes.endTok   ! a reference taken on it: r &= k
+    loop d = self.syms.scopes.startTok to self.syms.scopes.endTok ! a reference taken on it: r &= k
       if self.tk.GetTok(d) = '&=' and upper(self.tk.GetTok(d + 1)) = nm[1 : h] then mcAlias = 1 ; break.
     end
     if mcAlias then cycle.
@@ -15064,6 +15539,15 @@ tU    string(vs:maxName),auto
 McAndRest routine
   if self.SpanTopWord(andTok + 1, condE, ' OR XOR ') then bail = 1.
 
+! ---- a COMPILE or conditional OMIT block that holds the CASE or the next test without the other:
+!      a build that leaves it out would keep half of the merged CASE ----
+McBlk routine
+  if self.CondLeavesOut(caseTok, nxt) + self.CondLeavesOut(nxt, caseTok)
+    pLog.append('BUILTIN MergeAdjacentCase line ' & self.LogLineOf(caseTok) & |
+       ': REFUSED - a COMPILE or OMIT block holds the CASE or the next test without the other, and a build that leaves it out would keep half of the merged CASE.<13,10>')
+    bail = 1
+  end
+
 ! ---- every arm of the first CASE: it jumps, or it shares no value with the second test and
 !      never mentions the selector's variables ----
 McSafe routine
@@ -15365,7 +15849,7 @@ sb StringTheory
     of 1
       self.tk.SetTok(ed2:pos, clip(ed2:txt))                          ! strBefore omitted = the existing trivia stays
     of 2
-      self.tk.DeleteToks(ed2:pos, ed2:pos2)
+      do McDelete
     of 5
       self.tk.SetTok(ed2:pos, '<10>', '')                             ! THEN (or ';') becomes the line break after the OF list
     of 6
@@ -15393,6 +15877,18 @@ sb StringTheory
       end
     end
   end
+
+! ---- kind 2: delete the tokens ed2:pos to ed2:pos2. A span that takes whole lines - the first CASE's
+!      END line, the second `case E` line - keeps every plain OMIT block the tokenizer folded in front
+!      of one of them: it goes back, in order, on the token that now begins the spot, so the author's
+!      text stays where the lines stood. A span inside a line has none to keep ----
+McDelete routine
+  data
+blk StringTheory
+  code
+  self.LineBlocks(ed2:pos, ed2:pos2, blk)
+  self.tk.DeleteToks(ed2:pos, ed2:pos2)
+  if blk._DataEnd then self.tk.PrependStrBefore(ed2:pos, blk.getValue()).
 
 !===============================================================================================
 ! BUILTIN MergeDisjointLocals - two StringTheory locals that can never be in use at once are one.
@@ -15429,6 +15925,7 @@ i         long,auto
 j         long,auto
 k         long,auto
 sc        long,auto
+scEnd     long,auto
 kind      byte,auto
 ifTok     long               ! the top-level IF that ends in RETURN
 ifEnd     long               !   and its END
@@ -15466,6 +15963,7 @@ declTok   long
     kind = self.syms.scopes.kind
     if kind <> vs:scProc and kind <> vs:scMethod and kind <> vs:scMain then cycle.
     sc = self.syms.scopes.scopeId
+    scEnd = self.syms.scopes.endTok
     do MdLocals
     if records(LocQ) < 2 then cycle.
     self.AutoScopePrep(sc)
@@ -15483,7 +15981,9 @@ declTok   long
 
 ! ---- the StringTheory locals declared in the scope's data section, in declaration order. A
 !      parameter is a row of the scope too, declared in the header and not in column 1: it is the
-!      caller's object, and a local merged into it would write the caller's value
+!      caller's object, and a local merged into it would write the caller's value. A name declared twice,
+!      in the arms of a COMPILE and an OMIT, or declared in a block the code is not in, is left alone:
+!      which declaration a build keeps is not known here (DeclIsSure)
 MdLocals routine
   free(LocQ)
   loop i = 1 to records(self.syms.syms)
@@ -15493,6 +15993,7 @@ MdLocals routine
     if self.syms.syms.typeU <> 'STRINGTHEORY' then cycle.
     if self.syms.syms.isRef or self.syms.syms.isLike or self.syms.syms.isField then cycle.
     if ~self.syms.IsColOneLabel(self.syms.syms.declTok) then cycle.
+    if ~self.DeclIsSure(i, scEnd) then cycle.
     if self.DeclHasAttr(self.syms.syms.declTok, 'STATIC') or self.DeclHasAttr(self.syms.syms.declTok, 'THREAD') then cycle.
     clear(LocQ)
     lq:row     = i
@@ -15601,7 +16102,8 @@ MdPairs routine
 !      end of the main code (2), nowhere (0), or anywhere else as well - before the IF, in a routine,
 !      beside &= - (3). A dotted mention counts by its head. A mention in a method of a class the
 !      procedure declares is (3) as well: such a method shares the procedure's data. Asking that walks
-!      the scope list, so the scope is read again after it.
+!      the scope list, so the scope is read again after it. A name after a joining '.' is another
+!      object's member that shares the name, and no mention.
 MdWhere routine
   data
 q     long,auto
@@ -15629,6 +16131,7 @@ cE    long,auto
   get(self.syms.scopes, self.syms.scopes.scopeId)
   if errorcode() then mdWhere = 3 ; exit.
   loop q = self.syms.scopes.startTok to self.syms.scopes.endTok
+    if self.DgIsMemberDot(q - 1) then cycle.
     get(self.tk.tokens, q)
     if errorcode() then mdWhere = 3 ; exit.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -15667,7 +16170,8 @@ cE    long,auto
   if inB and inT then mdWhere = 3.
 
 ! ---- THE EDIT: the local declared first keeps its name, every mention of the other takes it, and
-!      the other's declaration line is commented out
+!      the other's declaration line is commented out. A name after a joining '.' is another object's
+!      member, and keeps its spelling
 MdMerge routine
   data
 q      long,auto
@@ -15705,6 +16209,7 @@ mdWhy  STRING(200),AUTO
   get(self.syms.scopes, self.syms.scopes.scopeId)
   if errorcode() then exit.
   loop q = self.syms.scopes.endTok to self.acCodeT by -1   ! backwards: SetTok moves nothing, but the habit is safe
+    if self.DgIsMemberDot(q - 1) then cycle.
     get(self.tk.tokens, q)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -16161,6 +16666,7 @@ CcLoads routine
     if ccFrom = ccLoop then ccFrom = ccNext ; cycle.
     do CcLineDepth                                                  ! ccLvl: 0 = the body itself, else a branch in it
     do CcStmtHead                                                   ! the line's first statement: ccLdr.ccTail, ccStmt = its tail row
+    if ccLdr = ccA or ccLdr = ccB then do CcBlkLoad.                ! a load in a block the compare is not in: as in a branch
     do CcDoLine ; if ccWhy then exit.                               ! a DO with a load above it or on its line could change the value
     ccMent = 1                                                      ! the mention test reads the whole line, unless a load ends before it
     if (ccLdr = ccA or ccLdr = ccB) and ccTail = 'SETVALUEFROMLINE' ! <obj>.setValueFromLine(n): its own split must clip -
@@ -16236,9 +16742,16 @@ CcCondLoad routine
   if ccLdr = ccA and ~ccLoadA and ~ccCondA then ccCondA = ccFrom.
   if ccLdr = ccB and ~ccLoadB and ~ccCondB then ccCondB = ccFrom.
 
+! ---- the line at ccFrom, in the body proper, is inside a COMPILE or conditional OMIT block the compare
+!      is not in: a build may leave it out, so a load there is a load inside a branch
+CcBlkLoad routine
+  if ~ccLvl and self.CondLeavesOut(ccFrom, ccIf) then ccLvl = 1.
+
 ! ---- ccTok is not loaded in the body proper; ccZ = its load inside a branch, 0 = none
 CcNoLoad routine
-  if ccZ
+  if ccZ and self.CondLeavesOut(ccZ, ccIf)
+    ccWhy = lower(clip(ccTok)) & ' is loaded only inside a COMPILE or OMIT block, on line ' & self.LogLineOf(ccZ) & ' - in a build that leaves it out the compare runs on whatever it held before'
+  elsif ccZ
     ccWhy = lower(clip(ccTok)) & ' is loaded only inside a branch of the loop, on line ' & self.LogLineOf(ccZ) & ' - on an iteration that skips the branch the compare runs on whatever it held before'
   else
     ccWhy = lower(clip(ccTok)) & ' is not loaded from a line in this loop'
@@ -16584,9 +17097,13 @@ sl    byte
 
 ! ---- ccSure = the split whose name is the token ccTk is sure to have run when the loop at ccLoop
 !      is reached: walking back from the loop to it, no structure holding it closes, no other
-!      branch of a structure holding the loop is entered, and no column-1 label lies between
+!      branch of a structure holding the loop is entered, and no column-1 label lies between. A split
+!      inside a COMPILE or conditional OMIT block that the compare is not in is never sure: a build
+!      may leave it out and keep the compare. A split and the compare in one block, or the compare
+!      in a block inside the split's, are in every build together (ruled 21 Nov 2026)
 CcSureSplit routine
   ccSure = 1 ; ccBack = 0
+  if self.CondLeavesOut(ccTk, ccIf) then ccSure = 0 ; exit.
   loop ccY = ccLoop - 1 to ccTk + 1 by -1
     if self.syms.IsColOneLabel(ccY) then ccSure = 0 ; break.
     get(self.tk.tokens, ccY)                                        ! after the label test, which reads other rows
@@ -16711,6 +17228,7 @@ dt   long,auto
   if ~r then exit.
   get(self.syms.syms, r)
   if errorcode() then exit.
+  if ~self.DeclIsSure(r, ccIf) then exit.
   dt = self.syms.syms.declTok
   if self.syms.syms.isRef
     ccFarK = 2
@@ -17001,6 +17519,7 @@ tk            long
   code
   if self.syms &= NULL then return 0.
   self.syms.EnsureFresh()
+  self.BuildSummaries()
   self.IfCasePureList(dwPure)
   self.PureOwnList(dwPure, dwOwn)
   dwEdited = 0
@@ -17144,15 +17663,16 @@ DwShape routine
   dwDeadKind = 0
   if records(dwQ) > 3 then dwDeadKind = choose(~dwIsObj, 1, 2).
 
-! ---- the next mention of the object, straight after and in the same block: a write makes the
-!      site; anything else, or a structure boundary, a label, a `do` anywhere on a line, or a
-!      RETURN or EXIT first, means no site - the write after a RETURN may never run
+! ---- the next mention of the object, straight after: a write makes the site; anything else, or a
+!      structure boundary, a label, a `do` anywhere on a line, or a RETURN or EXIT first, means no
+!      site - the write after a RETURN may never run. A write inside a COMPILE or conditional OMIT
+!      block the dead write is not in kills nothing: a build may leave it out (DwIsWrite). A line
+!      between them that does not name the object is in no build that could tell
 DwAfter routine
   dwSite = 0 ; dwNextWr = 0
   dwFrom = dwNext
   loop while dwFrom > 0 and dwFrom < dwScLast
     do DwFill
-    if self.InCondBlock(dwFrom) then exit.      ! a write a build may leave out kills nothing
     loop dwX = dwFrom to dwNext - 1
       get(self.tk.tokens, dwX)
       if errorcode() then break.
@@ -17181,7 +17701,8 @@ DwAfter routine
 !      join(...) with no read of the object in the argument? The argument runs to the write's own
 !      closing bracket. A statement after it on the line runs after the write, and what it reads is
 !      the value the write gave - never the one it replaced - so it is not judged, under the object's
-!      own name or another (ruled 4 Nov 2026)
+!      own name or another (ruled 4 Nov 2026). A write in a COMPILE or OMIT block the dead write is not
+!      in kills it in no build that leaves it out, so it is no site
 DwIsWrite routine
   if dwZ <> 1 then exit.       ! the object is read before any call on it
   get(dwQ, 1)
@@ -17217,6 +17738,7 @@ DwIsWrite routine
   end
   do DwFlagsKept
   if dwWhy then dwSite = 1 ; exit.
+  if self.CondLeavesOut(dwFrom, dwLine1) then exit.
   dwNextWr = dwFrom
   dwSite = 1
 
@@ -17268,8 +17790,9 @@ rf   BYTE
 ! ---- what the procedure does to the object that no value write shows: dwStreamAt, the first
 !      <st>.stream( - a streamed object sends each value it is given to its file, so no write of it
 !      is dead; dwFlagAt, the first mention that can set its base64 flag - a member fl:writers names,
-!      _StealValue, or setValue given an object or a name the table cannot type - or its encoding:
-!      setValue given a USTRING alone, which sets it to UTF-16 (dwFlagEnc).
+!      _StealValue, setValue given an object or a name the table cannot type, or the object handed whole
+!      to a call that may write it (MarkSetterAt) - or its encoding: setValue given a USTRING alone, which
+!      sets it to UTF-16 (dwFlagEnc).
 DwObjScan routine
   data
 k    long,auto
@@ -17389,6 +17912,7 @@ DwParamCheck routine
   if ~dwZ then dwWhy = 'not declared here' ; exit.
   get(self.syms.syms, dwZ)
   if errorcode() or self.syms.syms.typeU <> 'STRINGTHEORY' then dwWhy = 'not a StringTheory' ; exit.
+  if ~self.DeclIsSure(dwZ, dwLine1) then dwWhy = 'declared twice, or inside a COMPILE or OMIT block the write is not in' ; exit.
   dwAttr = band(self.DeclAttrBits(self.syms.syms.declTok), ab:static + ab:thread)
   dwEsc = self.ObjEscapes(dwSt, dwLine1) ! read without its name? Then nothing may come between the writes
   dwReach = 0                            ! and code out of sight may have streamed it
@@ -17835,15 +18359,16 @@ DlShape routine
     if self.BareNameIsCall(dlQ.tk) then dlArg = dlQ.tx ; dlArgBare = 1 ; break.
   end
 
-! ---- the next mention of the object, straight after and in the same block: a split or freeLines
-!      makes the site; anything else, or a structure boundary, a label, a `do` anywhere on a line,
-!      or a RETURN or EXIT first, means none - the split after a RETURN may never run
+! ---- the next mention of the object, straight after: a split or freeLines makes the site; anything
+!      else, or a structure boundary, a label, a `do` anywhere on a line, or a RETURN or EXIT first,
+!      means none - the split after a RETURN may never run. A split inside a COMPILE or conditional
+!      OMIT block the dead split is not in replaces nothing: a build may leave it out (DlIsKill). A
+!      line between them that does not name the object is in no build that could tell
 DlAfter routine
   dlSite = 0 ; dlNextWr = 0 ; dlKill = ''
   dlFrom = dlNext
   loop while dlFrom > 0 and dlFrom < dlScLast
     do DlFill
-    if self.InCondBlock(dlFrom) then exit.      ! a split a build may leave out replaces nothing
     loop dlX = dlFrom to dlNext - 1
       get(self.tk.tokens, dlX)
       if errorcode() then break.
@@ -17878,7 +18403,8 @@ DlAfter routine
 !      a name in them that may read the old lines under another name refuses. A statement after it
 !      on the line runs after it, and the lines it can reach are the new ones - never those the
 !      first split made - so it is not judged, under the object's own name or another (ruled 4 Nov
-!      2026)
+!      2026). A split in a COMPILE or OMIT block the dead split is not in replaces nothing in a build
+!      that leaves it out, so it is no site
 DlIsKill routine
   if dlZ <> 1 then exit. ! the object is read before any call on it - the lines were used
   get(dlQ, 1)
@@ -17911,6 +18437,7 @@ DlIsKill routine
       if dlArgBad then dlSite = 1 ; exit.
     end
   end
+  if self.CondLeavesOut(dlFrom, dlLine1) then exit.
   dlKill = dlTail
   dlNextWr = dlFrom
   dlSite = 1
@@ -17999,6 +18526,7 @@ DlParamCheck routine
   if ~dlZ then dlWhy = 'not declared here' ; exit.
   get(self.syms.syms, dlZ)
   if errorcode() or self.syms.syms.typeU <> 'STRINGTHEORY' then dlWhy = 'not a StringTheory' ; exit.
+  if ~self.DeclIsSure(dlZ, dlLine1) then dlWhy = 'declared twice, or inside a COMPILE or OMIT block the split is not in' ; exit.
   dlAttr = band(self.DeclAttrBits(self.syms.syms.declTok), ab:static + ab:thread)
   dlEsc = self.ObjEscapes(dlSt, dlLine1) ! read without its name? Then nothing may come between the splits
   dlReach = 0                            ! and why, for DlEscArg
@@ -18430,6 +18958,7 @@ rsc  long,auto
   if ~blZ then blWhy = clip(blStTxt) & ' is not declared in this procedure' ; exit.
   get(self.syms.syms, blZ)
   if errorcode() then blWhy = clip(blStTxt) & ' is not declared in this procedure' ; exit.
+  if ~self.DeclIsSure(blZ, blLoop) then blWhy = clip(blStTxt) & ' is declared twice, or inside a COMPILE or OMIT block the loop is not in' ; exit.
   if self.syms.syms.typeU <> 'STRINGTHEORY' then blWhy = clip(blStTxt) & ' is not a StringTheory' ; exit.
   blZ = 0
   if rsc then blZ = self.syms.FindSym(blIx, rsc).
@@ -18441,7 +18970,7 @@ rsc  long,auto
   elsif band(self.DeclAttrBits(self.syms.syms.declTok), ab:over)
     blWhy = lower(clip(blIx)) & ' is declared OVER another variable, which the loop sets as well'
   elsif self.NameShared(blLoop, blIx)
-    blWhy = lower(clip(blIx)) & ' has a second name - a field of a structure, an OVER or a reference - that can read what the loop left in it'
+    blWhy = lower(clip(blIx)) & ' has a second name - a field of a structure, an OVER, a reference, or a by-address parameter that may be it - that can read what the loop left in it'
   end
 
 ! ---- the index is the loop's alone - not even a method of a class the procedure declares names it:
@@ -18498,8 +19027,8 @@ BlZeroBefore routine
         if blQ.tx = '='
           get(blQ, 3)
           if blQ.tx = '0'
-            if ~self.InCondBlock(blY) then exit.
-            blWhy = lower(clip(blHitTxt)) & ' is set to 0 on line ' & self.LogLineOf(blY) & ' inside a COMPILE or OMIT block, which some build leaves out'
+            if ~self.CondLeavesOut(blY, blLoop) and ~self.CondLeavesOut(blLoop, blY) then exit.
+            blWhy = lower(clip(blHitTxt)) & ' is set to 0 on line ' & self.LogLineOf(blY) & ', and a COMPILE or OMIT block holds that line or the loop without the other'
             exit
           end
         end
@@ -19072,6 +19601,7 @@ rsc  long,auto
   if ~lsZ then lsWhy = clip(lsStTxt) & ' is not declared in this procedure' ; exit.
   get(self.syms.syms, lsZ)
   if errorcode() then lsWhy = clip(lsStTxt) & ' is not declared in this procedure' ; exit.
+  if ~self.DeclIsSure(lsZ, lsLoop) then lsWhy = clip(lsStTxt) & ' is declared twice, or inside a COMPILE or OMIT block the loop is not in' ; exit.
   if self.syms.syms.typeU <> 'STRINGTHEORY' then lsWhy = clip(lsStTxt) & ' is not a StringTheory' ; exit.
   lsZ = 0
   if rsc then lsZ = self.syms.FindSym(lsIx, rsc).
@@ -19083,7 +19613,7 @@ rsc  long,auto
   elsif band(self.DeclAttrBits(self.syms.syms.declTok), ab:over)
     lsWhy = lower(clip(lsIx)) & ' is declared OVER another variable, which the loop sets as well'
   elsif self.NameShared(lsLoop, lsIx)
-    lsWhy = lower(clip(lsIx)) & ' has a second name - a field of a structure, an OVER or a reference - that can read what the loop left in it'
+    lsWhy = lower(clip(lsIx)) & ' has a second name - a field of a structure, an OVER, a reference, or a by-address parameter that may be it - that can read what the loop left in it'
   end
 
 ! ---- the index is the loop's alone: the original leaves it at the count plus one, or at the hit. Not
@@ -19142,8 +19672,8 @@ LsZeroBefore routine
         if lsQ.tx = '='
           get(lsQ, 3)
           if lsQ.tx = '0'
-            if ~self.InCondBlock(lsY) then exit.
-            lsWhy = lower(clip(lsHitTxt)) & ' is set to 0 on line ' & self.LogLineOf(lsY) & ' inside a COMPILE or OMIT block, which some build leaves out'
+            if ~self.CondLeavesOut(lsY, lsLoop) and ~self.CondLeavesOut(lsLoop, lsY) then exit.
+            lsWhy = lower(clip(lsHitTxt)) & ' is set to 0 on line ' & self.LogLineOf(lsY) & ', and a COMPILE or OMIT block holds that line or the loop without the other'
             exit
           end
         end
@@ -19332,6 +19862,7 @@ faOpTok     long,auto          ! the += token, or the = of the long form
 faSelfTok   long,auto          ! long form: the `n` after the =, then its '+'
 faFrom      long,auto          ! FaFill: first token of the line in hand
 faNext      long,auto          !   and of the next
+faEnd       long,auto          ! FaBefore: the last token of the += statement
 faVar       STRING(vs:maxName) ! the local, folded
 faVarTxt    STRING(vs:maxName) !   and as written
 faScFirst   long,auto
@@ -19452,13 +19983,18 @@ e    long,auto
             clip(faVarTxt) & ' + would change what is stored'
   end
 
-! ---- the local: this procedure's own, numeric, declared bare (no attributes, no ,auto already)
+! ---- the local: this procedure's own, numeric, declared bare (no attributes, no ,auto already), and declared
+!      once, in every build the += line is in (DeclIsSure): the arms of a COMPILE and an OMIT can declare it
+!      twice, one with attributes. A declaration is a LOGICAL line: `n LONG |` / `,STATIC` has its
+!      attribute on the next row, which FaFill does not read, so the type must also be the declaration's
+!      last token (DeclLastTok follows the '|' rows)
 FaDecl routine
   faDecl = 0 ; faTypeTok = 0
   faZ = self.syms.FindSym(faVar, faSc)
   if ~faZ then faWhy = clip(faVarTxt) & ' is not declared in this procedure' ; exit.
   get(self.syms.syms, faZ)
   if errorcode() then faWhy = clip(faVarTxt) & ' is not declared in this procedure' ; exit.
+  if ~self.DeclIsSure(faZ, faLine1) then faWhy = clip(faVarTxt) & ' is declared twice, or inside a COMPILE or OMIT block the += line is not in' ; exit.
   if (self.syms.syms.declTok > faScFirst and self.syms.syms.declTok <= faScCode) then faWhy = clip(faVarTxt) & ' is a PARAMETER - it arrives with a value' ; exit.
   if self.syms.syms.isField then faWhy = clip(faVarTxt) & ' is a field of a structure - a GET or an assignment of the whole structure sets it' ; exit.
   if ~instring(' ' & clip(self.syms.syms.typeU) & ' ', faNums, 1, 1) then faWhy = clip(faVarTxt) & ' is not a plain number' ; exit.
@@ -19473,6 +20009,7 @@ FaDecl routine
   end
   get(faQ, 2)
   faTypeTok = faQ.tk
+  if self.DeclLastTok(faDecl) <> faTypeTok then faWhy = clip(faVarTxt) & ' is declared with attributes, and AUTO is not simply one more' ; exit.
   get(self.tk.tokens, faDecl)
   if ~errorcode() and not self.tk.tokens.tok &= NULL then faVarTxt = self.tk.tokens.tok.
 
@@ -19515,7 +20052,9 @@ FaBefore routine
     faFrom = faNext
   end
   faFrom = faLine1                                                ! every row of the statement: a | row has
-  loop while faFrom > 0 and faFrom <= self.FirstEolAfter(faLine1) !   no EOL of its own
+  faEnd = self.FirstEolAfter(faLine1)                             !   no EOL of its own, and a last line with
+  if ~faEnd then faEnd = records(self.tk.tokens).                 !   no line break has none at all
+  loop while faFrom > 0 and faFrom <= faEnd
     do FaFill
     loop faX = choose(faFrom = faLine1, 2, 1) to records(faQ)     ! the first row's first token is the += target itself
       get(faQ, faX)
@@ -19659,8 +20198,11 @@ FaFill routine
 ! loop, the innermost loop around the split sets the object afresh before it, and nothing that runs
 ! before that write on the next pass - in that loop or in one further out - may touch the value or
 ! call a routine; a GOTO below the split that jumps back to a label at or above it runs the lines
-! from that label again, so they must set the object afresh before the split in the same way; the
-! index is the loop's alone; the split is not an EXECUTE arm. A comment on any
+! from that label again, so they must set the object afresh before the split in the same way - and
+! a write inside a COMPILE or conditional OMIT block the split is not in sets nothing afresh in either
+! case, nor is it in force after the loop; the index is the loop's alone; the split is not an EXECUTE
+! arm; the split and the loop are in the same COMPILE or conditional OMIT blocks, or in none, since a
+! build may leave out either one (ruled 9 Nov 2026). A comment on any
 ! of the four frame lines (the loop, the load, the store, the END) stays where the loop was, as a
 ! comment line at its indent. A split with no such loop after it is not a site and is not
 ! reported. Two scans on pass 1, as DropValueCopy does: the editing scan stops at its first edit.
@@ -19708,6 +20250,7 @@ cbReplace   byte               ! at least one change is a replace
 cbOneLine   byte               ! the body is one line, <st>.setLine(<ix>, upper(<st>.getLine(<ix>)))
 cbFn        STRING(16)         !   the wrapping function, UPPER or LOWER
 cbWhy       STRING(200)
+cbInBlk     long,auto          ! the COMPILE or OMIT block the split is in, 0 = none: the loop must be in it too
 cbRpt       byte
 cbEdited    byte
 cbCmtN      long               ! the frame lines' comments kept where the loop was
@@ -19760,6 +20303,13 @@ CbScan routine
     cbWhy = ''
     do CbNames
     do CbBody
+    ! the split and the loop in the same block are in every build together, or in none
+    cbInBlk = self.CondBlockAt(cbSplit)
+    if ~cbWhy and cbInBlk and cbInBlk <> self.CondBlockAt(cbLoop)
+      cbWhy = 'the split is inside a COMPILE or OMIT block, which a build may leave out'
+    elsif ~cbWhy and ~cbInBlk and self.InCondBlock(cbLoop)
+      cbWhy = 'the loop is inside a COMPILE or OMIT block, which a build may leave out'
+    end
     if ~cbWhy then do CbParamCheck.
     if ~cbWhy then do CbOuter.
     if ~cbWhy then do CbOuterRing.
@@ -19867,7 +20417,9 @@ CbFindLoop routine
 !      pass would otherwise split the changed text, where the original split the last line. The loop judged
 !      is the INNERMOST around the split, whose pass is the one that comes round to it; a loop further out
 !      comes round through its own line and whatever stands before the inner loop, and none of that may
-!      touch the value or call a routine either
+!      touch the value or call a routine either. A write inside a COMPILE or conditional OMIT block sets
+!      nothing afresh: a build may leave it out, unless the split is in that same block or in one inside
+!      it, when the write runs in every build that has the split. The walk goes on past it to a write that is not in one
 CbOuter routine
   if self.syms.ScopeContaining(cbSplit, vs:scRoutine, vs:scRoutine)
     cbWhy = 'the split is in a routine, and the code that runs after its DO, which may read the value, is not walked here'
@@ -19910,7 +20462,13 @@ CbOuter routine
       get(cbQ, cbZ)
       cbN = len(clip(cbQ.tx))
       cbD = instring('.', cbQ.tx[1 : cbN], 1, 1)
-      if cbHead = cbSt and cbD and cbD < cbN and (cbQ.tx[cbD + 1 : cbN] = 'SETVALUE' or cbQ.tx[cbD + 1 : cbN] = 'LOADFILE') then do CbFreshArgs ; exit.
+      if cbHead = cbSt and cbD and cbD < cbN and (cbQ.tx[cbD + 1 : cbN] = 'SETVALUE' or cbQ.tx[cbD + 1 : cbN] = 'LOADFILE')
+        do CbFreshArgs
+        if cbWhy then exit.
+        if ~self.CondLeavesOut(cbFrom, cbSplit) then exit.
+        cbFrom = cbNext
+        cycle
+      end
       break
     end
     cbFrom = cbNext
@@ -19953,7 +20511,9 @@ CbOuterRing routine
 !      text. So, as CbOuter asks of a loop around the split, they must set the object afresh before the
 !      split, with nothing before that write that opens, closes or branches a structure, calls a routine
 !      or touches the object, and a write that reads it is no fresh one. A column-1 label after the write
-!      is another way in, past it, so a write must follow the last label
+!      is another way in, past it, so a write must follow the last label. A write inside a COMPILE or
+!      conditional OMIT block is no fresh one either: a build may leave it out - unless the split is in that same
+!      block, or in one inside it
 CbGotoBack routine
   data
 top   long,auto
@@ -19995,7 +20555,7 @@ bad   byte,auto
           if cbHead = cbSt or cbQ.tx = cbSt then bad = 1 ; break.
         end
         if bad then break.
-        fresh = 1
+        if ~self.CondLeavesOut(cbFrom, cbSplit) then fresh = 1.
       end
     end
     cbFrom = cbNext
@@ -20286,13 +20846,14 @@ CbScope routine
 ! ---- the object is a StringTheory of this procedure, not a reference or a parameter - the caller may
 !      have given it Stream() - and a STATIC or THREAD object is noted, whose value the next call starts
 !      from; the index is a local,
-!      not declared OVER another variable, which the loop would set too
+!      not declared OVER another variable, which the loop would set too, and has no second name
 CbParamCheck routine
   cbIsStat = 0
   cbZ = self.syms.FindOwn(cbSt, cbSc)
   if ~cbZ then cbWhy = clip(cbStTxt) & ' is not declared in this procedure' ; exit.
   get(self.syms.syms, cbZ)
   if errorcode() then cbWhy = clip(cbStTxt) & ' is not declared in this procedure' ; exit.
+  if ~self.DeclIsSure(cbZ, cbSplit) then cbWhy = clip(cbStTxt) & ' is declared twice, or inside a COMPILE or OMIT block the split is not in' ; exit.
   if self.syms.syms.typeU <> 'STRINGTHEORY' then cbWhy = clip(cbStTxt) & ' is not a StringTheory' ; exit.
   if self.syms.syms.isRef then cbWhy = clip(cbStTxt) & ' is a reference - what it points at is not this procedure''s to leave changed' ; exit.
   if (self.syms.syms.declTok > cbScFirst and self.syms.syms.declTok <= cbScCode)
@@ -20308,6 +20869,8 @@ CbParamCheck routine
     cbWhy = lower(clip(cbIx)) & ' is a PARAMETER, and the loop is what sets it'
   elsif band(self.DeclAttrBits(self.syms.syms.declTok), ab:over)
     cbWhy = lower(clip(cbIx)) & ' is declared OVER another variable, which the loop sets as well'
+  elsif self.NameShared(cbLoop, cbIx)
+    cbWhy = lower(clip(cbIx)) & ' has a second name - a field of a structure, an OVER, a reference, or a by-address parameter that may be it - that can read what the loop left in it'
   end
 
 ! ---- the index is the loop's alone: the original leaves it at the count plus one. Not even a method
@@ -20437,7 +21000,7 @@ CbAfter routine
     end
     if instring(' ' & clip(cbTail) & ' ', cbValWr, 1, 1)
       do CbArgEnd
-      if self.ArmOfExecute(cbX) or self.InCondBlock(cbX) then cbArgEnd = 0.                                           ! a write some builds leave out is not in force
+      if self.ArmOfExecute(cbX) or self.CondLeavesOut(cbX, cbSplit) then cbArgEnd = 0.                                                            ! a write some builds leave out is not in force
       cycle
     end
     if instring(' ' & clip(cbTail) & ' ', cbLinesOk, 1, 1) then cycle.
@@ -20890,6 +21453,7 @@ DvParamCheck routine
     exit
   end
   if self.syms.syms.typeU <> 'STRINGTHEORY' then dvWhy = clip(dvBufTxt) & ' is not a StringTheory' ; exit.
+  if ~self.DeclIsSure(dvZ, dvLine1) then dvWhy = clip(dvBufTxt) & ' is declared twice, or inside a COMPILE or OMIT block the copy is not in' ; exit.
   if self.syms.syms.isRef then dvWhy = clip(dvBufTxt) & ' is a reference - what it points at is not this procedure''s to leave unwritten' ; exit.
   if self.MayHaveLocalMethods(dvSc) and self.UsedInLocalMethods(upper(dvBuf), dvScFirst, dvScLast)
     dvWhy = clip(dvBufTxt) & ' is used in a method of a class this procedure declares, which would find it never written'
@@ -21013,6 +21577,14 @@ DvUses routine
           if dvBufOut
             dvWhy = clip(dvBufTxt) & '.' & lower(clip(dvTail)) & ' on line ' & self.LogLineOf(dvFrom) & ' hands its buffer on, to be written or kept' & |
                     ' where no walk here looks - after the rename that buffer would be ' & clip(dvSrcTxt) & '''s'
+            exit
+          end
+        end
+        if dvTail = '_DATAEND'
+          get(dvQ, dvX)
+          if ~errorcode() and self.tk.GetTok(dvQ.tk - 1) = '&='
+            dvWhy = clip(dvBufTxt) & '._dataend on line ' & self.LogLineOf(dvFrom) & ' is taken by reference - after the rename that reference' & |
+                    ' would be to the length of ' & dvSrcTxt
             exit
           end
         end
@@ -21554,7 +22126,7 @@ every byte,auto
             if self.tk.GetTok(dvQ.tk + 3) = '(' then ta = upper(self.tk.GetTok(dvQ.tk + 4)).
             case val(ta[1])
             of 65 to 90 orof 95                          ! 'A' to 'Z' orof '_'
-              if ~self.syms.Lookup(ta, dvFrom, dvArgTU, dvArgRf) or upper(dvArgTU) = 'STRINGTHEORY' ! an object, or a name nothing declares
+              if ~self.syms.Lookup(ta, dvFrom, dvArgTU, dvArgRf) or upper(dvArgTU) = 'STRINGTHEORY' or dvArgTU = vs:unknownType ! an object, or a name nothing declares or this run cannot type
                 dvEqWhy = clip(dvSrcTxt) & '.' & lower(clip(dvTail)) & ' on line ' & self.LogLineOf(dvFrom) & ' may copy another object''s encoding'
               end
               if ~dvEqWhy and dvTail = 'SETVALUE' and upper(dvArgTU) = 'USTRING'
@@ -21590,7 +22162,9 @@ every byte,auto
 !      `src.prepend(tmp.valuePtr[3 : 4])`, which after the rename hands the source a part of its own
 !      buffer while it moves it. Ruled 13 Sep 2026, from VitRules.LoadStyleFile: an upper copy tested in an IF/ELSIF
 !      chain whose arms hand the source to the parsers. A touch on a head line, or inside a LOOP the
-!      copy is not in, refuses as before.
+!      copy is not in, refuses as before, and so does a touch whose IF or CASE lies inside a LOOP or
+!      ACCEPT the copy is not in: the loop runs the structure again, and a body that ran on one pass
+!      is followed by another body on the next, which can read the scratch after the touch.
 DvTouchOK routine
   data
 d    long,auto
@@ -21629,6 +22203,23 @@ oU   string(vs:maxName),auto
   if self.tk.tokens.tok &= NULL then exit.
   oU = upper(self.tk.tokens.tok)
   if oU <> 'IF' and oU <> 'CASE' then exit.                ! a LOOP body runs again; anything else is not modelled
+  d = 0                                                    ! no LOOP or ACCEPT between the copy and the opener:
+  loop t = o - 1 to self.FirstEolAfter(dvLine1) by -1      !   one would run the structure again
+    get(self.tk.tokens, t)                                 !   walking back, an END or a full stop
+    if errorcode() then exit.                              !   steps over the structure it closes
+    lv  = self.tk.tokens.level
+    tyv = self.tk.tokens.type
+    if lv = '-'
+      d += 1
+    elsif tyv = vt:end and lv <> '+' and lv <> '/'
+      d += 1
+    elsif lv = '+' and d
+      d -= 1
+    elsif lv = '+'                                         ! an opener the opener sits in
+      oU = upper(self.tk.GetTok(t))
+      if oU = 'LOOP' or oU = 'ACCEPT' then exit.
+    end
+  end
   if dvFrom <= self.FirstEolAfter(o) then exit.            ! on the opener's own line: a head
   get(self.tk.tokens, dvFrom)
   if errorcode() then exit.
@@ -21669,8 +22260,12 @@ oU   string(vs:maxName),auto
 !      copy to it, the structure holding the copy never ends, no other branch of it begins, and
 !      no label offers a way in; and the copy is not itself one arm of an EXECUTE
 DvRuns routine
-  if self.InCondBlock(dvLine1)
-    dvWhy = 'the copy on line ' & self.LogLineOf(dvLine1) & ' is inside a COMPILE or OMIT block, which a build may leave out'
+  ! A copy inside a COMPILE or conditional OMIT block must be in every build that has a read: the
+  ! reads lie between the copy and the last of them, so the last read in the same block, or in one
+  ! inside it, puts every read there.
+  if self.CondLeavesOut(dvLine1, dvLast)
+    dvWhy = 'the copy on line ' & self.LogLineOf(dvLine1) & ' is inside a COMPILE or OMIT block the read on line ' & self.LogLineOf(dvLast) & |
+            ' is not in, which a build may leave out'
     exit
   end
   if self.syms.ScopeContaining(dvLine1, vs:scRoutine, vs:scRoutine) <> self.syms.ScopeContaining(dvLast, vs:scRoutine, vs:scRoutine)
@@ -21761,11 +22356,13 @@ DvNames routine
 !      A case-folded copy also wraps each VALUE read in upper() or lower(): `buf.valuePtr[a : b]`
 !      becomes `upper(src.valuePtr[a : b])`, `buf.getValue()` becomes `upper(src.getValue())`; a
 !      length read is renamed only. The walk runs from the END of the procedure backwards, so the
-!      tokens a wrap inserts never move a mention still to be visited.
+!      tokens a wrap inserts never move a mention still to be visited. A name after a joining '.' is
+!      another object's member that shares the name, and is left alone.
 DvRename routine
   dvEol = self.FirstEolAfter(dvLine1)
   loop dvX = dvScLast to dvEol + 1 by -1
     if dvX = dvBufDecl then cycle.
+    if self.DgIsMemberDot(dvX - 1) then cycle.
     get(self.tk.tokens, dvX)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -21954,7 +22551,7 @@ tvIndSt     StringTheory       ! the line's indent, for the kept comment
 tvBlk       StringTheory       ! an OMIT block folded in front of the copy line - it stays
 tvRpt       byte               ! the report-only scan
 tvEdited    byte
-tvSums      byte               ! TvKeepAt: the summaries are built for this call
+tvSums      byte               ! TvKeepAt, TvErrUse: the summaries are built for this call
 tvDepth     long,auto          ! TvOnce, TvRuns and TvDepthAt: structure depth
 tvSrcLines  long               ! first token of a line before the copy that may give the source lines, 0 = none
 tvByVal     byte               ! the copy is <src>.getValue() or getValuePtr(): the source's flags stay behind
@@ -22110,6 +22707,7 @@ TvParamCheck routine
   if ~tvZ then tvBuf = '' ; exit.
   get(self.syms.syms, tvZ)
   if errorcode() or self.syms.syms.typeU <> 'STRINGTHEORY' then tvBuf = '' ; exit.
+  if ~self.DeclIsSure(tvZ, tvLine1) then tvWhy = clip(tvSrcTxt) & ' is declared twice, or inside a COMPILE or OMIT block the copy is not in' ; exit.
   tvZ = self.syms.FindOwn(tvBuf, tvSc)
   if ~tvZ then tvWhy = clip(tvBufTxt) & ' is not declared in this procedure' ; exit.
   get(self.syms.syms, tvZ)
@@ -22212,6 +22810,7 @@ TvUses routine
         end
         tvLast = tvFrom
         if tvByVal and tvSrcFlags then do TvFlagUse.
+        if ~tvWhy then do TvErrUse.
         if tvWhy then exit.
         if ~tvBufLines and ~tvBufReset then do TvBufLinesAt.
       elsif tvHead = tvSrc or tvQ.tx = tvSrc
@@ -22260,8 +22859,8 @@ ta   STRING(vs:maxName),auto
     if tvTail <> 'SETVALUE' and tvTail <> 'APPEND' then exit.
     ta = upper(self.tk.GetTok(tvQ.tk + 4))                                              ! setValue(<name>) or append(<name>)
     if self.tk.GetTok(tvQ.tk + 3) <> '(' or ~((ta[1] >= 'A' and ta[1] <= 'Z') or ta[1] = '_') then exit.
-    if self.syms &= NULL or ~self.syms.Lookup(ta, tvFrom, tvArgTU, tvArgRf) or upper(tvArgTU) = 'STRINGTHEORY'
-      tvSrcFlags = 1                                                                    ! an object, or a name nothing declares
+    if self.syms &= NULL or ~self.syms.Lookup(ta, tvFrom, tvArgTU, tvArgRf) or upper(tvArgTU) = 'STRINGTHEORY' or tvArgTU = vs:unknownType
+      tvSrcFlags = 1                                                                    ! an object, or a name nothing declares or this run cannot type
     end
     if tvTail = 'SETVALUE' and upper(tvArgTU) = 'USTRING'
       if self.tk.GetTok(tvQ.tk + 5) = ')' then tvSrcFlags = 1.
@@ -22271,6 +22870,50 @@ ta   STRING(vs:maxName),auto
   get(tvQ, tvX + 1)
   if ~errorcode() and tvQ.tx = '.' then exit.                                           ! the head of a split dotted form
   tvSrcFlags = 1                                                                        ! handed whole to a call
+
+! ---- a copy, by getValue() or of the object (SetValue of a StringTheory does not carry them either):
+!      lastError and winErrorCode are set by every method that can fail - saveFile, loadFile, a
+!      conversion, an append from a BLOB - and a later call that works leaves them as they were. A fresh scratch
+!      has them blank; the source may not, whatever it was given before the copy. So a read of either on the
+!      scratch is not taken over, without asking what the source did. Nor is the scratch handed whole to a
+!      call, which could read them through its parameter - unless ArgFact shows the call does not: a body the
+!      summaries show only reads that parameter ('R' - every use a reader on the pure list, which neither
+!      field is, and no hand-on), another StringTheory's own setValue or append, which copies the value and
+!      keeps nothing ('F', 'R'), a runtime reader on the pure list ('P'), or a procedure of this file whose body
+!      reads that parameter's value alone (ParamErrRead).
+!      Guarded under --ignoremarks too: the error state is not one of the marks.
+TvErrUse routine
+  data
+sU   STRING(vs:maxName),auto
+  code
+  get(tvQ, tvX)
+  if errorcode() then exit.
+  if tvHead <> tvBuf
+    if tvQ.tx <> tvBuf then exit.
+    get(tvQ, tvX + 1)
+    if ~errorcode() and tvQ.tx = '.' then exit. ! the head of a split dotted form
+    get(tvQ, tvX)
+    sU = self.tk.GetTok(tvQ.tk - 1)
+    case sU
+    of '(' orof ','
+      sU = ''
+      self.syms.scopes.scopeId = tvSc
+      get(self.syms.scopes, self.syms.scopes.scopeId)
+      if ~errorcode() then sU = self.syms.scopes.selfClass.
+      if ~tvSums then self.BuildSummaries() ; tvSums = 1.
+      get(tvQ, tvX)
+      if inlist(self.ArgFact(tvQ.tk, sU), 'R', 'F', 'P') then exit.
+      if ~self.ParamErrRead(tvQ.tk) then exit.
+    end
+    tvWhy = clip(tvBufTxt) & ' is handed whole on line ' & self.LogLineOf(tvFrom) & ', where its lastError or winErrorCode may be read, which the copy does not carry'
+    exit
+  end
+  tvN = len(clip(tvQ.tx))
+  tvD = instring('.', tvQ.tx[1 : tvN], 1, 1)
+  if ~tvD or tvD >= tvN then exit.
+  tvTail = tvQ.tx[tvD + 1 : tvN]
+  if tvTail <> 'LASTERROR' and tvTail <> 'WINERRORCODE' then exit.
+  tvWhy = clip(tvBufTxt) & '.' & lower(clip(tvTail)) & ' on line ' & self.LogLineOf(tvFrom) & ' reads the error state, which the copy does not carry'
 
 ! ---- a getValue() copy: the scratch kept its own encoding, base64 and gzip flags, and a take-over gives it the
 !      source's - so no use of the scratch may read them, nor may it be handed whole to a call, which could
@@ -22383,8 +23026,8 @@ TvBufLinesAt routine
     if tvHit
       if tvX = 1
         do TvDepthAt
-        ! a split a build may leave out resets nothing
-        if ~tvDepth and ~self.InCondBlock(tvFrom) then tvBufReset = 1.
+        ! a split a build may leave out while it keeps the copy resets nothing
+        if ~tvDepth and ~self.CondLeavesOut(tvFrom, tvLine1) then tvBufReset = 1.
       end
       exit
     end
@@ -22457,8 +23100,12 @@ TvOnce routine
 !      structure holding the copy never ends, no other branch of it begins, and no label offers a
 !      way in; and the copy is not itself one arm of an EXECUTE
 TvRuns routine
-  if self.InCondBlock(tvLine1)
-    tvWhy = 'the copy on line ' & self.LogLineOf(tvLine1) & ' is inside a COMPILE or OMIT block, which a build may leave out'
+  ! A copy inside a COMPILE or conditional OMIT block must be in every build that has a later
+  ! mention: they lie between the copy and the last of them, so the last one in the same block, or
+  ! in one inside it, puts every mention there.
+  if self.CondLeavesOut(tvLine1, tvLast)
+    tvWhy = 'the copy on line ' & self.LogLineOf(tvLine1) & ' is inside a COMPILE or OMIT block the use on line ' & self.LogLineOf(tvLast) & |
+            ' is not in, which a build may leave out'
     exit
   end
   if self.syms.ScopeContaining(tvLast, vs:scRoutine, vs:scRoutine)
@@ -22531,11 +23178,13 @@ TvNames routine
   end
 
 ! ---- every mention of the scratch after the copy line names the source. SetTok changes text
-!      only, so nothing moves.
+!      only, so nothing moves. A name after a joining '.' is another object's member that shares
+!      the name, and is left alone.
 TvRename routine
   tvEol = self.FirstEolAfter(tvLine1)
   loop tvX = tvEol + 1 to tvScLast
     if tvX = tvBufDecl then cycle.
+    if self.DgIsMemberDot(tvX - 1) then cycle.
     get(self.tk.tokens, tvX)
     if errorcode() then break.
     if self.tk.tokens.tok &= NULL then cycle.
@@ -22727,6 +23376,8 @@ qFold     string(5)                ! 'UPPER' / 'LOWER' when the expression is wr
   if self.syms &= NULL then return 0.
   self.IfCasePureList(pureU)
   self.PureOwnList(pureU, isuOwnU)
+  ! the summaries: which calls of this file keep no reference to a local handed to them (ArgMayKeep)
+  self.BuildSummaries()
 
   n = records(self.tk.tokens)
   i = 1
@@ -22858,6 +23509,9 @@ IsuTry routine
   if self.InExecute(sS, self.acCodeT) then exit.
   symRow = self.syms.FindOwn(nameU, sc)
   if ~symRow then exit.
+  ! (2a) DECLARED ONCE, in every build the store is in. The arms of a COMPILE and an OMIT can declare
+  !      it twice, with two types, and IsuTypeExact reads one row.
+  if ~self.DeclIsSure(symRow, sS) then exit.
   if isuST                                               ! (2b) a StringTheory local of this procedure, not a reference. A program-level object
     get(self.syms.syms, symRow)                          !      arrives here only from the main CODE, and only when FindOwn found no other scope
     if errorcode() then exit.                            !      mentions it (ruled 13 Sep 2026) - it lives for the whole program, but nothing else reads it
@@ -22962,6 +23616,9 @@ IsuTry routine
     if errorcode() then exit.
     if self.tk.tokens.tok &= NULL then cycle.
     if upper(self.tk.tokens.tok) <> nameU then cycle.
+    ! a name after a joining '.' is another object's member that shares the name, not a read
+    if self.DgIsMemberDot(j - 1) then cycle.
+    get(self.tk.tokens, j)
     reads += 1
     ix:xOcc = j ; ix:xOccE = j
     if isuST                                                  ! (6b) the read is name.getValue() and nothing else of the name
@@ -23128,12 +23785,11 @@ IsuTry routine
   ! So the test is SHAPE, not identity: a single token holding a '.' or a ':' is a field
   ! reference, and a field reference is exactly what must not be moved into a GET.
   !
-  ! (6e) ALREADY REFUSES THE WHOLE-ARGUMENT CASE. GET, ADD, PUT and SORT have no MAP prototype
-  ! and are not on the pure list, so AutoArgIsRefParam keeps the copy for `get(GQ, n)` before
-  ! this test is reached, field or not. What reaches it is a read inside a larger argument,
-  ! `get(GQ, n + 0)`, which this refuses although an expression there is a position, never a key.
-  ! The test stays for the day the builtins are read from a by-value table, when (6e) would let
-  ! a whole argument through and the field case would be this test's again.
+  ! (6e) ALREADY REFUSES THE WHOLE-ARGUMENT CASE. GET, ADD, PUT and SORT have no MAP prototype,
+  ! no prototype in the runtime's BUILTINS.CLW and are not on the pure list, so AutoArgIsRefParam
+  ! keeps the copy for `get(GQ, n)` before this test is reached, field or not. What reaches it is a
+  ! read inside a larger argument, `get(GQ, n + 0)`, which this refuses although an expression
+  ! there is a position, never a key. The test stays for a whole argument (6e) would let through.
   if sS + 2 = sE                                              ! the expression is ONE token
     get(self.tk.tokens, nS)
     if ~errorcode()
@@ -23170,9 +23826,20 @@ IsuTry routine
     end
   end
 
-  loop j = 1 to records(IsuQ)                            ! a chained pair - this expression reads a target already staged to
-    get(IsuQ, j)                                         !   go - waits for the next pass, when the file has been re-lexed
-    if errorcode() then break.                           !   with the first substitution in it
+  ! (13) A SPOT THE ALWAYS-TRUE TEST MARKED STAYS AS WRITTEN - ruled 19 Nov 2026. The test keeps
+  !      the code an IF always runs live below the commented-out IF; folded away, that code could
+  !      not be put back as it was when the author restores the IF. So a store or a read beside or
+  !      inside the marked lines keeps its copy (IsuNearMark).
+  j = occE
+  if records(IsuXQ)
+    get(IsuXQ, records(IsuXQ))                                ! the extra reads are in token order
+    if ~errorcode() and ix:xOccE > j then j = ix:xOccE.
+  end
+  if self.IsuNearMark(sS, j) then exit.
+
+  loop j = 1 to records(IsuQ)                                 ! a chained pair - this expression reads a target already staged to
+    get(IsuQ, j)                                              !   go - waits for the next pass, when the file has been re-lexed
+    if errorcode() then break.                                !   with the first substitution in it
     if iq:qOcc >= expS and iq:qOcc <= expE then exit.
   end
   clear(IsuQ)
@@ -23737,6 +24404,9 @@ IsuLive routine
     if not self.tk.tokens.tok &= NULL
       if upper(self.tk.tokens.tok) = nameU then isuHit = 1.
     end
+    ! a name after a joining '.' is another object's member that shares the name
+    if isuHit and self.DgIsMemberDot(j - 1) then isuHit = 0.
+    get(self.tk.tokens, j)
     ! A CLOSE that cancels an open from THIS SAME LINE is an inline structure - `if x then y.`
     ! opens and closes without ever having a body, so the depth must not move at all.
     if isuLvl = '-'
@@ -23863,6 +24533,184 @@ j  long,auto
       end
     end
     pOut.append(self.tk.tokens.tok)
+  end
+
+!===============================================================================================
+! Is the span pFrom to pTo - a store and the reads it would move into - beside or inside code the
+! always-true test marked? That test comments out an IF it finds always or never true behind
+! `! #Possible bug - always true:` or `never true:`, and keeps the code that always runs live, so
+! the author can read the suspect test and put it back as it was. The comments inside the span,
+! on the comment lines just above its first line and on those just below its last line, are
+! searched for the mark.
+! The span is also inside that code when it lies anywhere between the two marks that bound it.
+! A block IF found always true has its IF line marked and the line that ends the code it keeps -
+! its END, or its ELSE or ELSIF, whose side is commented out. One found never true with an ELSE has
+! its IF line and its END marked, and keeps the ELSE code between them. So, walking back from the
+! span, a mark on an IF line that no later closing mark of the same form has answered opens the
+! region, and walking on from it, a closing mark of that form that no later IF mark has opened ends
+! it. A one-line IF's mark opens nothing - the code it keeps is the line below it, beside the mark
+! - and nor does a never-true IF with no ELSE, which keeps no code; its closing lines carry no mark.
+! Both walks stop at the edge of the scope: a CODE statement, a ROUTINE or a PROCEDURE.
+!===============================================================================================
+VitEngine.IsuNearMark Procedure(LONG pFrom, LONG pTo)
+k     long,auto
+s     long,auto
+e     long,auto
+n     long,auto
+nmDA  long,auto
+nmDN  long,auto
+nmOA  byte,auto
+nmON  byte,auto
+nmMk  byte,auto
+nmNv  byte,auto
+nmOne byte,auto
+nmP   long,auto
+nmQ   long,auto
+nmR   long,auto
+nmT   long,auto
+nmSz  long,auto
+  code
+  n = records(self.tk.tokens)
+  if pFrom < 1 or pTo < pFrom or pTo > n then return 0.
+  s = pFrom
+  loop while s > 1                                             ! up over the line ends of the comment lines above
+    get(self.tk.tokens, s - 1)
+    if errorcode() then break.
+    if self.tk.tokens.tok &= NULL then break.
+    if self.tk.tokens.tok[1] <> '<10>' then break.
+    s -= 1
+  end
+  e = pTo
+  loop while e < n                                             ! to the end of the last line
+    get(self.tk.tokens, e + 1)
+    if errorcode() then break.
+    e += 1
+    if self.tk.tokens.tok &= NULL then break.
+    if self.tk.tokens.tok[1] = '<10>' then break.
+  end
+  loop while e < n                                             ! and down over the comment lines below, to the
+    get(self.tk.tokens, e + 1)                                 !   next code line's first token
+    if errorcode() then break.
+    e += 1
+    if self.tk.tokens.tok &= NULL then break.
+    if self.tk.tokens.tok[1] <> '<10>' then break.
+  end
+  loop k = s to e
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    if self.tk.tokens.strBefore &= NULL then cycle.
+    if instring('#Possible bug - always true:', self.tk.tokens.strBefore, 1, 1) then return 1.
+    if instring('#Possible bug - never true:', self.tk.tokens.strBefore, 1, 1) then return 1.
+  end
+  nmDA = 0 ; nmDN = 0 ; nmOA = 0 ; nmON = 0
+  loop k = pFrom to 1 by -1
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    do MarkAt
+    if nmMk = 3 then break.
+    case nmMk
+    of 1
+      if nmNv
+        if nmDN then nmDN -= 1 else nmON = 1.
+      else
+        if nmDA then nmDA -= 1 else nmOA = 1.
+      end
+    of 2
+      if nmNv then nmDN += 1 else nmDA += 1.
+    end
+    if nmOA and nmON then break.
+  end
+  if ~nmOA and ~nmON then return 0.
+  nmDA = 0 ; nmDN = 0
+  loop k = pTo + 1 to n
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    do MarkAt
+    if nmMk = 3 then break.
+    case nmMk
+    of 1
+      if nmNv then nmDN += 1 else nmDA += 1.
+    of 2
+      if nmNv
+        if nmDN
+          nmDN -= 1
+        elsif nmON
+          return 1
+        end
+      else
+        if nmDA
+          nmDA -= 1
+        elsif nmOA
+          return 1
+        end
+      end
+    end
+  end
+  return 0
+
+! ---- the token in the buffer: nmMk = 1 when its trivia holds the mark of a block IF line, 2 the
+!      mark of a line that ends the code kept (END, a '.', ELSE or ELSIF), 3 when the token is the
+!      edge of the scope, 0 otherwise; nmNv = 1 for a never-true mark. The text after the mark is
+!      the line as it was, read up to the line end or a comment ----
+MarkAt routine
+  nmMk = 0 ; nmNv = 0
+  if not self.tk.tokens.tok &= NULL
+    case size(self.tk.tokens.tok)
+    of 4 orof 7 orof 8 orof 9
+      case upper(self.tk.tokens.tok)
+      of 'ROUTINE' orof 'PROCEDURE' orof 'FUNCTION'
+        nmMk = 3 ; exit
+      of 'CODE'
+        if self.tk.tokens.firstOnLine and ~self.tk.BufColOne() then nmMk = 3 ; exit.
+      end
+    end
+  end
+  if self.tk.tokens.strBefore &= NULL then exit.
+  nmSz = size(self.tk.tokens.strBefore)
+  nmP = instring('#Possible bug - always true:', self.tk.tokens.strBefore, 1, 1)
+  if nmP
+    nmP += 28
+  else
+    nmP = instring('#Possible bug - never true:', self.tk.tokens.strBefore, 1, 1)
+    if ~nmP then exit.
+    nmP += 27 ; nmNv = 1
+  end
+  loop while nmP <= nmSz
+    if self.tk.tokens.strBefore[nmP] <> ' ' and self.tk.tokens.strBefore[nmP] <> '<9>' then break.
+    nmP += 1
+  end
+  nmQ = nmP
+  loop while nmQ <= nmSz
+    case self.tk.tokens.strBefore[nmQ]
+    of '<13>' orof '<10>' orof '!'
+      break
+    end
+    nmQ += 1
+  end
+  if nmQ <= nmP then exit.
+  if self.tk.tokens.strBefore[nmP] = '.' then nmMk = 2 ; exit.
+  if nmQ - nmP < 3 then exit.
+  if upper(self.tk.tokens.strBefore[nmP : nmP + 1]) = 'IF'
+    if ~instring(self.tk.tokens.strBefore[nmP + 2], ' <9>(', 1, 1) then exit.
+    nmOne = 0
+    nmR = instring(' THEN', upper(self.tk.tokens.strBefore[nmP : nmQ - 1]), 1, 1)
+    if ~nmR then nmR = instring(')THEN', upper(self.tk.tokens.strBefore[nmP : nmQ - 1]), 1, 1).
+    if nmR
+      loop nmT = nmP + nmR + 4 to nmQ - 1
+        if self.tk.tokens.strBefore[nmT] <> ' ' and self.tk.tokens.strBefore[nmT] <> '<9>' then nmOne = 1 ; break.
+      end
+    end
+    if ~nmOne then nmMk = 1.
+    exit
+  end
+  if upper(self.tk.tokens.strBefore[nmP : nmP + 2]) = 'END'
+    if nmQ - nmP = 3 or instring(self.tk.tokens.strBefore[nmP + 3], ' <9>.', 1, 1) then nmMk = 2.
+    exit
+  end
+  if nmQ - nmP < 4 then exit.
+  case upper(self.tk.tokens.strBefore[nmP : nmP + 3])
+  of 'ELSE' orof 'ELSI'
+    nmMk = 2
   end
 
 !===============================================================================================
@@ -26852,6 +27700,112 @@ own     StringTheory
   return ro[pos]
 
 ! ------------------------------------------------------------------------------------
+! May the call around the bare argument at pArgTok read that object's lastError or winErrorCode?
+! 0 only for a plain call - a name with no object in front of it - to a procedure this file
+! prototypes once and holds the one body of, with no INCLUDE in it, whose parameter in that slot
+! is never named alone (handed on whole, or a reference taken on it) and is used only through
+! its fields, neither of those two among them, and the methods on the pure list, which only read
+! its value. Anything else answers 1, and so does a parameter a method of a class the body declares
+! names: such a method shares the body's data, and its own body lies after the procedure's.
+! ------------------------------------------------------------------------------------
+VitEngine.ParamErrRead Procedure(LONG pArgTok)
+k     long,auto
+d     long
+pos   long,auto
+opn   long
+sc    long
+st    long
+cl    long
+hp    long
+hs    long
+pTok  long
+fz    byte
+nmU   STRING(vs:maxName),auto
+pU    STRING(vs:maxName),auto
+t     STRING(vs:maxName),auto
+pure  StringTheory
+  code
+  pos = 1
+  loop k = pArgTok - 1 to 1 by -1                              ! back to the call's '('
+    if self.IsEolTok(k) then return 1.
+    t = self.tk.GetTok(k)
+    case t
+    of ')' orof ']'  orof '}'
+      d += 1
+    of '[' orof '{{'
+      if ~d then return 1.                                     ! a subscript or a property, not a call
+      d -= 1
+    of '('
+      if ~d then opn = k ; break.
+      d -= 1
+    of ','
+      if ~d then pos += 1.
+    end
+  end
+  if opn < 2 then return 1.
+  get(self.tk.tokens, opn - 1)
+  if errorcode() or self.tk.tokens.tok &= NULL or self.tk.tokens.type <> vt:label then return 1.
+  nmU = upper(self.tk.tokens.tok)
+  if pure.findByte(46,,, nmU) or self.tk.GetTok(opn - 2) = '.' then return 1. ! <dot>
+  if self.syms.MapProtoCount(nmU) <> 1 then return 1.
+  loop k = 1 to records(self.syms.scopes)                                     ! the one body of that name
+    get(self.syms.scopes, k)
+    if errorcode() then break.
+    if self.syms.scopes.kind <> vs:scProc then cycle.
+    if upper(self.tk.GetTok(self.syms.scopes.startTok)) <> nmU then cycle.
+    if sc then return 1.
+    sc = self.syms.scopes.scopeId ; st = self.syms.scopes.startTok ; cl = self.syms.scopes.endTok
+  end
+  if ~sc or self.ScopeIncludes(sc) then return 1.
+  loop k = st + 1 to cl                                                       ! the parameter in slot pos of its header
+    if self.IsEolTok(k) then break.
+    t = self.tk.GetTok(k)
+    if ~hp
+      if t = '(' then hp = k ; hs = 1.
+      cycle
+    end
+    case t
+    of ')'
+      break
+    of ','
+      if hs = pos then break.
+      hs += 1 ; fz = 0
+    of '='
+      fz = 1                                                                  ! a default value follows the name
+    else
+      if hs = pos and ~fz
+        get(self.tk.tokens, k)
+        if ~errorcode() and not self.tk.tokens.tok &= NULL and self.tk.tokens.type = vt:label then pTok = k.
+      end
+    end
+  end
+  if ~pTok then return 1.
+  pU = upper(self.tk.GetTok(pTok))
+  if self.MayHaveLocalMethods(sc) and self.UsedInLocalMethods(pU, st, cl) then return 1.
+  self.IfCasePureList(pure)
+  loop k = self.CodeTokOfScope(st, cl) to cl
+    if ~k then return 1.
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    if self.tk.tokens.tok &= NULL or self.tk.tokens.type <> vt:label then cycle.
+    t = upper(self.tk.tokens.tok)
+    if t = pU
+      if self.tk.GetTok(k - 1) = '.' then cycle.               ! a member of another object, named alike
+      if self.tk.GetTok(k + 1) <> '.' then return 1.           ! named alone: handed on, or a reference taken
+      t = upper(self.tk.GetTok(k + 2))
+      d = k + 3
+    elsif len(clip(t)) > len(clip(pU)) + 1 and t[1 : len(clip(pU)) + 1] = clip(pU) & '.'
+      t = t[len(clip(pU)) + 2 : len(clip(t))]
+      d = k + 1
+    else
+      cycle
+    end
+    if t = 'LASTERROR' or t = 'WINERRORCODE' then return 1.
+    if self.tk.GetTok(d) = '(' and ~self.PureMethod(t, pure) then return 1.
+  end
+  return 0
+
+! ------------------------------------------------------------------------------------
 ! Does the setValue or append called on the receiver at pRecvTok only copy the object at pArgTok? In
 ! StringTheory 3.90, SetValue and Append given a StringTheory copy its value - SetValue its encoding,
 ! base64 and gzip flags, byte order and code page too - and keep nothing (ArgFact says which). That is exact only when the receiver is a StringTheory
@@ -27602,6 +28556,9 @@ bare     byte,auto
 pn       string(vs:maxName),auto
 own      StringTheory
 ownSet   byte
+dgoKill  byte
+dgoAsked byte
+dgoLoc   byte
   code
   ! A REFERENCE TAKEN ON THE RECEIVER is a second name a member store can go through -
   ! `ref._DataEnd = 0` is one merged token, neither the receiver nor a call - so a receiver
@@ -27728,6 +28685,7 @@ ownSet   byte
         if ~self.DgMemberAt(j, pRecvU) then return 0.
       end
     end
+    do OtherStore ; if dgoKill then return 0.                                         ! a store through another name - see OtherStore
     mU = self.DgMemberAt(j, pRecvU)                                                   ! '' when this is not our receiver
     if mU
       if pWant = dg:wantTrim and ~nest and ~inArm and ~inExec and ~self.DebugLine(j)  ! both of these leave character 1 non-blank,
@@ -27776,6 +28734,34 @@ ownSet   byte
     end
   end
   return 0                                                                            ! reached the CODE statement without a proof
+
+! ---- A STORE THROUGH ANOTHER NAME FOR THE SAME OBJECT. A receiver that is not a true local - a
+!      parameter, a member of SELF, a module or global object - may be the very object that
+!      another parameter, SELF or a reference names: `Lead(s, s)` hands one object in twice, and
+!      `obj.Cut(obj.buf)` hands in a member of SELF. A store into the length or the buffer of any
+!      other name that is not a true local either - `pB._DataEnd = 0`, `pB.valuePtr[1] = ' '`,
+!      `gRef._DataEnd -= 1` - may empty the receiver, so it ends the proof, as a call on another
+!      object does. A true local is reached by no other name unless a reference is taken on it,
+!      which the scan at the top refuses. dgoKill = 1 says so; the buffer goes back to token j ----
+OtherStore routine
+  data
+oRecvU  string(vs:maxName),auto
+oMemU   string(vs:maxName),auto
+oNext   long,auto
+  code
+  dgoKill = 0
+  get(self.tk.tokens, j)
+  if errorcode() then exit.
+  if self.tk.tokens.type <> 'b' or self.tk.tokens.tok &= NULL then exit.
+  if self.DgRecvAt(j, oRecvU, oMemU, oNext)
+    if (oMemU = '._DATAEND' or oMemU = '.VALUEPTR') and self.NameRoot(oRecvU) <> rootU
+      if self.DgMemberIsTarget(j)
+        if ~dgoAsked then dgoLoc = self.DgRecvIsLocal(pRecvU, pIx) ; dgoAsked = 1.
+        if ~dgoLoc and ~self.DgRecvIsLocal(oRecvU, pIx) then dgoKill = 1.
+      end
+    end
+  end
+  get(self.tk.tokens, j)
 
 ! ------------------------------------------------------------------------------------
 ! Is the token at pIx a use of pRecvU's member, and which member? Returns '.NAME' upper
@@ -28361,6 +29347,7 @@ lnSemi      byte
 lnLevel     byte
 lnDo        byte
 lnImpure    byte
+krOthW      byte
 ! ---- narrowing
 narName     string(vs:maxName)         ! '' = this line narrows nothing
 narBlock    byte                       ! 1 = `if ~x` block form (handed to the frame), 0 = one-liner transfer
@@ -29344,6 +30331,8 @@ kz  long,auto
 !      name alone, which BareCallAt answers - can reach it without naming it, so every such fact goes,
 !      and every clip or bound that names a member. Each member is killed by its own name, so the block
 !      records it and its ELSE and END keep it dead. Ruled 30 Oct 2026.
+!      A store into the length or the buffer through another name that may be the same object does
+!      the same (KrOtherStore).
 KrKillSelf routine
   data
 rz  long,auto
@@ -29360,6 +30349,7 @@ sx  StringTheory
   end
   if ~sx._DataEnd then exit.
   bz = lnImpure
+  if krOthW then bz = 1.
   loop rz = lineFirst to lineLast
     if bz then break.
     gPos = rz
@@ -29374,6 +30364,43 @@ sx  StringTheory
     do KrKillName
     do KrKillRecv
   end
+
+! ---- A STORE THROUGH ANOTHER NAME MAY CHANGE A MEMBER OF SELF. A parameter of an object type is the
+!      caller's object, and the caller may hand in self.buf itself - `obj.Cut(obj.buf)` - and a reference
+!      or a module or global object may point at it too. So a store into the length or the buffer of any
+!      name but SELF and a true local of this scope that no reference points at - `pB._DataEnd = 0`,
+!      `pB.valuePtr[1] = 'x'`, `gRef._DataEnd -= 1` - may change a member of SELF without naming it, and
+!      KrKillSelf drops those facts, as after a call (krOthW). gPos is the write target ----
+KrOtherStore routine
+  data
+oPos long,auto
+oz   long,auto
+oN   long,auto
+oSf  string(vs:maxName),auto
+  code
+  oPos = gPos
+  do KrGet
+  if ~gOk then exit.
+  spIn = gTU
+  do KrSplitRoot
+  if ~spRoot or ~spSuf or spRoot = 'SELF' then exit.
+  oN = len(clip(spSuf))
+  oz = oN
+  loop while oz > 0
+    if spSuf[oz] = '.' then break.
+    oz -= 1
+  end
+  if oz = oN then exit.
+  oSf = spSuf[oz + 1 : oN]
+  if oSf <> '_DATAEND' and oSf <> 'VALUEPTR' then exit.
+  if self.DgRecvIsLocal(spRoot, oPos)
+    get(self.syms.scopes, sc)
+    alName = spRoot
+    do KrAliased
+    if ~alRes then exit.
+  end
+  get(self.syms.scopes, sc)
+  krOthW = 1
 
 ! ---- remember, for the enclosing block, that this name was destroyed inside it ----
 !      KrKillsOut at the END is what uses these. Recorded here rather than at the write site
@@ -29999,7 +31026,9 @@ KrSeedClipOf routine
   seedCo = spRoot
 
 ! ---- KrLocalOk for a STRING: the same local-of-this-scope and no-alias tests, for the
-!      string whose clipped length a seed remembers. A StringTheory is not a string here. ----
+!      string whose clipped length a seed remembers. A StringTheory is not a string here. Both ask
+!      DeclIsSure first: a name declared twice, in the arms of a COMPILE and an OMIT, or declared in a
+!      block the code is not in, has no one type to read. ----
 KrStrLocalOk routine
   data
 lz  long,auto
@@ -30010,6 +31039,7 @@ lz  long,auto
   if ~lz then exit.
   get(self.syms.syms, lz)
   if errorcode() then exit.
+  if ~self.DeclIsSure(lz, codeT + 1) then exit.
   if self.syms.syms.isRef then exit.
   if self.syms.syms.isLike then exit.
   if self.syms.syms.isField then exit.
@@ -30131,6 +31161,7 @@ sd  long,auto
   do KrDetectSeed                                           ! reads token SHAPES only - applied at step 4, after the kills
   ! ---- 1. a routine can change any variable and any receiver
   if lnDo then free(KrFactQ).
+  krOthW = 0
   ! ---- 2. every write target on the line loses its fact
   loop ez = lineFirst to lineLast - 1
     gPos = ez
@@ -30188,6 +31219,8 @@ sd  long,auto
     do KrKillName
     do KrKillRecv
     do KrKillWhole
+    gPos = ez
+    do KrOtherStore
   end
   ! ---- 3. an impure call may write through an argument (a *LONG we have no prototype for)
   !         or move a receiver's _DataEnd. Everything it could reach, it names on this line.
@@ -30581,7 +31614,9 @@ dep  long,auto
 !      in the way: one above the IF (it lives in the IF token's trivia and would go with it), one
 !      trailing (in the EOL token's), or one riding a '|' continuation inside S, which goes with the
 !      line too. S1 proper is the TRUE half: the guard goes, S stays.
-!      The commonest catch is a narrowing repeated - a second `if ~p then break.` under the first. ----
+!      The commonest catch is a narrowing repeated - a second `if ~p then break.` under the first.
+!      A plain OMIT block in front of the line rides the IF token's trivia; it is the author's text
+!      and stays where the line stood (kind 8, KrApplyLine). ----
 KrS1Dead routine
   if lineEol <> lineLast + 1 then exit.                               ! no EOL token of its own to take with it
   get(self.tk.tokens, lineFirst)                                      ! a comment parked in front of the IF, in its own trivia ...
@@ -30608,7 +31643,7 @@ KrS1Dead routine
   logLn = self.LogLineOf(lineFirst)
   nxPos  = lineFirst
   nxPos2 = lineEol
-  nxKind = 1
+  nxKind = 8
   do KrPush                                                           ! the whole line, '<10>' included
   s1Gone = 1                                                          ! so KrLine stages nothing else inside it
   changes += 1
@@ -32444,6 +33479,7 @@ lz  long,auto
   if ~lz then exit.
   get(self.syms.syms, lz)
   if errorcode() then exit.
+  if ~self.DeclIsSure(lz, codeT + 1) then exit.
   if self.syms.syms.isRef then exit.
   if self.syms.syms.isLike then exit.
   if self.syms.syms.isField then exit.
@@ -32566,7 +33602,8 @@ hopSt StringTheory
 !      its body says it reads or writes that parameter and keeps nothing). Through a kept reference a
 !      later call that names nothing on its line - `Keep(st)`, then `Reset()` - can empty the object,
 !      and no kill in this walk would see it (ruled 28 Oct 2026: a call the tool cannot see into may
-!      keep one). A SELF member needs no test: every such call kills its facts (KrKillSelf). Asked once
+!      keep one). A SELF member needs no test: every such call, and a store through another name,
+!      kills its facts (KrKillSelf). Asked once
 !      for each name in a scope; KrAliasScan starts the two lists again. ----
 KrReachTest routine
   data
@@ -32719,6 +33756,8 @@ az  long,auto
       self.tk.SetStrBefore(kr:pos, ' ')    ! a continuation rejoined (S5): the bar, its comment, the CRLF and the indent become one space
     of 7
       do KrApplyInsert                     ! a NEW statement on its own line in front of the token (S6)
+    of 8
+      do KrApplyLine                       ! a whole line, the OMIT blocks folded in front of it kept (S1)
     else
       get(self.tk.tokens, kr:pos2)
       if errorcode() then cycle.
@@ -32733,6 +33772,16 @@ az  long,auto
       end
     end
   end
+
+! ---- kind 8: delete the whole lines kr:pos to kr:pos2 (an EOL token), as kind 1 does, but keep
+!      every plain OMIT block the tokenizer folded in front of one of them: it goes back, in order,
+!      on the token that now begins the spot, so it stays where the lines stood. With no token after
+!      them, PrependStrBefore adds one that holds only the block, the shape a block running to the
+!      end of the file has. ----
+KrApplyLine routine
+  self.LineBlocks(kr:pos, kr:pos2, sbSt)
+  self.tk.DeleteToks(kr:pos, kr:pos2)
+  if sbSt._DataEnd then self.tk.PrependStrBefore(kr:pos, sbSt.getValue()).
 
 ! ---- kind 7: put a NEW statement on its own line immediately in front of the token at kr:pos.
 !      The way TrailingSpaces splices its clip() (TsApplyInsert): InsertString parses the text, the
@@ -33828,11 +34877,23 @@ TsUseEditable routine
 
 ! ---- can the procedure make the receiver UTF-16? Each mention MarkSetterAt finds is a risk but a setValue() given
 !      another StringTheory that is a local of this procedure - not a parameter, a reference, STATIC or THREAD -
-!      that nothing in it marks: that copy carries ANSI text ----
+!      that nothing in it marks: that copy carries ANSI text. The procedure's ROUTINEs are read as well as its
+!      main code: a DO above the new line can run one that does it. A source that a method of a class the
+!      procedure declares names is a risk too: the method shares its data and may mark it ----
 TsUtf16Risk routine
+  data
+rcEnd  long,auto
+rcBeg  long,auto
+  code
+  rcRisk = 1
+  self.syms.scopes.scopeId = sc
+  get(self.syms.scopes, self.syms.scopes.scopeId)
+  if errorcode() then exit.
+  rcEnd = self.syms.scopes.endTok
+  rcBeg = self.syms.scopes.startTok
   rcRisk = 0 ; rcK = codeT + 1
   loop
-    rcK = self.MarkSetterAt(rcU, rcK, mainEnd, rcEnc)
+    rcK = self.MarkSetterAt(rcU, rcK, rcEnd, rcEnc)
     if ~rcK then exit.
     rcRisk = 1
     if self.tk.GetTok(rcK + 1) = '.'
@@ -33849,9 +34910,11 @@ TsUtf16Risk routine
     if ~rcZ then exit.
     get(self.syms.syms, rcZ)
     if errorcode() or self.syms.syms.typeU <> 'STRINGTHEORY' or self.syms.syms.isRef then exit.
+    if ~self.DeclIsSure(rcZ, rcK) then exit.
     if ~self.syms.IsColOneLabel(self.syms.syms.declTok) then exit. ! a parameter is the caller's
     if self.DeclHasAttr(self.syms.syms.declTok, 'STATIC') or self.DeclHasAttr(self.syms.syms.declTok, 'THREAD') then exit.
-    if self.MarkSetterAt(rcSrc, codeT + 1, mainEnd, rcEnc) then exit.
+    if self.MayHaveLocalMethods(sc) and self.UsedInLocalMethods(rcSrc, rcBeg, rcEnd) then exit.
+    if self.MarkSetterAt(rcSrc, codeT + 1, rcEnd, rcEnc) then exit.
     rcRisk = 0
     rcK += 1
   end
@@ -35533,7 +36596,7 @@ qLn     LONG
     self.tk.SetStrBefore(cc:qClip + 2, sbSt.getValue())                   ! what clip wrapped inherits its place
     self.tk.DeleteToks(cc:qClip, cc:qClip + 1)                            ! then `clip` and its '('
     changes += 1
-    pLog.append('BUILTIN ChooseClip: line ' & cc:qLn &                    |
+    pLog.append('BUILTIN ChooseClip line ' & cc:qLn & ':' &               |
                 ' dead clip() dropped from a choose() arm<13,10>')
   end
   if ccWrap then self.tk.SetLineNumbers().
@@ -35739,7 +36802,7 @@ ln         LONG
       self.tk.SetStrBefore(iq:pos, sb.getValue())
       self.tk.SetStrBefore(iq:pos + 1, '')
       changes += 1
-      pLog.append('BUILTIN BracketAndOr: line ' & iq:ln & ' brackets an AND beside an OR<13,10>')
+      pLog.append('BUILTIN BracketAndOr line ' & iq:ln & ': brackets an AND beside an OR<13,10>')
     else
       self.tk.InsertString(iq:pos, ')', 1)
       self.tk.SetStrBefore(iq:pos, '')
@@ -36058,7 +37121,7 @@ noEnd      BYTE
     self.CmtRowsJoin(cmtRows, cmtTxt)
     if cmtN then self.CmtToLineEnd(self.FirstEolAfter(sl:p), cmtTxt).
     changes += 1
-    pLog.append('BUILTIN InstringSliceToST: line ' & sl:ln & ' instring(...) -> ' & newTxt.getValue() & '<13,10>')
+    pLog.append('BUILTIN InstringSliceToST line ' & sl:ln & ': instring(...) -> ' & newTxt.getValue() & '<13,10>')
   end
   free(SlQ)
   if changes then self.tk.SetLineNumbers().
@@ -36349,6 +37412,14 @@ a4E        LONG
       end
       cycle
     end
+    ! a StringTheory declared inside a COMPILE or conditional OMIT block the call is not in does not
+    ! exist in a build that leaves the block out, and the new call would not compile there. It is
+    ! asked first: FirstInstanceOf reads past the blocks, and this is the reason to report
+    if self.CondLeavesOut(stTok, p)
+      why = clip(self.tk.GetTok(stTok)) & ' is declared inside a COMPILE or OMIT block the call is not in'
+      do Refuse
+      cycle
+    end
     ! *** THE NAME MUST MEAN THAT OBJECT WHERE THE CALL IS. *** The instance may be borrowed
     ! from an outer scope, and a local, a parameter or a routine's data of the same name hides
     ! it there: `st LONG` over a module `st StringTheory` makes st.findChars(...) a call on a
@@ -36399,7 +37470,7 @@ a4E        LONG
     self.CmtRowsJoin(cmtRows, cmtTxt)
     if cmtN then self.CmtToLineEnd(self.FirstEolAfter(is:p), cmtTxt).
     changes += 1
-    pLog.append('BUILTIN ' & clip(bi) & ': line ' & is:ln & ' instring(...) -> ' & newTxt.getValue() & '<13,10>')
+    pLog.append('BUILTIN ' & clip(bi) & ' line ' & is:ln & ': instring(...) -> ' & newTxt.getValue() & '<13,10>')
   end
   free(IsQ)
   if changes then self.tk.SetLineNumbers().
@@ -36583,7 +37654,7 @@ qLn     LONG
     if errorcode() then cycle.
     self.tk.SetStrBefore(rj:qTok, ' ')                              ! the bar, the CR/LF and the indent become ONE space
     changes += 1
-    pLog.append('BUILTIN RejoinWrapped: line ' & rj:qLn & ' joined with the line below it, ' & |
+    pLog.append('BUILTIN RejoinWrapped line ' & rj:qLn & ': joined with the line below it, ' & |
                 rj:qW & ' characters<13,10>')
   end
   if changes
@@ -37391,7 +38462,7 @@ whyT     string(900)             ! diag: conviction state + ledger
   loop s = 1 to records(self.syms.syms)
     get(self.syms.syms, s)
     if errorcode() then break.
-    if ~self.AutoEligible(s)
+    if ~self.AutoEligible(s, 2)
       if doWhy
         whyTxt = self.acWhyElig                            ! set at every refusal inside AutoEligible
         if whyTxt then do WhyLog.                          ! blank = the row-GET failed, nothing to report
@@ -37583,10 +38654,14 @@ nameU    string(vs:maxName),AUTO
   ! What does NOT follow, and is deliberately kept: the SCOPE-END dead-store case stays off for
   ! both, because a persistent local's LAST store may be read on the next call. That is
   ! `allowEnd` at the caller. The caller says which question it is asking.
+  ! pPersistOk adds up: 1 = persistent storage is no obstacle (the question is "is it read"); 2 = a
+  ! call that may keep its address is no obstacle either (AutoCheck: whatever reads the local through
+  ! that reference runs after the call, and the walk takes the call itself for a read, or for a write
+  ! it cannot see).
   attMask = ab:over + ab:dim
-  if ~pPersistOk then attMask += ab:static + ab:thread.
+  if ~band(pPersistOk, 1) then attMask += ab:static + ab:thread.
   if band(self.DeclAttrBits(declTok), attMask)
-    self.acWhyElig = 'declared ' & choose(pPersistOk = 0, 'OVER, DIM, STATIC or THREAD', 'OVER or DIM')
+    self.acWhyElig = 'declared ' & choose(~band(pPersistOk, 1), 'OVER, DIM, STATIC or THREAD', 'OVER or DIM')
     return 0
   end
   ! THIS IS A BACKSTOP, NOT A CONTINUATION REFUSAL. DeclLastTok walks to the LOGICAL end of
@@ -37663,6 +38738,11 @@ nameU    string(vs:maxName),AUTO
   of 3
     self.acWhyElig = 'its storage escapes - &=, ADDRESS() or BIND - and can be read under another name'
     return 0
+  of 4
+    if ~band(pPersistOk, 2)
+      self.acWhyElig = 'handed by address to a call that may keep a reference to it, and read or write it later under another name'
+      return 0
+    end
   end
   get(self.syms.syms, pSymRow)
   get(self.syms.scopes, r)
@@ -37678,6 +38758,8 @@ nameU    string(vs:maxName),AUTO
 !      procedure declares - and the included text is not in this stream (ScopeIncludes);
 !   3  its storage escapes in the code - `x &= v`, ADDRESS(v), or v handed to BIND - after
 !      which anything can read it under another name.
+!   4  it is handed whole to a call that may keep its address (AutoScopePrep, UrKeptArg), after
+!      which a later call can read or write it without naming it.
 ! Returns the reason, 0 for none. The answers are collected once per scope, by AutoScopePrep,
 ! which every caller of AutoEligible has run for the candidate's scope.
 ! ------------------------------------------------------------------------------------
@@ -37686,6 +38768,7 @@ VitEngine.UnseenRead Procedure(STRING pNameU)
   if self.urData.findChars(' ' & clip(upper(pNameU)) & ' ') then return 1.
   if self.urInc then return 2.
   if self.urEsc.findChars(' ' & clip(upper(pNameU)) & ' ') then return 3.
+  if self.urEsc.findChars(' #' & clip(upper(pNameU)) & ' ') then return 4.
   return 0
 
 ! ------------------------------------------------------------------------------------
@@ -37903,6 +38986,7 @@ zeroG    byte                ! kind 1 only: this IF's condition IMPLIES V has be
           curAsg = fr:entryAsg                                              ! new branch body starts at entry state
         end
       end
+      lastExit = 0                                                          ! a RETURN ends only the arm it stands in
     elsif lvl = '-' or (ty = vt:end and lvl <> '+' and lvl <> '/')          ! end / '.' - audit: an INLINE '.' terminator is retyped vt:end but may carry NO '-' level (the level pass skips
                                                                             !   inline dots); without this the one-liner if/then/else frame never closed, blocking the all-branches-wrote join
       lastPopLn = self.tk.tokens.lineNo ; lastPopTx = txt                   ! diag
@@ -37936,6 +39020,10 @@ zeroG    byte                ! kind 1 only: this IF's condition IMPLIES V has be
       else
         curAsg = fr:entryAsg                                                ! a COUNTED or conditional LOOP may run 0 times; bail-context leaves state as entered
       end
+      ! A RETURN COUNTS ONLY FOR THE FRAME IT STANDS IN. `RETURN.` or `RETURN ; END` closes an inner
+      ! IF or LOOP on the RETURN's own line; the frame outside it is not ended by that RETURN, and a
+      ! path that skips the inner frame reaches the outer END without writing V.
+      lastExit = 0                                                          ! the RETURN's credit ends with its frame
       delete(FrameQ)
       if ptOn = 2 then ptAfter = curAsg ; curAsg = ptBody ; ptOn = 1.
     end
@@ -38083,6 +39171,8 @@ zeroG    byte                ! kind 1 only: this IF's condition IMPLIES V has be
 !      the code does not say, and every occurrence that is not a counted write a plain read - not a
 !      LOOP header, an argument that may be written, or a use of its parts (ZeroGuardSeen,
 !      ZeroGuardRead). The credit holds only in the THEN arm: an ELSE or ELSIF runs when it is 0.
+!      Nor is the guard a structure, a field of one, a reference or storage with a second name
+!      (NameShared): a store under the other name sets it where no count sees.
 ZeroGuardChk routine
   fr:zeroG = 0
   zgHits = 0 ; zgNm = ''
@@ -38114,7 +39204,9 @@ ZeroGuardChk routine
     get(self.syms.syms, zgRow)
     if ~errorcode()
       zgDeclT = self.syms.syms.declTok
-      if self.syms.IsColOneLabel(zgDeclT)                                           ! a parameter is the caller's, not zero-initialised
+      ! A FIELD OF A STRUCTURE IS NO GUARD: a store to the whole GROUP, or a GET of its record,
+      ! sets it under a name ZeroGuardWrites does not count.
+      if ~self.syms.syms.isField and self.syms.IsColOneLabel(zgDeclT)               ! a parameter is the caller's, not zero-initialised
         if ~self.DeclHasAttr(zgDeclT, 'AUTO') and ~self.DeclHasAttr(zgDeclT, 'STATIC') and ~self.DeclHasAttr(zgDeclT, 'THREAD') and ~self.DeclHasAttr(zgDeclT, 'OVER') ! AUTO, STATIC, THREAD or OVER: not zero at the call
           if ~self.HasSiblingOver(zgRow, zgNm)                                      ! shared storage - something else can set it
             zgOK = 1
@@ -38131,6 +39223,8 @@ ZeroGuardChk routine
       end
     end
   end
+  if zgOK and self.NameShared(i, zgNm) then zgOK = 0.                               ! a structure, a field of one, or a second name
+  get(self.syms.scopes, vScope)
   if zgOK then do ZeroGuardSeen.
   get(self.syms.syms, pSymRow)                                                      ! V's row, before anything else reads it
   get(self.tk.tokens, i)
@@ -38496,8 +39590,8 @@ aaRd byte,auto
   ! FROM HERE ON THE CALL IS FOUND AND ITS PROTOTYPE IS THE QUESTION. AutoCheck asks "is this
   ! slot provably by reference" and an unplaceable callee answers no; InlineSingleUse asks "is it
   ! provably by value" and passes pUnknown = 1, so the same callee answers yes - except a function
-  ! on the pure list, which takes values - and only as one of the runtime's own readers, with no
-  ! procedure of that name in this file (AaReader).
+  ! on the pure list, which takes values, or a slot the Clarion runtime's own prototypes declare by
+  ! value - and only with no procedure of that name in this file (AaReader).
   oU = ''
   if opn >= 3                                                      ! self.Method( arrives as FOUR tokens, not one
     get(self.tk.tokens, opn - 2)
@@ -38543,9 +39637,13 @@ sc  long,auto
   if sv then get(self.syms.scopes, sv).
 
 ! ---- a plain call no single prototype here places: it takes values only as one of the runtime's
-!      own readers on the pure list, and only where this file gives no procedure that name - its MAP
-!      may prototype one, or overload it, and that one may take the argument by address. The own
-!      list is asked for this one name (PureOwnList, PureProc). ----
+!      own readers on the pure list, or in a slot the runtime's own prototypes declare by value
+!      (RuntimeSlotByValue), and only where this file gives no procedure that name - its MAP may
+!      prototype one, or overload it, and that one may take the argument by address. The own list
+!      is asked for this one name (PureOwnList, PureProc). A MEMBER module, or an include
+!      fragment, takes no runtime slot: the PROGRAM file's MAP, which the run does not read, may
+!      declare a procedure of the same name that takes an address, and the call binds to that one
+!      (measured 20 Nov 2026). ----
 AaReader routine
   data
 one  StringTheory
@@ -38554,6 +39652,139 @@ own  StringTheory
   one.setValue(' ' & clip(nmU) & ' ')
   self.PureOwnList(one, own)
   aaRd = self.PureProc(nmU, self.dgPure, own)
+  if ~aaRd and ~own.findChars(' ' & clip(nmU) & ' ') and ~self.syms.isMember
+    aaRd = self.RuntimeSlotByValue(nmU, opn, pos)
+  end
+
+! ------------------------------------------------------------------------------------
+! Does the Clarion runtime take slot pSlot of the call whose '(' is at pOpen BY VALUE? pU is a
+! procedure the runtime prototypes in BUILTINS.CLW, and every one of its prototypes that takes as
+! many arguments as the call has declares that slot with one and the same type that is passed by
+! value: a number or a string. A `*` or `&` marker, an untyped `?`, a FILE, KEY, QUEUE, VIEW or
+! WINDOW, or a procedure in that slot of any of them answers no. The table holds, for each name,
+! the argument counts with at least one such slot as ' count:slots ', a 1 for each slot by value.
+! Whether the call reaches the runtime's procedure at all, and not one of the program's own with
+! the same name, is the caller's question.
+! ------------------------------------------------------------------------------------
+VitEngine.RuntimeSlotByValue Procedure(STRING pU, LONG pOpen, LONG pSlot)
+ac  long,auto
+d   long,auto
+z   long,auto
+x   long,auto
+m   string(64),auto
+  code
+  if pSlot < 1 then return 0.
+  if self.tk.GetTok(pOpen) <> '(' then return 0.
+  d = 0 ; ac = 1
+  loop z = pOpen + 1 to records(self.tk.tokens)                    ! count the call's arguments
+    get(self.tk.tokens, z)
+    if errorcode() then return 0.
+    if self.tk.tokens.tok &= NULL then return 0.                   ! statement boundary
+    if self.tk.tokens.type = vt:literal then cycle.
+    if self.tk.tokens.tok[1] = '<10>' or self.tk.tokens.tok = ';' then return 0.
+    case self.tk.tokens.tok
+    of '(' orof '[' orof '{{'                                      ! a property's braces nest like brackets
+      d += 1
+    of ')' orof ']' orof '}'
+      if ~d then break.
+      d -= 1
+    of ','
+      if ~d then ac += 1.
+    end
+  end
+  if z > records(self.tk.tokens) then return 0.                    ! the list never closed
+  if pSlot > ac then return 0.
+  case pU
+  of   'ACOS' orof 'ASIN' orof 'ATAN' orof 'CHAIN' orof 'CHOICE' orof 'CLIP' orof 'CLIPBOARD' orof 'COMMAND'
+  orof 'CONTENTS' orof 'COS' orof 'DAY' orof 'EVALUATE' orof 'EXISTS' orof 'FORWARDKEY' orof 'FREEZE'
+  orof 'ISALPHA' orof 'ISLOWER' orof 'ISUPPER' orof 'LEN' orof 'LOG10' orof 'LOGE' orof 'LONGPATH'
+  orof 'LOWER' orof 'MONTH' orof 'NUMERIC' orof 'PATH' orof 'PRESS' orof 'PRESSKEY' orof 'PUSHBIND'
+  orof 'RESUME' orof 'SET3DLOOK' orof 'SETCLIPBOARD' orof 'SETCLOCK' orof 'SETCOMMAND' orof 'SETCURSOR'
+  orof 'SETDROPID' orof 'SETEXITCODE' orof 'SETKEYCHAR' orof 'SETKEYCODE' orof 'SETPATH' orof 'SETPENCOLOR'
+  orof 'SETPENSTYLE' orof 'SETPENWIDTH' orof 'SETTODAY' orof 'SHORTPATH' orof 'SIN' orof 'SQRT' orof 'STOP'
+  orof 'TAN' orof 'TYPE' orof 'UNBIND' orof 'UNLOAD' orof 'UNQUOTE' orof 'UPPER' orof 'YEAR'
+    m = ' 1:1 '
+  of   'ALERT' orof 'ALIAS' orof 'ALL' orof 'BEEP' orof 'CENTER' orof 'DESTROY' orof 'DISABLE' orof 'DISPLAY'
+  orof 'ENABLE' orof 'ERASE' orof 'HALT' orof 'HELP' orof 'HIDE' orof 'LEFT' orof 'LOCALE'
+  orof 'PRINTERDIALOG' orof 'QUOTE' orof 'RIGHT' orof 'SUSPEND' orof 'UNHIDE' orof 'UNTIE' orof 'UPDATE'
+    m = ' 1:1 2:11 '
+  of   'ARC'
+    m = ' 6:111111 7:1111111 '
+  of   'BINDEXPRESSION' orof 'CHANGE' orof 'RANDOM' orof 'REMOVE' orof 'TIED' orof 'UNFREEZE'
+    m = ' 2:11 '
+  of   'BLANK' orof 'POPUP' orof 'POST' orof 'PUTINI'
+    m = ' 1:1 2:11 3:111 4:1111 '
+  of   'BOX' orof 'ELLIPSE' orof 'ROUNDBOX'
+    m = ' 4:1111 5:11111 6:111111 '
+  of   'BUFFER' orof 'SETPOSITION' orof 'START'
+    m = ' 2:01 3:011 4:0111 5:01111 '
+  of   'BUILD' orof 'GETGROUP' orof 'POLYGON' orof 'RESTORESTATE' orof 'WHAT'
+    m = ' 2:01 3:011 '
+  of   'CALL' orof 'DELETEREG' orof 'MATCH' orof 'STRPOS' orof 'TIE'
+    m = ' 2:11 3:111 '
+  of   'CHORD'
+    m = ' 6:111111 7:1111111 8:11111111 '
+  of   'CLONE'
+    m = ' 2:11 3:111 4:1111 5:11110 '
+  of   'COLORDIALOG'
+    m = ' 1:1 2:10 3:101 '
+  of   'COMPRESS'
+    m = ' 2:01 3:010 '
+  of   'CONVERTANSITOOEM' orof 'CONVERTOEMTOANSI' orof 'COPY' orof 'ENDPAGE' orof 'FREESTATE' orof 'GETSTATE'
+  orof 'HOLD' orof 'HOWMANY' orof 'IDLE' orof 'INSTANCE' orof 'ISGROUP' orof 'LOCK' orof 'REGET' orof 'RENAME'
+  orof 'SEND' orof 'SETLAYOUT' orof 'SETNULLS' orof 'SETTARGET' orof 'SHARE' orof 'SKIP' orof 'WHO'
+    m = ' 2:01 '
+  of   'DATE' orof 'SUB'
+    m = ' 3:111 '
+  of   'DIRECTORY'
+    m = ' 3:011 '
+  of   'FILEDIALOG'
+    m = ' 1:1 2:10 3:101 4:1011 '
+  of   'FILEDIALOGA'
+    m = ' 1:1 2:10 3:101 4:1011 5:10110 '
+  of   'FONTDIALOG'
+    m = ' 1:1 2:10 3:100 4:1000 5:10000 6:100001 '
+  of   'FONTDIALOGA'
+    m = ' 1:1 2:10 3:100 4:1000 5:10000 6:100000 7:1000001 '
+  of   'GETFONT'
+    m = ' 1:1 2:10 3:100 4:1000 5:10000 6:100000 '
+  of   'GETINI' orof 'INSTRING'
+    m = ' 2:11 3:111 4:1111 '
+  of   'GETREG'
+    m = ' 2:11 3:111 4:1110 '
+  of   'GETREGSUBKEYS' orof 'GETREGVALUES'
+    m = ' 3:110 '
+  of   'IMAGE'
+    m = ' 3:111 4:1111 5:11111 6:111111 '
+  of   'LINE'
+    m = ' 4:1111 5:11111 '
+  of   'MESSAGE'
+    m = ' 1:1 2:11 3:111 4:1111 5:11111 6:111111 '
+  of   'NOTIFY' orof 'RUN' orof 'SELECT'
+    m = ' 1:1 2:11 3:111 '
+  of   'PIE'
+    m = ' 6:111100 7:1111001 8:11110011 9:111100111 10:1111001111 '
+  of   'PRINTERDIALOGA'
+    m = ' 1:1 2:11 3:110 '
+  of   'PUTREG'
+    m = ' 3:111 4:1111 5:11111 '
+  of   'REGISTER' orof 'REGISTEREVENT'
+    m = ' 3:111 4:1110 5:11101 '
+  of   'SET'
+    m = ' 3:001 '
+  of   'SETFONT'
+    m = ' 2:01 3:011 4:0111 5:01111 6:011111 '
+  of   'SHOW'
+    m = ' 3:111 4:1111 '
+  of   'UNREGISTER' orof 'UNREGISTEREVENT'
+    m = ' 1:1 2:11 3:111 4:1110 5:11101 '
+  else
+    return 0
+  end
+  x = instring(' ' & ac & ':', m, 1, 1)
+  if ~x then return 0.
+  x += len(' ' & ac & ':') + pSlot - 1
+  return choose(m[x] = '1')
 
 ! ---- ADDRESS(V) MEANS UNKNOWN, NEVER A READ. When a variable's address is handed to something -
 !      MemCopy(address(v), n), an API that fills a buffer - the storage ESCAPES. The callee may
@@ -38712,19 +39943,27 @@ i  long,auto
 ! The first mention of the object pNameU in pFirst..pLast that can set its base64 flag or its encoding - a
 ! member fl:writers names, _StealValue, or setValue given an object or a name the table cannot type -
 ! or 0. pEnc is set when that mention gives it a USTRING's value alone, which sets the encoding to
-! UTF-16. Lifted from DeadValueWrite's DwObjScan for the final sweep (V3-1, V3-5, V3-7): a SetValue
-! clears the marks a Free() keeps, a by-value copy carries none of them, and a trim moved past a loop
-! clears them later - each matters only when the procedure can set them, which is this question.
+! UTF-16. The object, or an object that holds it, handed whole to a call counts as well: the called
+! body can set the marks without naming the object here. Only a call whose summary says it reads that
+! parameter, a plain call on the pure list, or a StringTheory's own setValue or append that only copies
+! it (ArgFact answers R, P or F) is passed; the caller builds the summaries first, or every such call
+! counts. Shared by DeadValueWrite, DeadTrim, SplitInPlace, ResplitToLines and TrailingSpaces: a
+! SetValue clears the marks a Free() keeps, a by-value copy carries none of them, and a trim moved past
+! a loop clears them later - each matters only when the procedure can set them, which is this question.
 !===============================================================================================
 VitEngine.MarkSetterAt Procedure(STRING pNameU, LONG pFirst, LONG pLast, *BYTE pEnc)
-k    long,auto
-n    long,auto
-a    long
-t    STRING(vs:maxName),auto
-m    STRING(vs:maxName)
-tU   STRING(vs:maxName)
-rf   BYTE
-nmU  STRING(vs:maxName),AUTO
+k     long,auto
+n     long,auto
+a     long
+t     STRING(vs:maxName),auto
+m     STRING(vs:maxName)
+tU    STRING(vs:maxName)
+rf    BYTE
+nmU   STRING(vs:maxName),AUTO
+nx    STRING(vs:maxName),AUTO
+selfU STRING(vs:maxName)
+sc    long
+scWas long,auto
   code
   pEnc = 0
   if self.ignoreMarks then return 0. ! --ignoremarks: the marks are the user's own risk
@@ -38740,6 +39979,22 @@ nmU  STRING(vs:maxName),AUTO
       m = upper(self.tk.GetTok(k + 2)) ; a = k + 3
     elsif t[1 : n + 1] = clip(nmU) & '.'
       m = t[n + 2 : size(t)] ; a = k + 1
+    elsif t = nmU or self.NameHolds(t, nmU)
+      if self.tk.GetTok(k + 1) = '.' then cycle.
+      nx = self.tk.GetTok(k - 1)
+      if nx <> '(' and nx <> ',' then cycle.
+      if ~sc
+        scWas = self.syms.scopes.scopeId
+        sc = self.syms.ScopeContaining(k, vs:scProc, vs:scMethod)
+        if ~sc then return k.
+        self.syms.scopes.scopeId = sc
+        get(self.syms.scopes, self.syms.scopes.scopeId)
+        if ~errorcode() then selfU = self.syms.scopes.selfClass.
+        self.syms.scopes.scopeId = scWas
+        get(self.syms.scopes, self.syms.scopes.scopeId)
+      end
+      if inlist(self.ArgFact(k, selfU), 'R', 'P', 'F') then cycle.
+      return k
     else
       cycle
     end
@@ -38767,16 +40022,38 @@ nmU  STRING(vs:maxName),AUTO
 ! matches it: by case, anywhere in the line - in front of a comment or in it, which also ends the
 ! block (measured) - and an outer block's terminator closes the inner ones with it. The walk starts at the procedure or method the token is
 ! in, or the program's own code, not the file.
+! Each physical line is read whole, its code as well as its trivia, as the pre-processor reads it,
+! so a line the tokenizer keeps as code ends a block too: a '|' continuation row, whose statement
+! is then inside the block, or a line holding an outer block's terminator. On the directive's own
+! line only the text after its closing ')' is searched; when that ')' is on a later row, every
+! row after the directive's line is searched whole.
 !===============================================================================================
 VitEngine.InCondBlock Procedure(LONG pTok)
+  code
+  return choose(self.CondBlockAt(pTok) > 0)
+
+!===============================================================================================
+! The innermost COMPILE(...) or conditional OMIT(...) block open at pTok, by the token of its keyword;
+! 0 = none. Two tokens with the same answer are in every build together, or in none. The walk is
+! the one described above, so a block ends where InCondBlock says it does. pFrom, when given, is
+! the token the walk starts at instead, so a block opened above the procedure is seen too.
+!===============================================================================================
+VitEngine.CondBlockAt Procedure(LONG pTok, LONG pFrom=0)
 sc    long,auto
 i     long,auto
 j     long,auto
 k     long,auto
+p     long,auto
+e     long,auto
+f     long,auto
 fromT long,auto
 open  StringTheory ! the terminators of the blocks open so far, the innermost last
+kw    StringTheory ! the token of each one's keyword, line for line with open
+fr    StringTheory ! where on the line being read each one's search starts, 0 = not on this line
+ar    StringTheory ! the token of each one's closing ')' when it is on the directive's own line, else 0
 sb    StringTheory
-ln    StringTheory
+ln    StringTheory ! the physical line read so far, trivia and code alike, while a block is open
+lt    StringTheory
   code
   fromT = 1
   sc = self.syms.ScopeContaining(pTok, vs:scProc, vs:scMethod)
@@ -38786,42 +40063,152 @@ ln    StringTheory
     get(self.syms.scopes, self.syms.scopes.scopeId)
     if ~errorcode() then fromT = self.syms.scopes.startTok.
   end
+  if pFrom then fromT = pFrom.
   loop i = fromT to pTok
     get(self.tk.tokens, i)
     if errorcode() then break.
     if open.records() and not self.tk.tokens.strBefore &= NULL
       sb.setValue(self.tk.tokens.strBefore)
-      sb.split('<10>')
-      loop j = 1 to sb.records()
-        ln.setValue(sb.getLine(j))
-        if ~ln._DataEnd then cycle.
-        loop k = open.records() to 1 by -1
-          if ln.findChars(open.getLine(k))
-            loop while open.records() >= k
-              open.deleteLine(open.records())
-            end
-            break
-          end
-        end
+      p = 1
+      loop
+        e = sb.findByte(10, p)
+        if ~e then break.
+        if e > p then ln.append(sb.slice(p, e - 1)).
+        do LineEnds
+        p = e + 1
         if ~open.records() then break.
       end
+      if open.records() and p <= sb._DataEnd then ln.append(sb.slice(p, sb._DataEnd)).
       get(self.tk.tokens, i)
       if errorcode() then break.
     end
+    if open.records() and not self.tk.tokens.tok &= NULL
+      if self.tk.tokens.tok = '<10>' then do LineEnds.
+    end
     if i = pTok then break.
     if self.tk.tokens.tok &= NULL then cycle.
+    if open.records() and self.tk.tokens.tok <> '<10>'
+      ln.append(self.tk.tokens.tok)
+      loop k = 1 to ar.records()
+        if ar.getLine(k) = i then fr.setLine(k, ln._DataEnd + 1).
+      end
+    end
     case upper(self.tk.tokens.tok)
     of 'OMIT' orof 'COMPILE'
       if i > 1 and self.tk.GetTok(i - 1) = '.' then cycle. ! a method of that name
       if self.tk.GetTok(i + 1) <> '(' then cycle.
-      ln.setValue(self.tk.GetTok(i + 2))
-      if ln._DataEnd < 3 or ln.valuePtr[1] <> '''' or ln.valuePtr[ln._DataEnd] <> '''' then cycle.
-      ln.setValue(ln.valuePtr[2 : ln._DataEnd - 1])
-      ln.replace('''''', '''')
-      if ln._DataEnd then open.addLine(ln.getValue()).
+      lt.setValue(self.tk.GetTok(i + 2))
+      if lt._DataEnd < 3 or lt.valuePtr[1] <> '''' or lt.valuePtr[lt._DataEnd] <> '''' then cycle.
+      lt.setValue(lt.valuePtr[2 : lt._DataEnd - 1])
+      lt.replace('''''', '''')
+      if ~lt._DataEnd then cycle.
+      do CloseAt
+      if ~open.records() then ln.free().
+      open.addLine(lt.getValue()) ; kw.addLine(i) ; fr.addLine(0) ; ar.addLine(e)
     end
   end
-  return choose(open.records() > 0)
+  if ~open.records() then return 0.
+  return kw.getLine(kw.records())
+
+! ---- the ')' that closes the directive at i when it is on the directive's own line, else 0 ----
+CloseAt routine
+  e = 0
+  j = 0
+  loop k = i + 1 to records(self.tk.tokens)
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    if not self.tk.tokens.strBefore &= NULL
+      if sb.findByte(10, 1,, self.tk.tokens.strBefore) then break.
+    end
+    if self.tk.tokens.tok &= NULL then cycle.
+    case self.tk.tokens.tok
+    of '<10>'
+      break
+    of '('
+      j += 1
+    of ')'
+      j -= 1
+      if ~j then e = k ; break.
+    end
+  end
+  get(self.tk.tokens, i)
+
+! ---- a physical line has been read: a terminator on it closes that block and every one inside it ----
+LineEnds routine
+  loop k = open.records() to 1 by -1
+    f = fr.getLine(k)
+    if f and ln.findChars(open.getLine(k), f)
+      loop while open.records() >= k
+        open.deleteLine(open.records())
+        kw.deleteLine(kw.records())
+        fr.deleteLine(fr.records())
+        ar.deleteLine(ar.records())
+      end
+      break
+    end
+  end
+  loop k = 1 to fr.records()
+    fr.setLine(k, 1)
+  end
+  ln.free()
+
+!===============================================================================================
+! Can a build leave pTok out and still run pRef? 1 = pTok is in a COMPILE or conditional OMIT
+! block that pRef is not in. A proof that rests on the line at pTok - the copy, split, load or
+! declaration that pRef relies on - holds only when this answers 0 (ruled 21 Nov 2026). When both
+! are in the same block, or pTok in a block that holds pRef's block, they are in every build
+! together, and the answer is 0. The blocks around pRef are walked outwards: the block open at a
+! block's own keyword is the one that holds it. The symbol table is brought up to date first: the
+! walk starts at the scope that holds the token, and an edit earlier in the pass moves the scopes.
+! When the two are not in the same procedure or method - a module's declaration and a call in a
+! procedure - both walks start at the file's first token, so a block that holds the declaration
+! and the whole procedure is seen around the call as well.
+!===============================================================================================
+VitEngine.CondLeavesOut Procedure(LONG pTok, LONG pRef)
+b long,auto
+c long,auto
+f long
+  code
+  if not self.syms &= NULL
+    self.syms.EnsureFresh()
+    if self.syms.ScopeContaining(pTok, vs:scProc, vs:scMethod) <> self.syms.ScopeContaining(pRef, vs:scProc, vs:scMethod) then f = 1.
+  end
+  b = self.CondBlockAt(pTok, f)
+  if ~b then return 0.
+  c = self.CondBlockAt(pRef, f)
+  loop while c
+    if c = b then return 0.
+    c = self.CondBlockAt(c, f)
+  end
+  return 1
+
+!===============================================================================================
+! Is syms row pSymRow the one declaration that pRef reads, in every build? A type, a width or an
+! attribute read from the row is a proof only then. 0 when the name is declared twice in that scope -
+! in code that compiles only the two arms of a COMPILE and an OMIT can do that, and the two may give
+! it different types or attributes - or when the declaration is in a COMPILE or conditional OMIT
+! block that pRef is not in: a build without the block reads some other variable of that name. A
+! declaration in the same block as pRef is sure (ruled 21 Nov 2026). The block test is CondLeavesOut's,
+! made without bringing the table up to date, which would renumber the row in hand. The syms buffer
+! is left on pSymRow.
+!===============================================================================================
+VitEngine.DeclIsSure Procedure(LONG pSymRow, LONG pRef)
+b long,auto
+c long,auto
+  code
+  if self.syms.SymRunLen(pSymRow) <> 1 then return 0.
+  get(self.syms.syms, pSymRow)
+  if errorcode() then return 0.
+  b = self.CondBlockAt(self.syms.syms.declTok)
+  if b
+    c = self.CondBlockAt(pRef)
+    loop while c and c <> b
+      c = self.CondBlockAt(c)
+    end
+    if c <> b then return 0.
+  end
+  get(self.syms.syms, pSymRow)
+  return 1
 
 !===============================================================================================
 ! Is there a COMMENT riding the leading trivia of any token in this range?
@@ -38881,21 +40268,25 @@ r  StringTheory
 ! Only the contLine/contLn sites use this. The places that REFUSE on a '|' - the hoist tail
 ! test, the strBefore purity test - keep the blunt search on purpose: refusing on a comment's
 ! '|' is under-reach, which is their safe direction.
+!
+! The bar of a real continuation is the FIRST thing in the trivia: the rest of the line above,
+! after its last token, is blanks and then the '|'. The rows after the trivia's first line feed
+! are whole lines - a plain OMIT block the tokenizer folded in front of the token, a terminator
+! line, kept comments - and a '|' on one of them cannot carry a statement onto this line:
+! `OMIT('**')` / `b = 1 + |` / `**` / `b = 2.` leaves `b = 2.` a statement of its own. So the
+! search stops at the first character that is not a blank or a tab: a '|' there answers 1, and
+! anything else - a '!', a line feed, the word OMIT - answers 0.
 !===============================================================================================
 VitEngine.TriviaHasContinuation Procedure(STRING pTrivia)
 i    long,auto
-n    long,auto
-inC  byte,auto
   code
-  n = size(pTrivia)
-  inC = 0
-  loop i = 1 to n
-    if pTrivia[i] = '<10>' ! a newline ends the comment, not the trivia
-      inC = 0
-    elsif pTrivia[i] = '!'
-      inC = 1
-    elsif pTrivia[i] = '|' and ~inC
+  loop i = 1 to size(pTrivia)
+    case val(pTrivia[i])
+    of 32  orof 9
+    of 124
       return 1
+    else
+      return 0
     end
   end
   return 0
@@ -38969,19 +40360,49 @@ syRow long
 !
 ! A proof that reads a variable's writes by its SPELLING is blind to a write through another name
 ! for the same bytes: `b LONG,OVER(a)` written while a is read, `r &= a` then `r = 5`, or a GROUP's
-! field written as `pg:a` while the group is read as `g`. Four passes asked this each in its own
-! way and each missed one (the final sweep, 9 Nov 2026): this is the one answer they share.
+! field written as `pg:a` while the group is read as `g`. Several passes ask this: this is the one
+! answer they share.
 !   * OVER either way, module level included, and "cannot tell" refuses: HoistAliasRisk.
 !   * the name is itself a reference (`r &LONG`): it reads whatever it was last pointed at.
-!   * a reference taken on the name anywhere in its procedure or routine (`&= name`).
-!   * a prefixed spelling (`pg:a`): the field is also the group's bytes, which the symbol table
-!     files under no name this could follow, so it is taken as shared.
+!   * a field of a structure, spelt `pg:a` or, under PRE(), by its own label: the field is also
+!     the structure's bytes, so a write to the structure, or to an OVER of it, changes it.
+!   * a structure itself - the label of a GROUP, QUEUE or RECORD, which has no symbol row and so
+!     cannot be told (above), or a variable declared with a GROUP, QUEUE or RECORD type or LIKE
+!     one: its fields are the same bytes, written under their own names.
+!   * a reference taken on the name in its procedure or routine (`&= name`). For a name that is
+!     not the procedure's own, a reference taken on it anywhere in the file, or on a by-address
+!     parameter anywhere in the file, which a caller may have handed that name.
+!   * a by-address parameter (`*LONG p`, or one passed by address without a '*': a QUEUE, a
+!     GROUP, an object): the caller may have passed the same variable twice, or a variable this
+!     procedure also names. So it is shared when the procedure has another by-address parameter,
+!     or its code names a module-level variable, a variable of the procedure a local class
+!     belongs to, a STATIC or THREAD local, or any reference.
+!   * a name that is not this call's own - module level, the host procedure's, STATIC or THREAD -
+!     when the procedure has a by-address parameter: the caller may have passed it.
+!   * a scalar handed whole, in the procedure or routine, to a call that may keep its address
+!     (ArgMayKeep): a later call can write it through that reference without naming it.
 ! 1 = shared, or not provable. Refusing costs one rewrite; a wrong one costs the user's code.
 !===============================================================================================
 VitEngine.NameShared Procedure(LONG pTok, STRING pNameU)
-sc   long,auto
-k    long,auto
-nmU  string(vs:maxName),auto
+sc    long,auto
+k     long,auto
+row   long,auto
+r2    long,auto
+v2    long,auto
+nd    long,auto
+fsId  long,auto
+fsFar byte,auto
+mine  byte
+far   byte
+nAddr long,auto
+selfE long
+res   byte
+nmU   string(vs:maxName),auto
+n2U   string(vs:maxName),auto
+scS   long,auto
+scE   long,auto
+scSlf string(vs:maxName),auto
+isSc  byte
   code
   nmU = upper(pNameU)
   if ~nmU then return 1.
@@ -38989,18 +40410,254 @@ nmU  string(vs:maxName),auto
   if self.HoistAliasRisk(pTok, nmU) then return 1.
   sc = self.syms.ScopeContaining(pTok, vs:scProc, vs:scMethod)
   if ~sc then return 1.
-  k = self.syms.FindOwn(nmU, sc)
-  if k
-    get(self.syms.syms, k)
-    if ~errorcode() and self.syms.syms.isRef then return 1.
+  row = 0
+  case self.syms.Visible(nmU, pTok, row)
+  of vs:visUnknown
+    return 1
+  of vs:visSym
+    get(self.syms.syms, row)
+    if errorcode() then return 1.
+    if self.syms.syms.isRef or self.syms.syms.isField then return 1.
+    if self.syms.regSorted and ~self.IsScalarType(self.syms.syms.typeU)
+      self.syms.types.typeU = self.syms.syms.typeU
+      get(self.syms.types, self.syms.types.typeU)
+      if ~errorcode()
+        case self.syms.types.kind
+        of vs:tkGroup orof vs:tkQueue orof vs:tkRecord
+          return 1
+        end
+      end
+    end
+    fsId = self.syms.syms.scopeId
+    do FarScope
+    if fsFar
+      far = 1
+    elsif inlist(self.tk.GetTok(self.syms.syms.declTok), ',', ')')
+      selfE = self.syms.syms.declTok
+      mine = self.ParamByAddr(selfE)
+    elsif band(self.DeclAttrBits(self.syms.syms.declTok), ab:static + ab:thread)
+      far = 1
+    end
+  of vs:visHidden
+    get(self.syms.hidden, row)
+    if errorcode() then return 1.
+    fsId = self.syms.hidden.scopeId
+    do FarScope
+    far = fsFar
+  end
+  nAddr = self.AddrParamsOf(sc, selfE)
+  if mine
+    if nAddr then return 1.
+    do NamesOuter
+    if res then return 1.
+  end
+  if far
+    if nAddr then return 1.
+    do FileRefs
+    if res then return 1.
+  end
+  if self.syms.Visible(nmU, pTok, row) = vs:visSym
+    get(self.syms.syms, row)
+    if ~errorcode() and instring(' ' & clip(upper(self.syms.syms.typeU)) & ' ', vs:scalarTypes, 1, 1) then isSc = 1.
   end
   self.syms.scopes.scopeId = sc
   get(self.syms.scopes, self.syms.scopes.scopeId)
   if errorcode() then return 1.
-  loop k = self.syms.scopes.startTok to self.syms.scopes.endTok
+  scS   = self.syms.scopes.startTok
+  scE   = self.syms.scopes.endTok
+  scSlf = self.syms.scopes.selfClass
+  loop k = scS to scE
     if self.tk.GetTok(k) = '&=' and upper(self.tk.GetTok(k + 1)) = nmU then return 1.
+    if isSc and upper(self.tk.GetTok(k)) = nmU
+      if self.ArgMayKeep(k, scSlf) then return 1.
+    end
   end
   return 0
+
+! ---- is scope fsId outside this call of the procedure? Its own scope and its own routines are
+!      not; the module, and the procedure a local class's method shares data with, are ----
+FarScope routine
+  fsFar = 0
+  if fsId = sc then exit.
+  self.syms.scopes.scopeId = fsId
+  get(self.syms.scopes, self.syms.scopes.scopeId)
+  if errorcode() then fsFar = 1 ; exit.
+  if self.syms.scopes.kind = vs:scRoutine and self.syms.scopes.parentId = sc then exit.
+  fsFar = 1
+
+! ---- does the procedure's code name something a by-address parameter may be? A module-level
+!      variable, a variable of the host procedure, a STATIC or THREAD local, or a reference.
+!      The data section is read only for OVER(name): a type or a LIKE there names no storage the
+!      code uses, but a local declared OVER a variable is that variable's storage, so the name in
+!      the OVER is judged as a name in the code is. A name the table cannot place is called, not
+!      stored to, when a bracket follows it ----
+NamesOuter routine
+  data
+nS  long,auto
+nE  long,auto
+nk  long,auto
+inC byte
+  code
+  res = 0
+  self.syms.scopes.scopeId = sc
+  get(self.syms.scopes, self.syms.scopes.scopeId)
+  if errorcode() then res = 1 ; exit.
+  nS = self.syms.scopes.startTok + 1
+  nE = self.syms.scopes.endTok
+  loop nk = nS to nE
+    get(self.tk.tokens, nk)
+    if errorcode() then break.
+    if self.tk.tokens.tok &= NULL then cycle.
+    if ~inC
+      if self.tk.tokens.firstOnLine and upper(self.tk.tokens.tok) = 'CODE' then inC = 1.
+      if inC or upper(self.tk.tokens.tok) <> 'OVER' then cycle.
+      if self.tk.GetTok(nk + 1) <> '(' then cycle.
+      nk += 2
+      get(self.tk.tokens, nk)
+      if errorcode() or self.tk.tokens.tok &= NULL then res = 1 ; exit.
+      if self.tk.tokens.type <> vt:label then res = 1 ; exit.
+    end
+    if self.tk.tokens.type <> vt:label then cycle.
+    n2U = upper(self.tk.tokens.tok)
+    nd = instring('.', n2U, 1, 1)
+    if nd > 1 then n2U = n2U[1 : nd - 1].
+    if n2U = nmU then cycle.
+    if self.tk.GetTok(nk - 1) = '.' then cycle.
+    r2 = 0
+    v2 = self.syms.Visible(n2U, nk, r2)
+    if v2 = vs:visUnknown and self.tk.GetTok(nk + 1) = '(' then cycle.
+    if v2 = vs:visUnknown then res = 1 ; exit.
+    if v2 = vs:visSym
+      get(self.syms.syms, r2)
+      if errorcode() then res = 1 ; exit.
+      if self.syms.syms.isRef then res = 1 ; exit.
+      if self.syms.syms.typeU = 'EQUATE' then cycle.
+      fsId = self.syms.syms.scopeId
+      do FarScope
+      if fsFar then res = 1 ; exit.
+      get(self.syms.syms, r2)
+      if inlist(self.tk.GetTok(self.syms.syms.declTok), ',', ')') then cycle.
+      if band(self.DeclAttrBits(self.syms.syms.declTok), ab:static + ab:thread) then res = 1 ; exit.
+    elsif v2 = vs:visHidden
+      get(self.syms.hidden, r2)
+      if errorcode() then res = 1 ; exit.
+      fsId = self.syms.hidden.scopeId
+      do FarScope
+      if fsFar then res = 1 ; exit.
+    end
+  end
+
+! ---- is a reference taken anywhere in the file on the name, or on a by-address parameter that
+!      a caller may have handed it? Another procedure may write it through that reference ----
+FileRefs routine
+  data
+fk  long,auto
+fn  long,auto
+  code
+  res = 0
+  fn = records(self.tk.tokens)
+  loop fk = 1 to fn - 1
+    get(self.tk.tokens, fk)
+    if errorcode() then break.
+    if self.tk.tokens.tok &= NULL or self.tk.tokens.tok <> '&=' then cycle.
+    n2U = upper(self.tk.GetTok(fk + 1))
+    nd = instring('.', n2U, 1, 1)
+    if nd > 1 then n2U = n2U[1 : nd - 1].
+    if n2U = nmU then res = 1 ; exit.
+    r2 = 0
+    if self.syms.Visible(n2U, fk + 1, r2) <> vs:visSym then cycle.
+    get(self.syms.syms, r2)
+    if errorcode() then cycle.
+    if ~inlist(self.tk.GetTok(self.syms.syms.declTok), ',', ')') then cycle.
+    get(self.syms.syms, r2)
+    if self.ParamByAddr(self.syms.syms.declTok) then res = 1 ; exit.
+  end
+
+!===============================================================================================
+! Is the parameter that ends at pEnd - the ',' or ')' after it on the procedure's header - passed
+! by address? `*LONG p` is, and so is anything whose type word is not one of the simple types
+! passed by value: a QUEUE, a GROUP, an object, a FILE. A parameter with no type word cannot be
+! told here, so it counts as by address. `? p` is by value; `*? p` is not.
+!===============================================================================================
+VitEngine.ParamByAddr Procedure(LONG pEnd)
+k    long,auto
+t    string(vs:maxName),auto
+d    long
+lab  long
+q    byte
+tyU  string(vs:maxName)
+  code
+  loop k = pEnd - 1 to 1 by -1
+    get(self.tk.tokens, k)
+    if errorcode() then return 1.
+    if self.tk.tokens.tok &= NULL then cycle.
+    t = self.tk.tokens.tok
+    case t
+    of ')' orof ']'
+      d += 1
+    of '(' orof '['
+      if ~d then break.
+      d -= 1
+    of ','
+      if ~d then break.
+    of '='
+      if ~d then lab = 0 ; tyU = '' ; q = 0.
+    of '?'
+      if ~d then q = 1.
+    else
+      if d then cycle.
+      if inlist(t[1], '*', '&') then return 1.
+      if self.syms.IsLabelTok(t) and upper(t) <> 'CONST'
+        lab += 1
+        tyU = upper(t)
+      end
+    end
+  end
+  if q then return 0.
+  if lab < 2 then return 1.
+  if instring(' ' & clip(tyU) & ' ', ' BYTE SHORT USHORT LONG ULONG SIGNED UNSIGNED SREAL REAL BFLOAT4 BFLOAT8 DECIMAL PDECIMAL DATE TIME STRING CSTRING PSTRING ASTRING BOOL ', 1, 1) then return 0.
+  return 1
+
+!===============================================================================================
+! How many parameters on the header of scope pScope are passed by address (ParamByAddr), the one
+! that ends at pSkip left out? The header is the scope's first line.
+!===============================================================================================
+VitEngine.AddrParamsOf Procedure(LONG pScope, LONG pSkip)
+k    long,auto
+t    string(vs:maxName),auto
+e    long,auto
+d    long
+n    long
+seg  long
+  code
+  if self.syms &= NULL then return 1.
+  self.syms.scopes.scopeId = pScope
+  get(self.syms.scopes, self.syms.scopes.scopeId)
+  if errorcode() then return 1.
+  e = records(self.tk.tokens)
+  loop k = self.syms.scopes.startTok + 1 to e
+    if self.IsEolTok(k) then break.
+    get(self.tk.tokens, k)
+    if errorcode() then break.
+    if self.tk.tokens.tok &= NULL then cycle.
+    t = self.tk.tokens.tok
+    case t
+    of '(' orof '['
+      d += 1
+      if d = 1 then seg = k.
+    of ']'
+      d -= 1
+    of ')'
+      d -= 1
+      if ~d
+        if k > seg + 1 and k <> pSkip and self.ParamByAddr(k) then n += 1.
+        break
+      end
+    of ','
+      if d = 1 and k <> pSkip and self.ParamByAddr(k) then n += 1.
+    end
+  end
+  return n
 
 !===============================================================================================
 ! Is any OTHER declaration in this symbol's scope declared OVER it?
@@ -40465,6 +42122,8 @@ urDep   long,auto
 urHit   byte,auto
 urNmU   string(vs:maxName),auto
 urPrevU string(vs:maxName),auto
+urSelfU string(vs:maxName)
+urSv    long,auto
   code
   if self.acScopeId = pScopeId then return.
   self.acScopeId = pScopeId
@@ -40476,6 +42135,11 @@ urPrevU string(vs:maxName),auto
   if errorcode() then return.
   startT = self.syms.scopes.startTok
   endT   = self.syms.scopes.endTok
+  urSelfU = self.syms.scopes.selfClass
+  if self.syms.scopes.kind = vs:scRoutine
+    get(self.syms.scopes, self.syms.scopes.parentId)
+    if ~errorcode() then urSelfU = self.syms.scopes.selfClass.
+  end
   if endT <= startT then return.
   self.acMainEnd = endT
   loop r = 1 to records(self.syms.scopes)
@@ -40505,10 +42169,13 @@ urPrevU string(vs:maxName),auto
   sort(self.acDotQ, +self.acDotQ.rootU)
   ! the reads the code scans cannot see (UnseenRead), collected in ONE walk of the scope: every
   ! name the DATA section mentions other than a declaration's own label in column 1, and every
-  ! name whose storage escapes in the code - after &=, inside ADDRESS(), as an argument of BIND
+  ! name whose storage escapes in the code - after &=, inside ADDRESS(), as an argument of BIND.
+  ! A scalar local handed whole to a call that may keep its address goes on the same list as
+  ! ' #NAME ' (UrKeptArg); '#' begins no name, so the plain lookup does not find it.
   self.urData.free()
   self.urEsc.free()
   self.urInc = self.ScopeIncludes(pScopeId)
+  urSv = pointer(self.syms.syms)
   urCode = self.CodeTokOfScope(startT, endT)
   if ~urCode then urCode = endT + 1.
   loop i = startT to endT
@@ -40540,8 +42207,13 @@ urPrevU string(vs:maxName),auto
         end
       end
     end
-    if urHit then self.urEsc.append(' ' & clip(urNmU) & ' ').
+    if urHit
+      self.urEsc.append(' ' & clip(urNmU) & ' ')
+    elsif urPrevU = '(' or urPrevU = ','
+      do UrKeptArg
+    end
   end
+  if urSv then get(self.syms.syms, urSv).
   if ~self.acCodeT then return.
   self.acBail = 0
   loop i = self.acCodeT + 1 to self.acMainEnd
@@ -40554,6 +42226,96 @@ urPrevU string(vs:maxName),auto
       break
     end
   end
+
+! ---- a scalar local of the scope handed whole to a call that may keep its address (ArgMayKeep):
+!      a later call that names nothing on its line can then read or write it through that
+!      reference ----
+UrKeptArg routine
+  data
+row  long,auto
+  code
+  row = self.syms.FindOwn(urNmU, pScopeId)
+  if ~row then exit.
+  get(self.syms.syms, row)
+  if errorcode() or self.syms.syms.isRef then exit.
+  if ~instring(' ' & clip(upper(self.syms.syms.typeU)) & ' ', vs:scalarTypes, 1, 1) then exit.
+  if self.ArgMayKeep(i, urSelfU) then self.urEsc.append(' #' & clip(urNmU) & ' ').
+
+! ------------------------------------------------------------------------------------
+! May the call around the argument at pArgTok keep its address - a reference to it that outlives
+! the call, through which a later call can read or write it without naming it? The argument is one
+! name, or a slice of one (s[1 : 3]), that fills its slot of the call; anything else is a value
+! and answers 0, as does a name that is no argument of a call. It is decided by the prototype:
+! only a slot declared by address can hand the callee the caller's storage. So the answer is 1
+! when the one prototype this file shows for the call - a MAP prototype for a plain call, the
+! class's for a method of SELF or of an object whose class is known - declares that slot with '*'
+! or '&', unless the body is in this file and its summary says it reads or writes that parameter
+! and keeps no reference to it (ArgFact - the caller builds the summaries; without them this
+! answers wider). ADDRESS, INSTANCE and BIND hand the address on and answer 1. A by-value slot, a
+! call with no prototype here (the runtime's own functions among them) and a method of a
+! StringTheory, which copies what it is given, answer 0. pSelfClassU is the class of SELF where
+! the call stands, as ArgFact takes it.
+! ------------------------------------------------------------------------------------
+VitEngine.ArgMayKeep Procedure(LONG pArgTok, STRING pSelfClassU)
+e    long,auto
+opn  long,auto
+d    long,auto
+pos  long,auto
+pt   long,auto
+nmU  string(vs:maxName),auto
+rcU  string(vs:maxName),auto
+  code
+  if self.syms &= NULL then return 1.
+  if pArgTok < 3 then return 0.
+  if self.tk.GetTok(pArgTok - 1) <> '(' and self.tk.GetTok(pArgTok - 1) <> ',' then return 0.
+  e = pArgTok
+  if self.tk.GetTok(pArgTok + 1) = '['
+    e = self.tk.MatchLeftBracket('[', ']', pArgTok + 1)
+    if e <= pArgTok then return 0.
+  end
+  if self.tk.GetTok(e + 1) <> ')' and self.tk.GetTok(e + 1) <> ',' then return 0.
+  d = 0 ; opn = 0 ; pos = 1
+  loop e = pArgTok - 1 to 1 by -1
+    get(self.tk.tokens, e)
+    if errorcode() or self.tk.tokens.tok &= NULL then break.
+    if self.tk.tokens.type = vt:literal then cycle.
+    case self.tk.tokens.tok
+    of '<10>' orof ';'
+      break
+    of ')'    orof ']'  orof '}'
+      d += 1
+    of '['    orof '{{'
+      if ~d then break.
+      d -= 1
+    of '('
+      if ~d then opn = e ; break.
+      d -= 1
+    of ','
+      if ~d then pos += 1.
+    end
+  end
+  if opn < 2 then return 0.
+  get(self.tk.tokens, opn - 1)
+  if errorcode() or self.tk.tokens.tok &= NULL or self.tk.tokens.type <> vt:label then return 0.
+  nmU = upper(self.tk.tokens.tok)
+  if opn > 3 and self.tk.GetTok(opn - 2) = '.' and upper(self.tk.GetTok(opn - 3)) <> 'SELF'
+    rcU = upper(self.HayType(self.tk.GetTok(opn - 3), opn - 3))
+    if rcU = 'STRINGTHEORY' then return 0.
+    pt = 0
+    if rcU then pt = self.syms.MethodProtoTok(rcU, nmU).
+    if ~pt then pt = self.syms.MethodProtoTok(upper(self.tk.GetTok(opn - 3)), nmU).
+    if ~pt then return 0.
+    if not self.syms.expTk &= NULL
+      if ~self.ProtoParamIsRef(pt, pos, self.syms.expTk) then return 0.
+    elsif ~self.ProtoParamIsRef(pt, pos, self.tk)
+      return 0
+    end
+    return 1
+  end
+  if inlist(nmU, 'ADDRESS', 'INSTANCE', 'BIND') and self.tk.GetTok(opn - 2) <> '.' then return 1.
+  if ~self.AutoArgIsRefParam(pArgTok) then return 0.
+  if inlist(self.ArgFact(pArgTok, pSelfClassU), 'R', 'W', 'P', 'F') then return 0.
+  return 1
 
 !===============================================================================================
 ! Should this receiver be refused? 1 = yes.
@@ -40943,6 +42705,7 @@ pureOwnU   StringTheory  !   the names on it this file gives a procedure
 allPure    byte          ! every condition is safe to short-circuit
 mgAgain    byte          ! a merge moved the tokens - walk again
 mgOneDone  byte          ! MgOneLine took the chain, so the block form is not wanted
+mgCond     byte          ! the file holds a COMPILE or conditional OMIT: a run stays in one block
 raw        StringTheory
 t          long,auto
 runCount   long
@@ -40998,6 +42761,7 @@ condTx       string(400) ! the condition as written, for the OR form
     runCount = 0
     free(mgQ)
     n = records(self.tk.tokens)
+    mgCond = self.ScopeIsConditional(1, n)
     if changes then self.syms.dirty = 1.
     i = 1
     loop while i <= n
@@ -41129,9 +42893,16 @@ mrJ    long,auto
 !      with the trivia inside it (MgSpanRaw). A comment riding the trivia of that first token, of
 !      THEN, of the assignment or of the dot - after a '|' - would go with the line, without a
 !      word. So the run is closed above such a line, and the line may open the next one: a run's
-!      FIRST line keeps those tokens (MgOrForm asks about the ones it rewrites). ----
+!      FIRST line keeps those tokens (MgOrForm asks about the ones it rewrites). A line that is not
+!      in the same builds as the run's first line ends the run too: a COMPILE or conditional OMIT
+!      block holds one and not the other - the block's end can be in the first line's own comment -
+!      and the merged test, on the first line, would be left out with it. ----
 MgCutRun routine
   if ~runCount or ~mgIf or ~mgThen or ~mgDot then exit.
+  if mgCond
+    get(mgQ, 1)
+    if ~errorcode() and (self.CondLeavesOut(mq:ifTok, mgIf) + self.CondLeavesOut(mgIf, mq:ifTok)) then do MgFlush ; exit.
+  end
   if self.SpanTriviaHasComment(mgIf + 1, mgIf + 1) then do MgFlush ; exit.
   if self.SpanTriviaHasComment(mgThen, mgDot) then do MgFlush.
 
